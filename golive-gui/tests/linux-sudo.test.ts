@@ -156,6 +156,15 @@ describe("elevacao sudo no Linux", () => {
     expect(wait).not.toContain('running_flav "$flav" "$flatpak_id"');
   });
 
+  it("troca de rota devolve a rota default do namespace", () => {
+    const start = source.indexOf("refresh_wireguard_route() {");
+    const refresh = source.slice(start, source.indexOf("\n}\n", start));
+    // Sem re-por a default depois do addr flush, o cliente fica sem internet
+    // dentro do namespace (upload/stream morrem ao trocar de rota).
+    expect(refresh).toContain('route replace default dev "$WG_IF"');
+    expect(refresh.indexOf("addr flush")).toBeLessThan(refresh.indexOf('route replace default dev "$WG_IF"'));
+  });
+
   it("nunca pede senha nos probes automaticos do watchdog", () => {
     expect(source).toContain('--non-interactive) NONINTERACTIVE=1');
     expect(source).toContain('sudo -n "$@"');

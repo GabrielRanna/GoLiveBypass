@@ -14,6 +14,13 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Servidor: vhost dedicado `bugs.golivebypass.dev` criado no OpenLiteSpeed com `context /bugs` para o `extprocessor golivebugapi` existente e certificado Let's Encrypt emitido via acme.sh (renovação pelo cron do painel). Validado em 2026-09-22: `healthz` 200, sem token 401, rajada autenticada 429+`Retry-After`, catálogo/SSE e o POST de criação de issue no host novo; `api.skyplaceia.com/bugs` (contingência) e o site sem regressão.
 - Dependência registrada: o webhook de Release no GitHub ainda aponta para o host morto e sua edição exige admin em `bezumiya/GoLiveBypass` (pdl-clay não tem). Até o dono atualizar, o pulso de atualização fica no fallback de consulta direta ao GitHub (boot + 1 h) — comportamento já existente.
 
+### Linux: trocar de rota não deixa mais o cliente sem internet dentro do namespace
+
+- Causa: `refresh_wireguard_route` (usado pela otimização, pela seleção manual e pelo failover) reaplica o peer com `wg setconf` e, como a reserva pode ter outro endereço interno, faz `ip addr flush` + re-adiciona os endereços. O kernel derruba junto a **rota default do namespace** quando o endereço que a originou sai — e o cliente ficava sem caminho de saída: DNS/TCP/TLS morriam com "Could not connect" mesmo com o handshake WireGuard de pé. É o sintoma de upload/stream que para logo depois de otimizar ou trocar de rota.
+- Correção: o refresh restaura `default dev wg-discord` (idempotente, via `route replace`) depois de reaplicar os endereços; sem ela a troca falha em vez de deixar o cliente mudo.
+- Evidência (2026-09-22, host CachyOS, rotas free Proton): com a sequência antiga a tabela de rotas do namespace ficou vazia e o `curl` de dentro do namespace falhava em ~50 ms; com a função corrigida (código extraído do script, executado no namespace real) a default voltou e o egress respondeu (`ipify` 205.147.22.29, `gateway.discord.gg` HTTP 404 = TCP/TLS ok).
+- Cobertura: `golive-gui/tests/linux-sudo.test.ts` fixa a ordem (`addr flush` antes do `route replace default`) e a presença da restauração.
+
 ### Plugin: a seleção manual de rotas permanece visível com a sessão travada
 
 - Causa: `useProtonRouteSelection` zerava catálogo e rota aplicada em toda re-execução do efeito — inclusive quando `active` caía por falha **temporária** da verificação de sessão — e o bloco de trava (`lockedReason`) renderizava só o aviso, escondendo as rotas já medidas. O resultado era o relato "a seleção manual sumiu / só aparecem 3 itens".

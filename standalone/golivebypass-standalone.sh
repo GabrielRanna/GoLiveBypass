@@ -2918,6 +2918,14 @@ refresh_wireguard_route() {
     done <<EOF
 $addresses
 EOF
+    # O `addr flush` acima derruba junto a rota default do namespace (o kernel a
+    # remove com o endereco que a originou): sem re-adiciona-la aqui, trocar de rota
+    # deixa o cliente SEM internet dentro do namespace — upload e stream morrem
+    # depois de otimizar/trocar de rota. `replace` e idempotente, entao serve
+    # tambem quando a rota sobreviveu ao flush.
+    if ! elevate ip -n "$NETNS_NAME" route replace default dev "$WG_IF"; then
+        fail "Nao consegui restaurar a rota default do namespace depois de trocar a rota."
+    fi
     ok "Rota WireGuard atualizada sem reiniciar o Discord."
 }
 

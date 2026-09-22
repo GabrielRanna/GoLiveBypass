@@ -58,9 +58,9 @@
 
 ### T6 — Servidor (gate de confirmação pontual)
 
-- [ ] Antes de tocar: apresentar comando por comando e pedir OK. Criar website `bugs.golivebypass.dev` no CyberPanel do `principal`, `context /bugs` → `golivebugapi`, LE cert, `lshttpd -t` filtrado, restart.
-- [ ] Validar: healthz 200; 401 sem token; 429 na rajada; POST 201 único (issue de teste na fila de produção → fechar com comentário de teste); sem regressão nos demais sites.
-- [ ] Webhook release: tentar via `gh api` (sem admin → registrar dependência para o dono do repo, não contornar).
+- [x] Antes de tocar: apresentar comando por comando e pedir OK. Criar website `bugs.golivebypass.dev` no CyberPanel do `principal`, `context /bugs` → `golivebugapi`, LE cert, `lshttpd -t` filtrado, restart.
+- [x] Validar: healthz 200; 401 sem token; 429 na rajada; POST 201 único (issue de teste na fila de produção → fechar com comentário de teste); sem regressão nos demais sites.
+- [x] Webhook release: tentar via `gh api` (sem admin → registrar dependência para o dono do repo, não contornar).
 
 ### T7 — E2E real (após T1-T6)
 

@@ -10,8 +10,9 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ### Hotfix de endpoint da API
 
-- A GUI, o plugin e o standalone passam a usar `https://bugs.golivebypass.dev/bugs` no lugar do domínio anterior para reports, status e pulso de atualização.
-- O runbook da API, o webhook de release e o site foram alinhados ao novo host.
+- A GUI, o plugin e o standalone passam a usar `https://bugs.golivebypass.dev/bugs` no lugar do domínio anterior para reports, status e pulso de atualização. O host antigo (`api.golivebypass.dev`) não existe no DNS — os botões de report falhavam em silêncio.
+- Servidor: vhost dedicado `bugs.golivebypass.dev` criado no OpenLiteSpeed com `context /bugs` para o `extprocessor golivebugapi` existente e certificado Let's Encrypt emitido via acme.sh (renovação pelo cron do painel). Validado em 2026-09-22: `healthz` 200, sem token 401, rajada autenticada 429+`Retry-After`, catálogo/SSE e o POST de criação de issue no host novo; `api.skyplaceia.com/bugs` (contingência) e o site sem regressão.
+- Dependência registrada: o webhook de Release no GitHub ainda aponta para o host morto e sua edição exige admin em `bezumiya/GoLiveBypass` (pdl-clay não tem). Até o dono atualizar, o pulso de atualização fica no fallback de consulta direta ao GitHub (boot + 1 h) — comportamento já existente.
 
 ### Plugin: a seleção manual de rotas permanece visível com a sessão travada
 

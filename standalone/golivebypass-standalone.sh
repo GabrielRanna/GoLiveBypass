@@ -2476,7 +2476,10 @@ stop_discord() {
     kill_parallel_by_path
     if have flatpak; then
         local id
-        for id in $FLATPAK_IDS; do
+        # FLATPAK_TUNEL_IDS junto: o Serein e um cliente de tunel sem asar; sem
+        # fecha-lo aqui, o `flatpak run` da reabertura so ativa a instancia velha
+        # (fora do namespace) e a confirmacao do PID nunca chega.
+        for id in $FLATPAK_IDS $FLATPAK_TUNEL_IDS; do
             flatpak kill "$id" >/dev/null 2>&1 || true
         done
     fi

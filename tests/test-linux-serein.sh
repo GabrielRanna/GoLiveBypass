@@ -36,11 +36,21 @@ esac
 EOF
 chmod +x "$BIN/flatpak"
 
+cat > "$BIN/ip" <<'EOF'
+#!/bin/sh
+# shim: nenhum namespace visivel — o teste nao pode depender do estado WireGuard
+# do host (netns residuais de outra sessao mudariam o estado relatado).
+if [ "${1:-}" = "netns" ] && [ "${2:-}" = "list" ]; then exit 0; fi
+exit 1
+EOF
+chmod +x "$BIN/ip"
+
 out="$(env -i \
     PATH="$BIN:/usr/bin:/usr/sbin:/bin:/sbin" \
     HOME="$FAKE_HOME" \
     XDG_DATA_HOME="$FAKE_HOME/.local/share" \
     XDG_CONFIG_HOME="$FAKE_HOME/.config" \
+    IP_BINARY="$BIN/ip" \
     GOLIVE_GUI=1 \
     sh "$SCRIPT" --status --json 2>/dev/null || true)"
 

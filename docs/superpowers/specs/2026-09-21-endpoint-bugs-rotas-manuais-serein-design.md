@@ -83,6 +83,39 @@ O túnel WireGuard por aplicativo da GUI no Linux executa via `standalone/golive
 5. **Serein Windows (VM `win11`):** instalar Serein por usuário → GUI descobre (`scan.candidato flavour=Serein`), ativar → `serein.exe` entra no filtro AllowedApps e o status fica ACTIVE; restaurar rede reabre fora do túnel.
 6. **Teste de upload rota a rota (após os itens 3–5):** alternar rotas pelo seletor manual, subir imagem de teste no canal indicado pelo usuário, registrar por rota: rota, handshake, sucesso/falha da mídia. **Nada é publicado sem o usuário autorizar no ato.**
 
+## Evidências coletadas (2026-09-22, host CachyOS)
+
+### Endpoint
+
+| Verificação | Resultado |
+|---|---|
+| `getent hosts api.golivebypass.dev` | sem registro (host morto que os clientes usavam) |
+| `bugs.golivebypass.dev` antes do vhost | certificado de outro site (`CN=cassino.funnygaming.store`, expirado 2025-05-08) + 404 |
+| vhost criado (`bugs.golivebypass.dev`: `context /bugs` → `extprocessor golivebugapi`, LE via acme.sh) | `healthz` 200; sem token 401; rajada autenticada 400→429 com `Retry-After: 294`; catálogo `releases/latest` 200 |
+| POST real com token | `201` → issue [#326](https://github.com/bezumiya/GoLiveBypass/issues/326) criada e fechada em seguida com comentário de teste |
+| Regressões | `api.skyplaceia.com/bugs/healthz` 200; site `golivebypass.dev` 200 |
+| Webhook de Release | não editável por pdl-clay (sem admin, `admin:repo_hook` ausente) — dependência registrada |
+
+### Serein Linux (motor standalone)
+
+| Verificação | Resultado |
+|---|---|
+| Descoberta | `--status --json` → `flavour":"serein"`, `detected_by":"flatpak-nativo"`, `flatpak_id":"cz.viceverse.serein"` |
+| Ativação | `launch=flatpak-direct app=cz.viceverse.serein` no log do cliente; `wait_discord_started` confirmou o processo |
+| Estado ativo | `running":"sim"`, `inNamespace":"sim"` (PID igual ao `child-pid` do `flatpak ps`) |
+| Isolamento | egress no namespace `205.147.22.29`/MX vs. direto `200.222.95.75` (diagnóstico local) |
+| Semana por rota (código do motor, no namespace real) | MX-FREE#12: up 1.43 MB/s, down 1.53 MB/s, `gateway` 404 · US-FREE#137: 1.09/1.06 MB/s, 404 · MX-FREE#15: 1.19/1.42 MB/s, 404 |
+
+### Bug encontrado e corrigido pela rodada E2E
+
+1. `stop_discord` não iterava `FLATPAK_TUNEL_IDS`: o Serein aberto não fechava e o `flatpak run` da reabertura reativava a instância fora do namespace (a confirmação do PID nunca chegava). Corrigido e coberto por teste de comportamento.
+2. `refresh_wireguard_route` deixava o namespace **sem rota default** (o `addr flush` leva a rota embora com o endereço), então o cliente ficava sem internet depois de trocar de rota — reproduzido (tabela vazia + `curl` falhando em ~50 ms) e provado corrigido (default restaurada, egress e `gateway.discord.gg` respondendo). É o sintoma de upload/stream que morria após otimizar/trocar de rota.
+
+### Lacunas declaradas
+
+- A confirmação *dentro do cliente* (enviar imagem / iniciar Go Live por rota no Serein e no Discord oficial) segue manual: o Serein é egui/wgpu sem árvore de acessibilidade, então não há automação de UI possível; o transporte por rota está medido acima.
+- Perna Windows (Serein + Discord oficial na VM `win11`) não executada nesta rodada.
+
 ## Riscos e lacunas declaradas
 
 - Editar a hook do GitHub na produção requer admin; se faltar, o pulso de atualização continua pelo fluxo antigo (fallback de 1h) até o dono atualizar — registrado, não contornado.

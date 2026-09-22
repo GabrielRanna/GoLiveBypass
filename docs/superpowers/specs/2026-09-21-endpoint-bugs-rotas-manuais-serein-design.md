@@ -122,3 +122,10 @@ O túnel WireGuard por aplicativo da GUI no Linux executa via `standalone/golive
 - `flatpak ps` não lista sessão iniciada por **outro** usuário/namespace de PID host; o reconhecimento em dual-boot/SUDO de outro usuário depende do launcher ter criado a sessão — mesmo comportamento atual para flatpak Discord.
 - Serein usa SQLite de cache próprio (documentado no projeto dele); a desativação do túnel não apaga nada do cliente.
 - A janela "sessão verificando → inválida" preserva o catálogo medido; se o helper nativo recusar seleção após logout por conta própria, a UI mostra o erro curto dele (já roteado por `safeDiagnosticDetail`).
+
+## Aditamento aprovado em 2026-09-22
+
+- Não publicar, criar tag, gerar artefato nem anunciar hotfix enquanto esta rodada estiver em curso.
+- A matriz de upload cobre todas as rotas manuais elegíveis disponíveis no catálogo, em Serein e Discord oficial, com uma imagem PNG mínima identificada por cliente e rota no canal autorizado pelo usuário.
+- A validação do endpoint não cria issue adicional na fila de produção: `healthz`, status e as regressões locais cobrem o transporte. Um plugin já instalado só receberá a URL corrigida quando houver uma publicação futura autorizada.
+- Toda interação externa exige superfície verificável: Discord oficial pode ser dirigido com acessibilidade; o Serein não recebe anexos por automação sem evidência atual de foco/canal, por não expor árvore de acessibilidade.

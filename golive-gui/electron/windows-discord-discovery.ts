@@ -8,7 +8,8 @@ export type WindowsDiscoveryFlavour =
   | "DiscordCanary"
   | "Vesktop"
   | "Equibop"
-  | "Legcord";
+  | "Legcord"
+  | "Serein";
 
 export const WINDOWS_DISCOVERY_FLAVOURS: readonly WindowsDiscoveryFlavour[] = [
   "Discord",
@@ -17,6 +18,7 @@ export const WINDOWS_DISCOVERY_FLAVOURS: readonly WindowsDiscoveryFlavour[] = [
   "Vesktop",
   "Equibop",
   "Legcord",
+  "Serein",
 ];
 
 export type DiscoverySource = "root" | "process" | "registry" | "shortcut";
@@ -147,6 +149,12 @@ const FLAVOUR_BY_EXE = new Map<string, WindowsDiscoveryFlavour>(
   WINDOWS_DISCOVERY_FLAVOURS.map((flavour) => [`${flavour.toLowerCase()}.exe`, flavour]),
 );
 
+// Electron exige um `resources/` ao lado do exe; clientes nativos (Serein, Rust/egui)
+// nao tem essa marca — o exe plano e a instalacao. Entrada ausente = exige resources.
+const FLAVOUR_ELECTRON_REQUIREMENTS: Partial<Record<WindowsDiscoveryFlavour, false>> = {
+  Serein: false,
+};
+
 const RAW_STATUSES = new Set<DiscoveryBlockStatus>(["ok", "empty", "partial", "error"]);
 const RAW_KINDS = new Set<WindowsDiscoveryRegistryKind>(["app-paths", "uninstall", "url-handler"]);
 const RAW_HIVES = new Set<WindowsDiscoveryRegistryHive>(["hkcu", "hklm", "wow6432"]);
@@ -184,9 +192,9 @@ export function shortcutRootsForEnvironment(env: WindowsDiscoveryEnvironment): s
 }
 export const WINDOWS_DISCOVERY_POWERSHELL_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
-$flavours = @('Discord','DiscordPTB','DiscordCanary','Vesktop','Equibop','Legcord')
-$schemes = @('discord','discordptb','discordcanary','vesktop','equibop','legcord')
-$processFilter = "Name = 'Discord.exe' OR Name = 'DiscordPTB.exe' OR Name = 'DiscordCanary.exe' OR Name = 'Vesktop.exe' OR Name = 'Equibop.exe' OR Name = 'Legcord.exe'"
+$flavours = @('Discord','DiscordPTB','DiscordCanary','Vesktop','Equibop','Legcord','Serein')
+$schemes = @('discord','discordptb','discordcanary','vesktop','equibop','legcord','serein')
+$processFilter = "Name = 'Discord.exe' OR Name = 'DiscordPTB.exe' OR Name = 'DiscordCanary.exe' OR Name = 'Vesktop.exe' OR Name = 'Equibop.exe' OR Name = 'Legcord.exe' OR Name = 'Serein.exe'"
 
 # The 65th matching process is a sentinel: emit at most 64 rows but report truncation.
 $processRows = @()
@@ -279,7 +287,7 @@ foreach ($spec in $uninstallSpecs) {
       try {
         $properties = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop
         $displayName = [string]$properties.DisplayName
-        if (!$displayName -or $displayName -notmatch '(?i)(Discord|Vesktop|Equibop|Legcord)') { continue }
+        if (!$displayName -or $displayName -notmatch '(?i)(Discord|Vesktop|Equibop|Legcord|Serein)') { continue }
         $defaultValue = [string]((Get-Item -LiteralPath $key.PSPath -ErrorAction Stop).GetValue(''))
         $displayIcon = [string]$properties.DisplayIcon
         $installLocation = [string]$properties.InstallLocation
@@ -290,6 +298,7 @@ foreach ($spec in $uninstallSpecs) {
         elseif ($displayName -match '(?i)Vesktop') { $hint = 'Vesktop' }
         elseif ($displayName -match '(?i)Equibop') { $hint = 'Equibop' }
         elseif ($displayName -match '(?i)Legcord') { $hint = 'Legcord' }
+        elseif ($displayName -match '(?i)Serein') { $hint = 'Serein' }
         $registryRows += [pscustomobject]@{
           hive = $spec.hive
           kind = 'uninstall'
@@ -729,6 +738,10 @@ export function validateWindowsProcessExecutable(
 ): string | null {
   const normalized = validateWindowsExecutable(target, flavour, fsSeam);
   if (!normalized) return null;
+  // Flavours sem Electron (ver FLAVOUR_ELECTRON_REQUIREMENTS) sao aceitos pelo proprio
+  // exe: exigir resources/ descartaria o Serein rodando, e ele e justamente o caso em
+  // que o status precisa distinguir "dentro do tunel" de "fora".
+  if (FLAVOUR_ELECTRON_REQUIREMENTS[flavour] === false) return normalized;
   const parent = path.win32.basename(path.win32.dirname(normalized));
   if (/^app-/i.test(parent)) return normalized;
   return fsSeam.exists(path.win32.join(path.win32.dirname(normalized), "resources")) ? normalized : null;

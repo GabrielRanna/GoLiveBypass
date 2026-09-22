@@ -264,7 +264,7 @@ function Confirm-Action($question) {
 # Igual a GUI: ao falhar, monta diagnostico sanitizado e POST na API de bugs
 # (abre issue no bezumiya/GoLiveBypass). Nunca bloqueia o fluxo.
 
-$script:BugApiUrl = 'https://api.skyplaceia.com/bugs/v1/reports'
+$script:BugApiUrl = 'https://bugs.golivebypass.dev/bugs/v1/reports'
 $script:BugApiToken = 'c3d0bff691ecc3ddc6f6ca10037b9ac967c62547e681d3749204e50800504511'
 
 function Invoke-BugReport([string]$title, [string]$description, [string]$log = '', [hashtable]$meta = @{}) {

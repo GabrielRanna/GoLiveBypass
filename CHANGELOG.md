@@ -6,6 +6,27 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [2.0.10-beta-2] - 2026-09-21
+
+### Hotfix de endpoint da API
+
+- A GUI, o plugin e o standalone passam a usar `https://bugs.golivebypass.dev/bugs` no lugar do domínio anterior para reports, status e pulso de atualização.
+- O runbook da API, o webhook de release e o site foram alinhados ao novo host.
+
+### Plugin: a seleção manual de rotas permanece visível com a sessão travada
+
+- Causa: `useProtonRouteSelection` zerava catálogo e rota aplicada em toda re-execução do efeito — inclusive quando `active` caía por falha **temporária** da verificação de sessão — e o bloco de trava (`lockedReason`) renderizava só o aviso, escondendo as rotas já medidas. O resultado era o relato "a seleção manual sumiu / só aparecem 3 itens".
+- Correção: o catálogo agora só é descartado quando a chave de contexto muda (conta|país|freeOnly|autoPing); sob trava, a lista medida continua renderizada com os controles desabilitados, e a rota em uso/preparada permanece no bloco de estado. Nenhuma seleção é enviada sem sessão válida (recusa também revalidada no lado nativo).
+- Cobertura: `tests/test-plugin-onboarding.mjs` (16 asserts, incluindo "efeito não limpa quando `!active`" e "lista renderiza sob `lockedReason`").
+
+### GUI: Serein (cliente Discord nativo) entra no túnel por aplicativo — Windows e Linux
+
+- O Serein (`cz.viceverse.serein`) é nativo em Rust, sem Electron e sem `app.asar`: toda a descoberta antiga exigia asar e não o via. Suporte **túnel-only** (sem injeção de plugin, que ele não hospeda):
+  - Linux (motor standalone): novos `FLATPAK_TUNEL_IDS` + bloco `flatpak-nativo` em `discord_dirs()` (dedupe pelo diretório de deploy, sem exigir asar), `flatpak_app_id`/`discord_running`/`flatpak ps` reconhecem `cz.viceverse.*`, `--status --json` expõe `flavour":"serein"` com prova de sessão pelo `child-pid`, e o aviso de "flatpak update desfaz a injeção" agora só vale para registros que têm injeção.
+  - Windows (GUI): flavour `Serein` na discovery (raiz `%LOCALAPPDATA%\Programs\Serein`, processo `serein.exe`, registry de desinstalação), `tasklist`/`taskkill`/status/reabertura e `AllowedApps` cobrem o exe; clientes não-Electron são dispensados da exigência da pasta `resources/` ao validar processo. O kill do `Update.exe` (Squirrel) continua restrito ao Discord.
+- Cobertura: `tests/test-linux-serein.sh` (3 verificações herméticas com HOME/flatpak fake) e `golive-gui/tests/windows-discord-discovery.test.ts` (+2 casos Serein).
+- Lacuna: ativação real do Serein no namespace (Linux) e o E2E Windows na VM estão registrados para a rodada de validação; nada aqui prova upload por rota.
+
 ## [2.0.10-beta-1] - 2026-09-21
 
 ### v2: correções e limites validados

@@ -113,6 +113,9 @@ STUB_PACKAGE='{"name":"discord","main":"index.js","version":"1.0.0"}'
 # Vesktop (dev.vencord.Vesktop), Legcord (app.legcord.Legcord) e Equibop
 # (org.equicord.equibop).
 FLATPAK_IDS="com.discordapp.Discord com.discordapp.DiscordPTB com.discordapp.DiscordCanary dev.vencord.Vesktop app.legcord.Legcord org.equicord.equibop"
+# Clientes de flatpak SEM Electron (nenhum app.asar para achar): o tunel envelopa o
+# processo do mesmo jeito. Serein (cz.viceverse.serein) e nativo em Rust.
+FLATPAK_TUNEL_IDS="cz.viceverse.serein"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # ---------------------------------------------------------------------------
@@ -309,7 +312,7 @@ fail() {
 # a mesma API de bugs da GUI. A issue abre automaticamente no bezumiya/GoLiveBypass.
 # O envio NUNCA bloqueia o fluxo: falhou o report, avisa e segue.
 
-BUG_API_URL="https://api.skyplaceia.com/bugs/v1/reports"
+BUG_API_URL="https://bugs.golivebypass.dev/bugs/v1/reports"
 BUG_API_TOKEN="c3d0bff691ecc3ddc6f6ca10037b9ac967c62547e681d3749204e50800504511"
 
 # Sanitiza texto: credenciais em URL, tokens Discord, query de gateway, e a proxy salva.
@@ -1642,13 +1645,17 @@ confirm() {
 # /usr/lib e /usr/lib64 (ou por symlinks); sem esta guarda o preflight contava duas vezes o
 # mesmo cliente e a ativação podia tentar o mesmo processo em duplicidade.
 discord_emit_dir() {
-    local resources="$1" flav="$2" detect="$3" flatpak_id="${4:-}"
+    local resources="$1" flav="$2" detect="$3" flatpak_id="${4:-}" require_asar="${5:-1}"
     local target target_key
 
     if [ -e "$resources/app.asar" ]; then
         target="$resources/app.asar"
     elif [ -e "$resources/_app.asar" ]; then
         target="$resources/_app.asar"
+    elif [ "$require_asar" -eq 0 ] && [ -d "$resources" ]; then
+        # Cliente nativo sem asar (ver FLATPAK_TUNEL_IDS): o proprio diretorio de
+        # deploy e a chave de dedupe; ele nunca recebe injecao.
+        target="$resources"
     else
         return 1
     fi
@@ -1814,6 +1821,20 @@ discord_dirs() {
         done
     done
 
+    # Flatpak de cliente nativo sem Electron: nao ha o que achar de asar, a sessao e
+    # provada por `flatpak ps`. Vale como Discord instalado para preflight/ativacao.
+    detect="flatpak-nativo"
+    for raiz in /var/lib/flatpak/app "${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/app"; do
+        [ -d "$raiz" ] || continue
+        for id in $FLATPAK_TUNEL_IDS; do
+            [ -d "$raiz/$id/current/active/files" ] || continue
+            flav="${id##*.}"
+            if discord_emit_dir "$raiz/$id/current/active/files" "$flav" "$detect" "$id" 0; then
+                count=$((count + 1))
+            fi
+        done
+    done
+
     # O mesmo bootstrap de que fala o comentario la em cima, so que dentro do flatpak: o HOME
     # do Discord vira ~/.var/app/<id>, e o app baixado cai la. Este e do proprio usuario.
     detect="flatpak-bootstrap"
@@ -1828,7 +1849,7 @@ discord_dirs() {
         done
     done
 
-    warn "trace: varridas 5 blocos de raizes, achei $count Discord(s)"
+    warn "trace: varridas 6 blocos de raizes, achei $count Discord(s)"
     return 0
 }
 
@@ -2038,7 +2059,7 @@ linux_ensure_dependencies() {
 flatpak_app_id() {
     local parte
     for parte in $(printf '%s\n' "${1:-}" | tr '/' '\n'); do
-        case "$parte" in com.discordapp.*|dev.vencord.*|app.legcord.*|org.equicord.*) printf '%s\n' "$parte"; return 0 ;; esac
+        case "$parte" in com.discordapp.*|dev.vencord.*|app.legcord.*|org.equicord.*|cz.viceverse.*) printf '%s\n' "$parte"; return 0 ;; esac
     done
     return 1
 }
@@ -2288,7 +2309,7 @@ discord_running() {
     if have flatpak; then
         local rodando
         rodando="$(flatpak ps --columns=application 2>/dev/null || true)"
-        case "$rodando" in *com.discordapp.*|*dev.vencord.*|*app.legcord.*|*org.equicord.*) return 0 ;; esac
+        case "$rodando" in *com.discordapp.*|*dev.vencord.*|*app.legcord.*|*org.equicord.*|*cz.viceverse.*) return 0 ;; esac
     fi
     return 1
 }
@@ -3528,6 +3549,9 @@ stop_discord
 while IFS='|' read -r resources flav detect id; do
     state="$(injection_state "$resources")"
     printf '  %s (%s): %s\n' "$resources" "$flav" "$state" >&2
+    case "$detect" in
+        flatpak-nativo) printf '  %sCliente nativo de flatpak: apenas o tunel, sem injecao de app.asar.%s\n' "$C_DIM" "$C_OFF" >&2 ;;
+    esac
 
     if [ "$state" = "outromod" ]; then
         # Desde a migracao para WireGuard Per-App VPN o bypass nao toca mais no app.asar de
@@ -3613,10 +3637,11 @@ esac
 # O deploy do flatpak e refeito do zero a cada atualizacao, e a injecao mora dentro dele. Nao
 # da para impedir isso de fora, e nem o proprio bypass consegue se remendar depois: dentro do
 # sandbox a pasta do app e montada somente leitura. So resta avisar antes de acontecer.
-case " $FOUND " in
-    *"/flatpak/app/"*)
-        printf '  %sEste Discord e flatpak: um "flatpak update" desfaz a injecao. Quando isso%s\n' "$C_DIM" "$C_OFF" >&2
-        printf '  %sacontecer, rode este instalador de novo.%s\n' "$C_DIM" "$C_OFF" >&2 ;;
-esac
+# O aviso so diz respeito a quem tem injecao dentro do deploy: um registro
+# "flatpak-nativo" (sem asar) e sobrevive ao update sozinho.
+if printf '%s\n' "$FOUND" | grep '/flatpak/app/' | grep -v '|flatpak-nativo|' | grep -q .; then
+    printf '  %sEste Discord e flatpak: um "flatpak update" desfaz a injecao. Quando isso%s\n' "$C_DIM" "$C_OFF" >&2
+    printf '  %sacontecer, rode este instalador de novo.%s\n' "$C_DIM" "$C_OFF" >&2
+fi
 printf '  %sRegistro em %s/golivebypass.log%s\n' "$C_DIM" "$INSTALL_DIR" "$C_OFF" >&2
 printf '  %sPara desfazer: ./golivebypass-standalone.sh --uninstall%s\n\n' "$C_DIM" "$C_OFF" >&2

@@ -126,7 +126,7 @@ const RTCConnectionStore: DiagnosticStore = findStoreLazy("RTCConnectionStore");
 
 const VIDEO_GUARD = "2026-08-video-guard";
 
-const PLUGIN_VERSION = "2.0.10-beta-1";
+const PLUGIN_VERSION = "2.0.10-beta-2";
 const PLUGIN_UPDATE_STATUS_POLL_INTERVAL_MS = 15_000;
 const PLUGIN_UPDATE_STATUS_TIMEOUT_MS = 10_000;
 const PLUGIN_UPDATE_CHECK_TIMEOUT_MS = 2 * 60_000 + 15_000;
@@ -635,6 +635,7 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
     // A conta e os filtros fazem parte da chave: trocar qualquer um deles
     // invalida a medição anterior em vez de aplicar uma rota de outro contexto.
     const filtersKey = `${account}|${country}|${freeOnly ? "free" : "all"}|${autoPing ? "ping" : "noping"}`;
+    const filtersKeyRef = React.useRef(filtersKey);
 
     React.useEffect(() => {
         mountedRef.current = true;
@@ -673,10 +674,19 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
     React.useEffect(() => {
         const previousRequestId = requestRef.current;
         requestRef.current = null;
-        measurementIdRef.current = null;
-        statusSignatureRef.current = "";
-        setCandidates(new Map());
-        setAppliedServer(null);
+        // O catálogo pertence ao contexto (conta|país|freeOnly|autoPing): só uma
+        // mudança real dele invalida as rotas medidas. `active=false` (sessão
+        // inválida ou verificação temporariamente indisponível) derruba apenas a
+        // requisição em voo — esconder a lista foi o relato "sumiu a seleção
+        // manual": o usuário fica sem nenhuma saída visual.
+        const contextChanged = filtersKeyRef.current !== filtersKey;
+        filtersKeyRef.current = filtersKey;
+        if (contextChanged) {
+            measurementIdRef.current = null;
+            statusSignatureRef.current = "";
+            setCandidates(new Map());
+            setAppliedServer(null);
+        }
         setSelectionError(null);
         if (previousRequestId && typeof Native?.cancelProtonRouteDiscovery === "function") {
             void Promise.resolve(Native.cancelProtonRouteDiscovery(previousRequestId))
@@ -847,6 +857,41 @@ function ProtonRouteSelection({
     const heading = ordered.length > 0
         ? `Escolha uma rota Proton — ${measuredCount} de ${ordered.length} rotas com ping`
         : "Escolha uma rota Proton";
+    const routeList = (
+        <ul aria-label="Rotas Proton disponíveis" tabIndex={0} style={protonRouteListStyle}>
+            {ordered.map(candidate => {
+                const selectable = isProtonRouteSelectable(candidate);
+                const stateLabel = protonRouteStateLabel(candidate, { discoveryActive: discovery.active });
+                const applying = applyingServer === candidate.server;
+                const location = protonRouteLocation(candidate);
+                const tier = protonRouteTierLabel(candidate);
+                return (
+                    <li key={candidate.server} style={protonRouteRowStyle}>
+                        <div style={protonRouteRowTopStyle}>
+                            <span>
+                                <strong>{candidate.server}</strong>
+                                {candidate.server === recommendedServer && <span style={protonRouteBadgeStyle}>Recomendada</span>}
+                            </span>
+                            <span>{formatProtonRoutePing(candidate.pingMs)}</span>
+                        </div>
+                        {location && <span style={protonRouteMetaStyle}>{location}</span>}
+                        {tier && <span style={protonRouteMetaStyle}>{tier}</span>}
+                        <div style={protonRouteRowTopStyle}>
+                            <span style={protonRouteMetaStyle}>{applying ? `Aplicando rota ${candidate.server}…` : stateLabel}</span>
+                            <Button
+                                onClick={() => applying ? onCancelSelection() : onSelect(candidate.server)}
+                                disabled={applying ? false : (!selectable || exclusive || Boolean(lockedReason))}
+                                aria-label={applying ? `Cancelar aplicação da rota ${candidate.server}` : `Selecionar rota ${candidate.server}`}
+                                title={applying ? "Cancelar aplicação" : (selectable ? undefined : (stateLabel || "Rota indisponível"))}
+                            >
+                                {applying ? "Cancelar" : "Selecionar rota"}
+                            </Button>
+                        </div>
+                    </li>
+                );
+            })}
+        </ul>
+    );
 
     return (
         <section aria-label="Seleção manual de rota Proton" style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -891,7 +936,14 @@ function ProtonRouteSelection({
                 </Paragraph>
             )}
             {lockedReason ? (
-                <Paragraph role="status" aria-live="polite">{lockedReason}</Paragraph>
+                <>
+                    <Paragraph role="status" aria-live="polite">{lockedReason}</Paragraph>
+                    {/* Sessão travada não apaga o catálogo: a lista medida da mesma
+                        conta continua visível (com os controles desabilitados pela
+                        trava) para o usuário ver onde está e o que vai voltar a
+                        funcionar quando a sessão for revalidada. */}
+                    {ordered.length > 0 && routeList}
+                </>
             ) : (
                 <>
                     {discovery.error && (
@@ -910,41 +962,7 @@ function ProtonRouteSelection({
                                     : emptyMessage}
                             </Paragraph>
                         )
-                    ) : (
-                        <ul aria-label="Rotas Proton disponíveis" tabIndex={0} style={protonRouteListStyle}>
-                            {ordered.map(candidate => {
-                                const selectable = isProtonRouteSelectable(candidate);
-                                const stateLabel = protonRouteStateLabel(candidate, { discoveryActive: discovery.active });
-                                const applying = applyingServer === candidate.server;
-                                const location = protonRouteLocation(candidate);
-                                const tier = protonRouteTierLabel(candidate);
-                                return (
-                                    <li key={candidate.server} style={protonRouteRowStyle}>
-                                        <div style={protonRouteRowTopStyle}>
-                                            <span>
-                                                <strong>{candidate.server}</strong>
-                                                {candidate.server === recommendedServer && <span style={protonRouteBadgeStyle}>Recomendada</span>}
-                                            </span>
-                                            <span>{formatProtonRoutePing(candidate.pingMs)}</span>
-                                        </div>
-                                        {location && <span style={protonRouteMetaStyle}>{location}</span>}
-                                        {tier && <span style={protonRouteMetaStyle}>{tier}</span>}
-                                        <div style={protonRouteRowTopStyle}>
-                                            <span style={protonRouteMetaStyle}>{applying ? `Aplicando rota ${candidate.server}…` : stateLabel}</span>
-                                            <Button
-                                                onClick={() => applying ? onCancelSelection() : onSelect(candidate.server)}
-                                                disabled={applying ? false : (!selectable || exclusive || Boolean(lockedReason))}
-                                                aria-label={applying ? `Cancelar aplicação da rota ${candidate.server}` : `Selecionar rota ${candidate.server}`}
-                                                title={applying ? "Cancelar aplicação" : (selectable ? undefined : (stateLabel || "Rota indisponível"))}
-                                            >
-                                                {applying ? "Cancelar" : "Selecionar rota"}
-                                            </Button>
-                                        </div>
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                    )}
+                    ) : routeList}
                 </>
             )}
             {selectionError && <Paragraph role="alert" aria-live="assertive"><strong>{selectionError}</strong></Paragraph>}

@@ -622,6 +622,23 @@ describe("discovery Windows puro", () => {
     expect(validateWindowsProcessExecutable(exe, "Discord", fs)).toBe(exe);
   });
 
+  it("aceita Serein plano sem resources; Electron continua exigindo a marca", () => {
+    const serein = "C:\\Users\\a\\AppData\\Local\\Programs\\Serein\\serein.exe";
+    expect(flavourFromExecutableName("Serein.exe")).toBe("Serein");
+    expect(validateWindowsProcessExecutable(serein, "Serein", fakeFs([serein]))).toBe(serein);
+    // mesma ausencia de resources continua rejeitando o Electron (Vesktop sem app-*/resources)
+    const vesktop = "C:\\Apps\\Vesktop\\Vesktop.exe";
+    expect(validateWindowsProcessExecutable(vesktop, "Vesktop", fakeFs([vesktop]))).toBeNull();
+  });
+
+  it("handleProcessRows reconhece sessão do Serein sem pasta resources", () => {
+    const exe = "C:\\Users\\a\\AppData\\Local\\Programs\\Serein\\serein.exe";
+    const fs = fakeFs([exe]);
+    const candidates = handleProcessRows([{ name: "serein.exe", pid: 42, path: exe }], fs);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({ flavour: "Serein", source: "process", exePath: exe });
+  });
+
   it("rejeita args sem aspas mesmo quando o último argumento termina em .exe", () => {
     const command = "C:\\Discord\\Update.exe --processStart Discord.exe";
     expect(parseWindowsDiscoveryCommand(command)).toEqual({

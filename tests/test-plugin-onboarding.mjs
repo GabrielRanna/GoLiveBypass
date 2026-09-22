@@ -163,4 +163,20 @@ test("falha da otimização automática mede o catálogo para a escolha manual p
     assert.match(emptyState, /discovery\.active \? null : \(/);
 });
 
-console.log("plugin onboarding source tests: 15/15");
+test("a seleção manual permanece visível com a sessão travada", () => {
+    // O relato era a seção inteira sumir: falha temporária da verificação de
+    // sessão zerava o catálogo no hook e o gate de trava escondia a lista.
+    // Invariantes: o hook só limpa o catálogo quando a chave de contexto muda;
+    // sob trava, a lista medida continua renderizada com os controles bloqueados.
+    const hook = source.slice(source.indexOf("function useProtonRouteSelection"), source.indexOf("function ProtonRouteSelection"));
+    assert.match(hook, /const contextChanged = filtersKeyRef\.current !== filtersKey;/);
+    assert.match(hook, /if \(contextChanged\) \{\s*\n\s*measurementIdRef\.current = null;\s*\n\s*statusSignatureRef\.current = "";\s*\n\s*setCandidates\(new Map\(\)\);\s*\n\s*setAppliedServer\(null\);\s*\n\s*\}/);
+    // A desativação ("!active") não pode voltar a limpar o catálogo: só cancela e sai.
+    const inactiveExit = hook.slice(hook.indexOf("if (!active || !Native"), hook.indexOf("let disposed = false"));
+    assert.doesNotMatch(inactiveExit, /setCandidates\(new Map\(\)\)/);
+    const gated = source.slice(source.indexOf("lockedReason ? ("), source.indexOf("selectionError && <Paragraph"));
+    assert.match(gated, /\{ordered\.length > 0 && routeList\}/);
+    assert.match(source, /disabled=\{applying \? false : \(!selectable \|\| exclusive \|\| Boolean\(lockedReason\)\)\}/);
+});
+
+console.log("plugin onboarding source tests: 16/16");

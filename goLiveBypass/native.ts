@@ -77,7 +77,7 @@ import * as proton from "./vpn-proton";
 import { safeDiagnosticDetail } from "./vpn-types";
 import { createOperationId, createPluginLogger, trimJsonlTailByBytes, type PluginLogContext } from "./plugin-log";
 
-const PLUGIN_VERSION = "2.0.10-beta-1";
+const PLUGIN_VERSION = "2.0.10-beta-2";
 const PLUGIN_ASSET = "goLiveBypass-vencord.zip";
 const PLUGIN_CHECKSUM_ASSET = `${PLUGIN_ASSET}.sha256`;
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/bezumiya/GoLiveBypass/releases?per_page=20";
@@ -1042,8 +1042,8 @@ export function getPluginVpnPaths(_: IpcMainInvokeEvent) {
 // repositório público, com rate limit por IP — e por isso nunca é exportado ao renderer
 // nem escrito no log. O envio só acontece por ação do usuário: nada aqui é chamado em
 // boot, falha, ativação ou updater.
-const BUG_API_URL = "https://api.skyplaceia.com/bugs/v1/reports";
-const BUG_STATUS_URL = "https://api.skyplaceia.com/bugs/v1/block-status";
+const BUG_API_URL = "https://bugs.golivebypass.dev/bugs/v1/reports";
+const BUG_STATUS_URL = "https://bugs.golivebypass.dev/bugs/v1/block-status";
 const BUG_API_TOKEN = "c3d0bff691ecc3ddc6f6ca10037b9ac967c62547e681d3749204e50800504511";
 const BUG_REPORT_STATE_FILE = "bug-report-state.json";
 const BUG_STATUS_TIMEOUT_MS = 5_000;

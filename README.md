@@ -110,6 +110,8 @@ chmod +x GoLiveBypass-*.AppImage
 
 > **Nota:** se o seu Discord é flatpak do sistema, a primeira ativação pode pedir sua senha (via `pkexec`) para liberar a pasta do bypass para o sandbox.
 
+> **Serein**: o cliente Discord nativo em Rust (`cz.viceverse.serein`, Windows e Linux) também entra no túnel por aplicativo da GUI. Ele não usa Electron nem hospeda plugins — com ele, o GoLiveBypass funciona só pelo transporte (a injeção do plugin não se aplica).
+
 ### Dependências no Arch Linux
 
 Na primeira abertura a GUI executa um preflight somente leitura. Se faltar alguma dependência,
@@ -599,7 +601,7 @@ Ou seja, o fluxo do GoLiveBypass — **o Discord nasce dentro do WireGuard, enqu
 
 ## Avisos importantes
 
-- **O transporte do plugin funciona nesta etapa somente no Discord desktop Windows x64** com Equicord ou Vencord injetado. Linux, macOS, Vesktop, Equibop, Snap e navegador continuam fora desta migração de transporte.
+- **O transporte do plugin funciona no Discord desktop Windows x64 e Linux x64** (linha beta) com Equicord ou Vencord injetado. macOS, Vesktop/Equibop (hosts sem validação de transporte), Serein, Snap e navegador continuam fora desta migração de transporte.
 - Usar clientes modificados viola os Termos de Serviço do Discord. Use por sua conta e risco.
 - O WireGuard do plugin carrega o processo inteiro do Discord por aplicativo. A GUI, navegadores, jogos e os demais programas ficam fora do filtro.
 - `network-lock` fica desativado de propósito para preservar a rede normal do computador. Se a inicialização falhar, a operação é abortada; estado ativo significa que o processo/serviço próprio foi iniciado, não prova geográfica do IP de saída.
@@ -672,6 +674,7 @@ O plugin **só funciona no app de computador** (ele usa recursos do Electron que
 
 - **Discord normal**: baixe em [discord.com/download](https://discord.com/download) (stable, PTB ou Canary servem). O Flatpak (`com.discordapp.Discord`) também serve, do sistema ou do usuário; ou
 - **Vesktop/Equibop**: apps alternativos que já trazem o mod embutido. Os instaladores daqui não mexem neles; o patch do plugin pode ser carregado manualmente, mas o transporte VPN desta etapa não foi validado nesses hosts.
+- **Serein**: cliente Discord nativo em Rust — **não** hospeda Vencord/Equicord nem este plugin. Para rotear o Serein pelo túnel, use a GUI (Windows e Linux).
 - **Não funciona** no Discord aberto no navegador nem no celular.
 
 ### Componentes da VPN do plugin

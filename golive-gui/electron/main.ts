@@ -248,7 +248,11 @@ const FLAVOURS = ["Discord", "DiscordPTB", "DiscordCanary"];
 // pasta/do executavel. O "Vencord" citado pelos usuarios e o Vesktop (o desktop do Vencord);
 // Vencord/Equicord em si sao builds que usam o plugin.
 const PARALLEL_APPS = ["Vesktop", "Equibop", "Legcord"];
-const ALL_APPS = [...FLAVOURS, ...PARALLEL_APPS];
+// Clientes Discord nativos (sem Electron, sem app.asar): nunca recebem injecao, apenas o
+// tunel por aplicativo (AllowedApps no Windows). Serein instala serein.exe plano em
+// %LOCALAPPDATA%\Programs\Serein.
+const NATIVE_TUNNEL_APPS = ["Serein"];
+const ALL_APPS = [...FLAVOURS, ...PARALLEL_APPS, ...NATIVE_TUNNEL_APPS];
 const windowsDiscoveryCollectors: WindowsDiscoverySnapshotCollectors = {
   collectPowerShell: () => collectWindowsDiscoveryPowerShell(),
   listDirectory: (target) => diskFs.readdirSync(target) as string[],

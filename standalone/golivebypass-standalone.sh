@@ -2075,6 +2075,15 @@ flatpak_running_id() {
         | awk -v wanted="$wanted" '$0 == wanted { found=1; exit } END { exit found ? 0 : 1 }'
 }
 
+# Normaliza sequencias decimais para que zero/zeros iniciais nunca sejam passados a kill.
+normalize_pid() {
+    local pid="${1:-}"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    while [ "${pid#0}" != "$pid" ]; do pid="${pid#0}"; done
+    [ -n "$pid" ] || return 1
+    printf '%s\n' "$pid"
+}
+
 # Retorna o PID do processo dentro do sandbox. O child-pid é preferido porque é o
 # processo que herda o namespace de rede; o wrapper fica no host em alguns runtimes.
 flatpak_pid_for_id() {
@@ -2085,10 +2094,10 @@ flatpak_pid_for_id() {
     for columns in child-pid pid; do
         pid="$(flatpak ps --columns="$columns,application" 2>/dev/null \
             | awk -v wanted="$wanted" '$2 == wanted { print $1; exit }')"
-        case "$pid" in
-            ''|*[!0-9]*) continue ;;
-            *) printf '%s\n' "$pid"; return 0 ;;
-        esac
+        pid="$(normalize_pid "$pid" 2>/dev/null)" || continue
+        [ -n "$pid" ] || continue
+        printf '%s\n' "$pid"
+        return 0
     done
     return 1
 }
@@ -2293,10 +2302,9 @@ discord_running() {
     pgrep -x discord-canary >/dev/null 2>&1 && return 0
     pgrep -x discordptb >/dev/null 2>&1 && return 0
 
-    # Clientes paralelos nativos (Vesktop, Equibop, Legcord): o processo costuma ser o
-    # binario generico do Electron (/usr/lib/electron*/electron), entao o NOME do processo
-    # nao identifica nada. O cmdline de todos carrega o caminho do app.asar da pasta
-    # instalada — o running_flav casa pelo nome do flav do install.
+    # Clientes paralelos podem usar um Electron generico, cujo nome nao identifica
+    # o app. A raiz da instalacao comparada com /proc/PID/exe evita confundir
+    # outro cliente Electron nativo.
     if [ -n "${FOUND:-}" ]; then
         if [ -n "$(printf '%s\n' "$FOUND" | while IFS='|' read -r resources flav rest; do
             case "$flav" in vesktop|equibop|legcord) running_flav "$flav" "" "$resources" && printf 'achou\n' ;; esac
@@ -2314,26 +2322,60 @@ discord_running() {
     return 1
 }
 
-# O cliente deste flav esta vivo? Oficiais ("discord*"): pelo NOME do processo. Paralelos
-# (vesktop|equibop|legcord): o caminho exato do app.asar da instalação é a fonte de verdade.
-parallel_pid_for_resources() {
-    local resources="$1" proc pid cmdline
+# Clientes paralelos usam um Electron ELF com cmdline que pode não expor app.asar.
+# A identidade exata da instalação vem do executável em /proc/PID/exe.
+kill_flatpak_apps_forcefully() {
+    local id pid current_pid
+    have flatpak || return 0
+    for id in $FLATPAK_IDS $FLATPAK_TUNEL_IDS; do
+        pid="$(normalize_pid "$(flatpak_pid_for_id "$id" 2>/dev/null || true)" 2>/dev/null)" || continue
+        # Revalida a associação imediatamente antes do sinal: nunca mata apenas
+        # por nome/command line um processo que possa pertencer a outro cliente.
+        current_pid="$(normalize_pid "$(flatpak_pid_for_id "$id" 2>/dev/null || true)" 2>/dev/null)" || continue
+        [ "$pid" = "$current_pid" ] || continue
+        kill -9 "$pid" 2>/dev/null || true
+    done
+}
+
+parallel_pids_for_resources() {
+    local resources="$1" proc pid app_root exe
     [ -n "$resources" ] || return 1
+    app_root="$(readlink -f "$resources/.." 2>/dev/null || true)"
+    [ -n "$app_root" ] || return 1
     for proc in /proc/[0-9]*/cmdline; do
         [ -r "$proc" ] || continue
         pid="${proc#/proc/}"
         pid="${pid%/cmdline}"
         [ "$pid" = "$$" ] && continue
-        cmdline="$(tr '\0' ' ' < "$proc" 2>/dev/null || true)"
-        case "$cmdline" in
-            *"$resources/app.asar"*|*"$resources/_app.asar"*|*"$resources/arrpc"*)
-                printf '%s\n' "$pid"
-                return 0
-                ;;
+        exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        case "$exe" in "$app_root"/*) printf '%s\n' "$pid" ;; esac
+    done
+}
+
+# O PID principal confirma a sessão; inclui processos renderer apenas como fallback.
+parallel_pid_for_resources() {
+    local resources="$1" pid cmdline fallback=""
+    for pid in $(parallel_pids_for_resources "$resources"); do
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        case " $cmdline " in
+            *" --type="*) [ -n "$fallback" ] || fallback="$pid" ;;
+            *) printf '%s\n' "$pid"; return 0 ;;
         esac
     done
+    [ -n "$fallback" ] && { printf '%s\n' "$fallback"; return 0; }
     return 1
 }
+
+parallel_process_belongs_to_resources() {
+    local resources="$1" pid="$2" app_root exe
+    [ -n "$resources" ] && [ -n "$pid" ] || return 1
+    app_root="$(readlink -f "$resources/.." 2>/dev/null || true)"
+    [ -n "$app_root" ] || return 1
+    exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+    case "$exe" in "$app_root"/*) return 0 ;; esac
+    return 1
+}
+
 
 running_flav() {
     local flav="$1" flatpak_id="${2:-}" resources="${3:-}"
@@ -2440,19 +2482,25 @@ discord_pid_in_netns_elevated() {
     [ -n "$pid_ns" ] && [ -n "$netns_ns" ] && [ "$pid_ns" = "$netns_ns" ]
 }
 
-# Mata os clientes paralelos pelo caminho do app.asar: o nome do processo nao basta
-# (o Electron generico nao tem o nome do cliente), mas o cmdline carrega a pasta instalada.
+# Encerra apenas processos cujo executavel pertence a raiz exata do cliente detectado.
 kill_parallel_by_path() {
-    local sig="${1:-}"
+    local sig="${1:-}" pid
     [ -n "${FOUND:-}" ] || return 0
-    printf '%s\n' "$FOUND" | while IFS='|' read -r resources flav rest; do
+    while IFS='|' read -r resources flav rest; do
         case "$flav" in
             vesktop|equibop|legcord)
-                pkill $sig -f "/$flav/app.asar" 2>/dev/null || true
-                pkill $sig -f "/$flav/arrpc" 2>/dev/null || true
+                for pid in $(parallel_pids_for_resources "$resources" 2>/dev/null); do
+                    pid="$(normalize_pid "$pid" 2>/dev/null)" || continue
+                    parallel_process_belongs_to_resources "$resources" "$pid" || continue
+                    if [ -n "$sig" ]; then kill "$sig" "$pid" 2>/dev/null || true
+                    else kill "$pid" 2>/dev/null || true
+                    fi
+                done
                 ;;
         esac
-    done
+    done <<EOF
+$(printf '%s\n' "$FOUND")
+EOF
     return 0
 }
 
@@ -2493,6 +2541,9 @@ stop_discord() {
     # SIGTERM nao resolveu em 10s (Discord as vezes segura o fechamento). SIGKILL e o ultimo
     # recurso: fechar a forca vale mais que travar a injecao com um processo teimoso.
     step "O Discord nao respondeu, forçando o fechamento"
+    # Escala o Flatpak pelo PID do application ID exato antes de sinais por nome
+    # destinados aos clientes visiveis no namespace de PID do host.
+    kill_flatpak_apps_forcefully
     pkill -9 -x Discord 2>/dev/null || true
     pkill -9 -x DiscordPTB 2>/dev/null || true
     pkill -9 -x discord 2>/dev/null || true

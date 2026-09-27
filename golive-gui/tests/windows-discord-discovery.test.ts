@@ -165,6 +165,26 @@ describe("discovery Windows puro", () => {
     expect(snapshot.sourceFailureDetail).toContain("process:spawn powershell.exe ENOENT [path]");
     expect(snapshot.sourceFailureDetail).not.toContain("/home/segredo");
   });
+  it("preserva candidatos de filesystem quando PowerShell sai com codigo nao-zero", () => {
+    const root = "C:\\Program Files";
+    const executable = `${root}\\Discord\\app-1.0.10\\Discord.exe`;
+    const fs = fakeFs([executable]);
+    const install: WindowsDiscordInstall = {
+      appDir: path.win32.dirname(executable),
+      resources: path.win32.join(path.win32.dirname(executable), "resources"),
+      exePath: executable,
+    };
+    const snapshot = collectWindowsDiscoverySnapshot({ ProgramFiles: root }, {
+      ...registryDeps(fs, [install]),
+      collectPowerShell: () => {
+        throw Object.assign(new Error("PowerShell exit 1"), { code: 1 });
+      },
+    }, 123);
+
+    expect(snapshot.installs).toHaveLength(1);
+    expect(snapshot.installs[0]).toMatchObject({ source: "root", flavour: "Discord", exePath: executable });
+    expect(snapshot.sourceFailure).toContain("POWERSHELL_EXIT");
+  });
 
   it("gera roots Windows determinísticos, deduplica envs e não bloqueia sem LOCALAPPDATA", () => {
     const env: WindowsDiscoveryEnvironment = {

@@ -3,7 +3,7 @@ import { linuxPreflightRepairable, linuxPreflightMessage, parseLinuxPreflight } 
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execFileSync, spawnSync } from "child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "child_process";
 
 const tempRoots: string[] = [];
 afterEach(() => { for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
@@ -729,4 +729,162 @@ describe("preflight Linux", () => {
     expect(persistenceCalls).toBe(1);
     expect(source).toContain("discord_pid_in_netns_elevated");
   });
+  it("reconhece e encerra todos os processos Vesktop ELF da raiz exata", async () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const extract = (name: string) => {
+      const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
+      if (!match) throw new Error(`Funcao ${name} nao encontrada`);
+      return match[0].trim();
+    };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-vesktop-elf-"));
+    tempRoots.push(root);
+    const appRoot = path.join(root, "vesktop");
+    const resources = path.join(appRoot, "resources");
+    fs.mkdirSync(resources, { recursive: true });
+    const executable = path.join(appRoot, "vesktop");
+    fs.copyFileSync("/bin/sleep", executable);
+    const client = spawn(executable, ["30"]);
+    const clientChild = spawn(executable, ["30"]);
+    const unrelated = spawn("/bin/sleep", ["30"]);
+    const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    try {
+      const harness = path.join(root, "stop.sh");
+      fs.writeFileSync(harness, [
+        "#!/bin/sh",
+        extract("normalize_pid"),
+        extract("parallel_pids_for_resources"),
+        extract("parallel_pid_for_resources"),
+        extract("parallel_process_belongs_to_resources"),
+        extract("kill_parallel_by_path"),
+        "FOUND=\"$1|vesktop||\"",
+        "parallel_pid_for_resources \"$1\"",
+        "kill_parallel_by_path",
+      ].join("\n"));
+      const result = spawnSync("/bin/sh", [harness, resources], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect([String(client.pid), String(clientChild.pid)]).toContain(result.stdout.trim());
+      await Promise.all([exited(client), exited(clientChild)]);
+      expect(unrelated.exitCode).toBe(null);
+    } finally {
+      clientChild.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([exited(client), exited(clientChild), exited(unrelated)]);
+    }
+  });
+
+  it("escalona Flatpak apenas para PID positivo do application ID confirmado", async () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const extract = (name: string) => {
+      const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
+      if (!match) throw new Error(`Funcao ${name} nao encontrada`);
+      return match[0].trim();
+    };
+    const target = spawn("/bin/sleep", ["30"]);
+    const unrelated = spawn("/bin/sleep", ["30"]);
+    const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const harness = path.join(os.tmpdir(), `golive-flatpak-kill-${process.pid}.sh`);
+    const normalize = extract("normalize_pid");
+    const flatpakPid = extract("flatpak_pid_for_id");
+    const killFlatpak = extract("kill_flatpak_apps_forcefully");
+    const changedHarness = path.join(os.tmpdir(), `golive-flatpak-changed-${process.pid}.sh`);
+    const changedSignals = `${changedHarness}.signals`;
+    const changedCalls = `${changedHarness}.calls`;
+    try {
+      fs.writeFileSync(harness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak_pid_for_id() { [ \"$1\" = org.example.Target ] && printf '%s\\n' \"$TARGET_PID\"; }",
+        "FLATPAK_IDS=org.example.Target",
+        "FLATPAK_TUNEL_IDS=",
+        normalize,
+        killFlatpak,
+        "kill_flatpak_apps_forcefully",
+      ].join("\n"));
+      const result = spawnSync("/bin/sh", [harness], { encoding: "utf8", env: { ...process.env, TARGET_PID: String(target.pid) } });
+      expect(result.status, result.stderr).toBe(0);
+      await exited(target);
+      expect(unrelated.exitCode).toBe(null);
+      fs.writeFileSync(changedHarness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak() {",
+        "  [ \"$1\" = ps ] || return 1",
+        "  calls=\"$(cat \"$CALLS_FILE\" 2>/dev/null || printf 0)\"",
+        "  calls=$((calls + 1))",
+        "  printf '%s\\n' \"$calls\" > \"$CALLS_FILE\"",
+        "  if [ \"$calls\" -eq 1 ]; then printf '%s org.example.Target\\n' \"$FIRST_PID\"; else printf '%s org.example.Target\\n' \"$CURRENT_PID\"; fi",
+        "}",
+        "kill() { printf '%s\\n' \"$*\" >> \"$SIGNALS\"; }",
+        "FLATPAK_IDS=org.example.Target",
+        "FLATPAK_TUNEL_IDS=",
+        normalize,
+        flatpakPid,
+        killFlatpak,
+        "kill_flatpak_apps_forcefully",
+      ].join("\n"));
+      const changed = spawnSync("/bin/sh", [changedHarness], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          FIRST_PID: String(target.pid),
+          CURRENT_PID: String(unrelated.pid),
+          SIGNALS: changedSignals,
+          CALLS_FILE: changedCalls,
+        },
+      });
+      expect(fs.readFileSync(changedCalls, "utf8").trim()).toBe("2");
+      expect(changed.status, changed.stderr).toBe(0);
+      expect(fs.existsSync(changedSignals)).toBe(false);
+
+      const invalidHarness = path.join(os.tmpdir(), `golive-flatpak-invalid-${process.pid}.sh`);
+      fs.writeFileSync(invalidHarness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak_pid_for_id() { [ \"$1\" = org.example.Target ] && printf '%s\\n' \"$TARGET_PID\"; }",
+        "kill() { printf '%s\\n' \"$*\" >> \"$SIGNALS\"; }",
+        "FLATPAK_IDS=org.example.Target",
+        "FLATPAK_TUNEL_IDS=",
+        normalize,
+        killFlatpak,
+        "kill_flatpak_apps_forcefully",
+      ].join("\n"));
+      for (const invalidPid of ["0", "000"]) {
+        const signals = `${invalidHarness}.${invalidPid}`;
+        const invalid = spawnSync("/bin/sh", [invalidHarness], {
+          encoding: "utf8",
+          env: { ...process.env, TARGET_PID: invalidPid, SIGNALS: signals },
+        });
+        expect(invalid.status, invalid.stderr).toBe(0);
+        expect(fs.existsSync(signals)).toBe(false);
+      }
+
+      const parseHarness = path.join(os.tmpdir(), `golive-flatpak-parse-${process.pid}.sh`);
+      fs.writeFileSync(parseHarness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak() { printf '%s %s\\n' \"$FAKE_PID\" org.example.Target; }",
+        normalize,
+        flatpakPid,
+        "flatpak_pid_for_id org.example.Target",
+      ].join("\n"));
+      const zero = spawnSync("/bin/sh", [parseHarness], { encoding: "utf8", env: { ...process.env, FAKE_PID: "0" } });
+      expect(zero.status).toBe(1);
+      expect(zero.stdout).toBe("");
+      const leadingZeros = spawnSync("/bin/sh", [parseHarness], { encoding: "utf8", env: { ...process.env, FAKE_PID: "00042" } });
+      expect(leadingZeros.status).toBe(0);
+      expect(leadingZeros.stdout.trim()).toBe("42");
+    } finally {
+      for (const filename of [harness, changedHarness, changedSignals, changedCalls, `${harness}.0`, `${harness}.000`, path.join(os.tmpdir(), `golive-flatpak-invalid-${process.pid}.sh`), path.join(os.tmpdir(), `golive-flatpak-parse-${process.pid}.sh`)]) {
+        fs.rmSync(filename, { force: true });
+      }
+      target.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([exited(target), exited(unrelated)]);
+    }
+  });
+
 });

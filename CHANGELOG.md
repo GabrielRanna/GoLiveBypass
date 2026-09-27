@@ -6,7 +6,7 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
-## [2.0.10-beta-2] - 2026-09-21
+## [2.0.10-beta-2] - 2026-09-27
 
 ### Hotfix de endpoint da API
 
@@ -34,6 +34,25 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
   - Windows (GUI): flavour `Serein` na discovery (raiz `%LOCALAPPDATA%\Programs\Serein`, processo `serein.exe`, registry de desinstalação), `tasklist`/`taskkill`/status/reabertura e `AllowedApps` cobrem o exe; clientes não-Electron são dispensados da exigência da pasta `resources/` ao validar processo. O kill do `Update.exe` (Squirrel) continua restrito ao Discord.
 - Cobertura: `tests/test-linux-serein.sh` (3 verificações herméticas com HOME/flatpak fake) e `golive-gui/tests/windows-discord-discovery.test.ts` (+2 casos Serein).
 - Lacuna: ativação real do Serein no namespace (Linux) e o E2E Windows na VM estão registrados para a rodada de validação; nada aqui prova upload por rota.
+
+### Linux: fechamento seguro de Flatpaks e clientes ELF (#327–330, #332)
+
+- A escalada de fechamento Flatpak agora usa somente o PID retornado para o application ID esperado, normaliza PID decimal e recusa `0`/zeros; reconsulta o mesmo ID imediatamente antes do sinal. O limite permanece: sinaliza apenas o PID principal, e a confirmação/rollback continuam ativos se processos auxiliares mantiverem a sessão aberta.
+- Vesktop ELF pode omitir `app.asar`/`arrpc` da linha de comando. A descoberta e o encerramento agora enumeram `/proc/PID/exe` sob a raiz exata da instalação e revalidam essa raiz antes de enviar sinais, sem fallback amplo por nome.
+- Os testes usam processos ELF sintéticos e Flatpak simulado para confirmar isolamento de cliente, preservação de processo alheio, PID positivo e rejeição de `0`/`000`. Não substituem reprodução em Bazzite/CachyOS.
+- O relato secundário da #330 sobre falha ao iniciar após WireGuard pronto não recebe correção atribuída aqui: sem log que identifique o launcher, a causa permanece indeterminada; esta nota não fecha a issue.
+
+### Plugin Linux: relaunch preserva variáveis de ambiente (#318)
+
+- O helper aceitava `--env=CHAVE=valor`, mas passava `CHAVE=valor` como nome a `setenv()`, que rejeita `=` e falhava com `EINVAL`. Agora separa temporariamente nome e valor e restaura o argumento; `tests/test-netns-launcher.sh` exercita `WAYLAND_DISPLAY=wayland-0` na função real.
+- O gzip/Base64 e o SHA-256 de `EMBEDDED_LINUX_ASSETS["netns-launcher"]` foram regenerados do helper C. `scripts/embed-netns-launcher.mjs` reproduz a geração; o teste `plugin-linux-asset.test.ts` executa o binário materializado pelo caminho de produção e verifica que `WAYLAND_DISPLAY` chega ao `exec`. O teste intercepta setns/IDs apenas para não alterar a rede do host; não valida rota real.
+- O job Linux do build executa essa regressão; `release-assets` confere o SHA embedded e valida o payload dentro do ZIP final antes do upload.
+- Não há fallback para iniciar fora do namespace; o teste do helper não comprova tráfego/rota real nem execução dentro do Discord.
+
+### Windows: preservação da descoberta com falha PowerShell (#315)
+
+- Regressão adicional verifica que saída PowerShell não-zero mantém candidatos encontrados no filesystem. O teste de falha de spawn `ENOENT` existente permanece; não há alteração de implementação Windows nesta mudança.
+
 
 ## [2.0.10-beta-1] - 2026-09-21
 

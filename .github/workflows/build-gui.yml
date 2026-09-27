@@ -82,6 +82,9 @@ jobs:
           cache-dependency-path: tools/proton-confgen/go.sum
       - run: npm ci
         working-directory: golive-gui
+      - name: Regressão do launcher Linux embutido no plugin
+        run: npm test -- tests/plugin-linux-asset.test.ts
+        working-directory: golive-gui
       # No canal beta publica AppImage + beta.yml. O channel precisa ser explicito:
       # uma versao com sufixo beta e releaseType prerelease, sozinha, ainda gera
       # latest.yml e deixa o canal estavel enxergar metadata de teste.
@@ -227,6 +230,8 @@ jobs:
 
       - name: Validar contrato do archive do plugin antes do upload
         run: node --test tests/test-plugin-update-archive.mjs
+      - name: Conferir integridade do launcher Linux embutido
+        run: node scripts/embed-netns-launcher.mjs --check
 
       - name: Zip do userplugin Vencord (Onda 2 do auto-update)
         run: |
@@ -240,6 +245,8 @@ jobs:
           sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"${{ steps.version.outputs.version }}\"/" manifest.json
           cd ..
           zip -r "${{ steps.version.outputs.vencord_basename }}.zip" goLiveBypass/
+      - name: Validar launcher embutido no ZIP final do plugin
+        run: node scripts/embed-netns-launcher.mjs --check-archive "${{ steps.version.outputs.vencord_basename }}.zip"
 
       - name: Bypass standalone "puro" (para distribuicao manual)
         run: |

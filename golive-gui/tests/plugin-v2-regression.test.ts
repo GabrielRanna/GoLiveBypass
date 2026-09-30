@@ -165,6 +165,23 @@ describe("atribuição do WireSock pelo PID do serviço próprio", () => {
         expect(vi.mocked(execFileSync).mock.calls.some(([file]) => file === "taskkill.exe")).toBe(false);
     });
 
+    it("parada própria não reseta lock nem DNS global de adaptadores externos", async () => {
+        vi.useFakeTimers();
+        let snapshotCall = 0;
+        vi.mocked(execFileSync).mockImplementation(((file: string, args?: readonly string[]) => {
+            if (file === "powershell.exe" && (args?.[3] ?? "").includes("ConvertTo-Json")) {
+                snapshotCall++;
+                return snapshotCall === 1 ? snapshot([{ pid: 4242, commandLine: SERVICE_COMMAND }], 4242) : stoppedSnapshot([]);
+            }
+            if (file === "powershell.exe" && (args?.[3] ?? "").includes(".PathName")) return SERVICE_COMMAND;
+            return "";
+        }) as never);
+        const pending = stopOwnedWireSock(PLUGIN_CONFIG, vi.fn());
+        await vi.runAllTimersAsync();
+        expect(await pending).toMatchObject({ stopped: true, networkLockReset: false, dnsCleared: false });
+        expect(vi.mocked(execFileSync).mock.calls.some(([, args]) => (args ?? []).some(arg => /reset-network-lock|Set-DnsClientServerAddress|Get-NetAdapter/.test(String(arg))))).toBe(false);
+    });
+
     it("classifica a config exata da GUI mesmo com espaços no caminho", () => {
         windows(customSnapshot(GUI_SERVICE_COMMAND, [{ pid: 4242, commandLine: GUI_SERVICE_COMMAND }], 4242));
 
@@ -253,6 +270,8 @@ describe("atribuição do WireSock pelo PID do serviço próprio", () => {
             expect.any(Object),
         ]);
         expect(vi.mocked(execFileSync).mock.calls.some(([, args]) => Array.isArray(args) && args.includes("/IM"))).toBe(false);
+        expect(cleanup).toMatchObject({ networkLockReset: false, dnsCleared: false });
+        expect(vi.mocked(execFileSync).mock.calls.some(([, args]) => (args ?? []).some(arg => /reset-network-lock|Set-DnsClientServerAddress|Get-NetAdapter/.test(String(arg))))).toBe(false);
     });
 });
 

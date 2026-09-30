@@ -61,7 +61,7 @@ import {
 } from "./update-channel";
 import { isCompatiblePluginManifest, releaseAssetUrl, securePluginUpdateUrl } from "./update-security";
 import { resolveWindowsPnpmBuildCommand } from "./plugin-build";
-import { defaultPluginVpnDataDir, PluginVpnController, type ProtonLoginPayload, type ProtonOptimizationOptions } from "./vpn-controller";
+import { defaultPluginVpnDataDir, PluginVpnController, type ProtonLoginPayload, type ProtonOptimizationOptions, type ProtonRouteDiscoveryContext } from "./vpn-controller";
 import { disposeWireSockSnapshotWorker } from "./vpn-snapshot-worker";
 import {
     DEFAULT_AUTH_PROMPT_TIMEOUT_MS,
@@ -77,7 +77,7 @@ import * as proton from "./vpn-proton";
 import { safeDiagnosticDetail } from "./vpn-types";
 import { createOperationId, createPluginLogger, trimJsonlTailByBytes, type PluginLogContext } from "./plugin-log";
 
-const PLUGIN_VERSION = "2.0.10-beta-2";
+const PLUGIN_VERSION = "2.0.10-beta-3";
 const PLUGIN_ASSET = "goLiveBypass-vencord.zip";
 const PLUGIN_CHECKSUM_ASSET = `${PLUGIN_ASSET}.sha256`;
 const GITHUB_RELEASES_URL = "https://api.github.com/repos/bezumiya/GoLiveBypass/releases?per_page=20";
@@ -1382,6 +1382,40 @@ export function optimizeProtonRoute(event: IpcMainInvokeEvent, value: unknown) {
 
 export function cancelProtonOptimization(_: IpcMainInvokeEvent, requestId: unknown) {
     return { cancelled: typeof requestId === "string" && controller.cancelOptimization(requestId) };
+}
+
+function cleanRouteDiscoveryContext(value: unknown): ProtonRouteDiscoveryContext {
+    const raw = value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+    return {
+        username: typeof raw.username === "string" ? raw.username.trim().slice(0, 320) : "",
+        country: typeof raw.country === "string" ? raw.country.trim().slice(0, 128) : undefined,
+        freeOnly: typeof raw.freeOnly === "boolean" ? raw.freeOnly : undefined,
+        autoPing: typeof raw.autoPing === "boolean" ? raw.autoPing : undefined,
+    };
+}
+
+export function discoverProtonRoutes(_: IpcMainInvokeEvent, value: unknown) {
+    const { country, freeOnly, autoPing, requestId } = cleanOptimizationOptions(value);
+    return runLogOperation("proton-route-discovery", () => controller.discoverProtonRoutes({ country, freeOnly, autoPing, requestId }));
+}
+
+export function getProtonRouteDiscoveryStatus(_: IpcMainInvokeEvent, context?: unknown) {
+    return controller.getRouteDiscoveryStatus(context === undefined ? undefined : cleanRouteDiscoveryContext(context));
+}
+
+export function cancelProtonRouteDiscovery(_: IpcMainInvokeEvent, requestId?: unknown) {
+    return { cancelled: controller.cancelProtonRouteDiscovery(typeof requestId === "string" ? requestId : undefined) };
+}
+
+export function selectProtonRoute(_: IpcMainInvokeEvent, value: unknown) {
+    const raw = value !== null && typeof value === "object" ? value as Record<string, unknown> : {};
+    const measurementId = typeof raw.measurementId === "string" ? raw.measurementId : "";
+    const server = typeof raw.server === "string" ? raw.server : "";
+    return runLogOperation("proton-route-selection", () => controller.selectProtonRoute({ measurementId, server }));
+}
+
+export function cancelProtonRouteSelection(_: IpcMainInvokeEvent) {
+    return { cancelled: controller.cancelProtonRouteSelection() };
 }
 
 // ------------------------------------------------------------------ atualização do userplugin

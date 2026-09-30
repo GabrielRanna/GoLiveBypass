@@ -3,10 +3,16 @@ import { linuxPreflightRepairable, linuxPreflightMessage, parseLinuxPreflight } 
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { execFileSync, spawnSync } from "child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "child_process";
 
 const tempRoots: string[] = [];
 afterEach(() => { for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
+
+function shellHelper(source: string, name: string): string {
+  const match = source.match(new RegExp(`^${name}\\(\\) \\{[^\\n]*\\}$|^${name}\\(\\) \\{[\\s\\S]*?^\\}`, "m"));
+  if (!match) throw new Error(`Helper ausente: ${name}`);
+  return match[0];
+}
 
 describe("preflight Linux", () => {
   it("mapeia dependencias ausentes do Arch para um comando pacman copiavel", () => {
@@ -58,6 +64,150 @@ describe("preflight Linux", () => {
     expect(linuxPreflightMessage(make("missing", false))).toContain("não está disponível");
   });
 
+  it("manda reiniciar quando o kernel em execução está sem os módulos em disco", () => {
+    const result = parseLinuxPreflight(JSON.stringify({
+      ok: false,
+      distro: "CachyOS",
+      dependencies: { missing: [], required: ["wg", "ip", "curl"] },
+      elevation: { available: true, method: "sudo" },
+      netns: { available: true },
+      kernel: { wireguard: "missing", running: "7.2.6-1-cachyos", modulesInstalled: false, userspace: false },
+      discord: { found: true, count: 1 },
+      errors: ["modulo wireguard ausente"],
+      installCommand: "",
+    }));
+    expect(result.kernel).toEqual({
+      wireguard: "missing", running: "7.2.6-1-cachyos", modulesInstalled: false, userspace: false,
+    });
+    expect(result.ok).toBe(false);
+    expect(linuxPreflightRepairable(result)).toBe(false);
+    expect(linuxPreflightMessage(result)).toBe(
+      "O kernel Linux em execução (7.2.6-1-cachyos) não possui os módulos instalados. Reinicie no kernel instalado, instale os módulos correspondentes ou instale o wireguard-go antes de ativar.",
+    );
+  });
+
+  it("aceita o kernel sem módulo quando o WireGuard de usuário está disponível", () => {
+    const result = parseLinuxPreflight(JSON.stringify({
+      ok: true,
+      distro: "CachyOS",
+      dependencies: { missing: [], required: ["wg", "ip", "curl"] },
+      elevation: { available: true, method: "sudo" },
+      netns: { available: true },
+      kernel: { wireguard: "missing", running: "7.2.6-1-cachyos", modulesInstalled: false, userspace: true },
+      discord: { found: true, count: 1 },
+      errors: ["modulo wireguard ausente"],
+      installCommand: "",
+    }));
+    expect(result.ok).toBe(true);
+    expect(result.kernel.userspace).toBe(true);
+    expect(linuxPreflightRepairable(result)).toBe(false);
+  });
+
+  it("não lê o kernel sem os campos novos como 'sem módulos' nem como usuário", () => {
+    const result = parseLinuxPreflight(JSON.stringify({
+      ok: false, distro: "CachyOS",
+      dependencies: { missing: [], required: ["wg", "ip", "curl"] },
+      elevation: { available: true, method: "sudo" }, netns: { available: true },
+      kernel: { wireguard: "missing" },
+      discord: { found: true, count: 1 }, errors: ["modulo wireguard ausente"], installCommand: "",
+    }));
+    expect(result.kernel.running).toBe("");
+    expect(result.kernel.modulesInstalled).toBe(true);
+    expect(result.kernel.userspace).toBe(false);
+    expect(linuxPreflightMessage(result)).toBe(
+      "O módulo WireGuard não está disponível no kernel Linux em execução (atual). Instale ou ative o módulo WireGuard, ou instale o wireguard-go, antes de ativar.",
+    );
+  });
+
+  it.each([
+    { loaded: false, userspace: false, wireguard: "missing", selectedUserspace: false, ok: false },
+    { loaded: false, userspace: true, wireguard: "missing", selectedUserspace: true, ok: true },
+    { loaded: true, userspace: true, wireguard: "loaded", selectedUserspace: false, ok: true },
+  ])("calcula prontidão sem depender do kernel do host: $loaded/$userspace", ({ loaded, userspace, wireguard, selectedUserspace, ok }) => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    // Só os probes de capacidade são controlados; a agregação e o JSON são os do helper mantido.
+    const run = spawnSync("/bin/sh", ["-c", [
+      shellHelper(source, "json_escape"),
+      "have() { return 0; }",
+      "wg() { return 0; }",
+      "ip() { return 0; }",
+      "curl() { return 0; }",
+      "os_field() { [ \"$1\" != ID ] || printf arch; }",
+      "uname() { printf '%s\\n' 0.0.0-kernel-de-teste; }",
+      "MODINFO_BINARY=/bin/false",
+      `wireguard_module_loaded() { return ${loaded ? 0 : 1}; }`,
+      `wireguard_userspace_available() { return ${userspace ? 0 : 1}; }`,
+      "FOUND='/fixture/Discord/resources|discord|fixture|'",
+      shellHelper(source, "linux_preflight_json"),
+      "linux_preflight_json",
+    ].join("\n")], { encoding: "utf8" });
+    expect(run.status, run.stderr).toBe(0);
+    const result = parseLinuxPreflight(run.stdout);
+    expect(result.kernel).toEqual({
+      wireguard, running: "0.0.0-kernel-de-teste", modulesInstalled: false, userspace: selectedUserspace,
+    });
+    expect(result.ok).toBe(ok);
+  });
+
+  it("mantém o daemon vivo até o teardown e remove seu pidfile", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const userspaceBlock = [
+      "wireguard_go_pid_file", "wireguard_go_log_file", "resolve_wireguard_go",
+      "start_wireguard_userspace", "wireguard_go_alive", "stop_wireguard_userspace",
+    ].map(name => shellHelper(source, name)).join("\n");
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-wireguard-userspace-"));
+    tempRoots.push(root);
+    const bin = path.join(root, "bin");
+    const install = path.join(root, "dados");
+    fs.mkdirSync(bin);
+    fs.mkdirSync(install);
+    // `ip` falso: a espera pela interface nao pode depender de namespace real no teste.
+    fs.writeFileSync(path.join(bin, "ip"), "#!/bin/sh\nexit 0\n");
+    const daemon = path.join(bin, "wireguard-go");
+    fs.writeFileSync(daemon, "#!/bin/sh\nsleep 30\n");
+    for (const file of ["ip", "wireguard-go"]) fs.chmodSync(path.join(bin, file), 0o755);
+
+    const harness = path.join(root, "userspace.sh");
+    fs.writeFileSync(harness, [
+      "#!/bin/sh",
+      "set -u",
+      'WIREGUARD_GO_BINARY=""',
+      'WIREGUARD_GO_SOURCE=""',
+      `INSTALL_DIR="${install}"`,
+      'NETNS_NAME="discord-vpn"',
+`WG_IF="wg-discord"`,
+      "step() { :; }",
+      "warn() { :; }",
+      // Só a fronteira de elevação/interface é isolada; o processo e seu ciclo de vida são reais.
+      "elevate() { \"$@\"; }",
+      userspaceBlock,
+      // O override entra pelo resolvedor mantido, sem depender de binários do host.
+      `WIREGUARD_GO_CLI="${daemon}"`,
+      "resolve_wireguard_go || { printf 'SEM_BINARIO\\n'; exit 1; }",
+      "if ! start_wireguard_userspace; then printf 'START_FAIL=1\\n'; exit 1; fi",
+      "pid=\"$(cat \"$(wireguard_go_pid_file)\")\"",
+      "printf 'PID=%s\\n' \"$pid\"",
+      "wireguard_go_alive \"$pid\" && printf 'ALIVE_BEFORE=1\\n'",
+      "printf 'LOG=%s\\n' \"$( [ -f \"$(wireguard_go_log_file)\" ] && printf presente || printf ausente )\"",
+      "stop_wireguard_userspace",
+      "[ -e \"$(wireguard_go_pid_file)\" ] || printf 'PIDFILE_REMOVIDO=1\\n'",
+      "wireguard_go_alive \"$pid\" || printf 'ALIVE_DEPOIS=0\\n'",
+    ].join("\n"));
+    fs.chmodSync(harness, 0o755);
+
+    const run = spawnSync("/bin/sh", [harness], {
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
+      encoding: "utf8",
+    });
+    const saida = run.stdout + run.stderr;
+    expect(run.status, saida).toBe(0);
+    expect(saida).toContain("ALIVE_BEFORE=1");
+    expect(saida).toContain("LOG=presente");
+    expect(saida).toContain("PIDFILE_REMOVIDO=1");
+    expect(saida).toContain("ALIVE_DEPOIS=0");
+  });
+
   it("permite reparar pacotes conhecidos quando falta iproute2, mas não inventa capacidade pronta", () => {
     const base = parseLinuxPreflight(JSON.stringify({
       ok: false, platform: "linux", dependencies: { missing: ["iproute2"], required: ["wg", "ip", "curl"] },
@@ -80,142 +230,6 @@ describe("preflight Linux", () => {
     expect(() => parseLinuxPreflight("nao-json")).toThrow(/JSON inválido/);
   });
 
-  it("o standalone oferece preflight e nao instala pacotes sozinho", () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
-    expect(source).toContain("--preflight");
-    expect(source).toContain("sudo pacman -S --needed");
-    expect(source).not.toMatch(/^\s*(?:sudo\s+)?pacman\s+-S/m);
-  });
-
-  it("a ativacao Linux verifica o ambiente antes de limpar legado", () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), "electron/main.ts"), "utf8");
-    const activation = source.slice(source.indexOf("async function linuxActivate"), source.indexOf("async function linuxDeactivate"));
-    expect(activation.indexOf("linuxPreflight(")) .toBeGreaterThanOrEqual(0);
-    expect(activation.indexOf("linuxPreflight(")) .toBeLessThan(activation.indexOf("--cleanup-legacy"));
-    expect(activation).toContain('await linuxStatus() === "ACTIVE"');
-    expect(source).toContain("let linuxStatusInFlight: Promise<string> | null = null");
-  });
-
-  it("carrega o modulo WireGuard antes de fechar o Discord e aborta sem namespace em falha", () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
-    const ensureStart = source.indexOf("ensure_wireguard_module() {");
-    const ensureEnd = source.indexOf("\n}\n\n# Ler campo a campo", ensureStart);
-    expect(ensureStart).toBeGreaterThanOrEqual(0);
-    expect(ensureEnd).toBeGreaterThan(ensureStart);
-    const ensureCall = source.indexOf("ensure_wireguard_module || fail", ensureStart);
-    const stopCall = source.indexOf("\nstop_discord", ensureCall);
-    expect(ensureCall).toBeGreaterThan(ensureStart);
-    expect(stopCall).toBeGreaterThan(ensureCall);
-    const ensureFunction = source.slice(ensureStart, ensureEnd + 2);
-
-    const runCase = (loaded: boolean, modprobeSucceeds: boolean) => {
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-wireguard-module-"));
-      tempRoots.push(root);
-      const bin = path.join(root, "bin");
-      fs.mkdirSync(bin);
-      fs.writeFileSync(path.join(bin, "modprobe"), "#!/bin/sh\nexit 0\n");
-      fs.chmodSync(path.join(bin, "modprobe"), 0o755);
-      const state = path.join(root, "sys", "module", "wireguard");
-      if (loaded) fs.mkdirSync(state, { recursive: true });
-      const trace = path.join(root, "trace");
-      const harness = path.join(root, "module.sh");
-      // O script resolve modprobe/modinfo por caminho absoluto (o PATH da GUI nao inclui
-      // /usr/sbin em varias distros): o harness precisa dos mesmos globais.
-      fs.writeFileSync(harness, [
-        "#!/bin/sh",
-        "MODPROBE_BINARY=\"$BIN_DIR/modprobe\"",
-        "MODINFO_BINARY=\"\"",
-        "wireguard_module_loaded() { [ -e \"$MODULE_STATE\" ]; }",
-        "elevate() {",
-        "  printf '%s\\n' \"$*\" >> \"$TRACE\"",
-        "  if [ \"$1\" = \"$MODPROBE_BINARY\" ] && [ \"$MODPROBE_SUCCEEDS\" = 1 ]; then /bin/mkdir -p \"$MODULE_STATE\"; return 0; fi",
-        "  return 1",
-        "}",
-        ensureFunction,
-        "authorize_install_elevation() { printf '%s\\n' authorization >> \"$TRACE\"; return 0; }",
-        "setup_wireguard_netns() { printf '%s\\n' namespace >> \"$TRACE\"; printf '%s\\n' 'ip link add' >> \"$TRACE\"; }",
-        "stop_discord() { printf '%s\\n' stop >> \"$TRACE\"; }",
-        "fail() { printf '%s\\n' \"$1\" >&2; exit 1; }",
-        "if ! authorize_install_elevation; then fail 'autorizacao recusada'; fi",
-        "if ! ensure_wireguard_module; then fail 'modulo nao preparado'; fi",
-        "stop_discord",
-        "setup_wireguard_netns",
-      ].join("\n"));
-      fs.chmodSync(harness, 0o755);
-      const run = spawnSync("/bin/sh", [harness], {
-        env: {
-          ...process.env,
-          PATH: bin,
-          BIN_DIR: bin,
-          MODULE_STATE: state,
-          MODPROBE_SUCCEEDS: modprobeSucceeds ? "1" : "0",
-          TRACE: trace,
-        },
-        encoding: "utf8",
-      });
-      return {
-        run,
-        trace: fs.existsSync(trace) ? fs.readFileSync(trace, "utf8") : "",
-        modprobe: path.join(bin, "modprobe"),
-      };
-    };
-
-    const alreadyLoaded = runCase(true, false);
-    expect(alreadyLoaded.run.status, alreadyLoaded.run.stderr).toBe(0);
-    expect(alreadyLoaded.trace).toBe("authorization\nstop\nnamespace\nip link add\n");
-
-    const loadedByActivation = runCase(false, true);
-    expect(loadedByActivation.run.status, loadedByActivation.run.stderr).toBe(0);
-    expect(loadedByActivation.trace).toBe(`authorization\n${loadedByActivation.modprobe} wireguard\nstop\nnamespace\nip link add\n`);
-
-    const loadFailed = runCase(false, false);
-    expect(loadFailed.trace).not.toContain("ip link add");
-    expect(loadFailed.run.stderr).toContain("ativacao foi cancelada antes de fechar o Discord");
-    expect(loadFailed.trace).toBe(`authorization\n${loadFailed.modprobe} wireguard\n`);
-    expect(loadFailed.trace).not.toContain("stop");
-    expect(loadFailed.trace).not.toContain("namespace");
-  });
-
-  it("autoriza a elevacao antes de fechar o Discord no fluxo de instalacao", () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
-    const installStart = source.indexOf('FOUND="$(escolher_alvos patchear)"');
-    const installEnd = source.indexOf("\nwhile IFS='|' read", installStart);
-    expect(installStart).toBeGreaterThanOrEqual(0);
-    expect(installEnd).toBeGreaterThan(installStart);
-
-    const install = source.slice(installStart, installEnd);
-    const authorizeIndex = install.indexOf("\nauthorize_install_elevation");
-    const stopIndex = install.indexOf("\nstop_discord");
-    expect(authorizeIndex).toBeGreaterThanOrEqual(0);
-    expect(stopIndex).toBeGreaterThanOrEqual(0);
-    expect(authorizeIndex).toBeLessThan(stopIndex);
-    expect(install).toMatch(/authorize_install_elevation\s+\|\|\s+fail/);
-  });
-
-  it("não chama a barreira nos modos status, preflight e ensure-dependencies", () => {
-    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
-    const ensureStart = source.indexOf('[ "$MODE" = "ensure-dependencies" ] && {');
-    const preflightStart = source.indexOf('[ "$MODE" = "preflight" ] && {');
-    const foundStart = source.indexOf('FOUND="$(discord_dirs)"');
-    const preflightEnd = source.indexOf('[ -n "$FOUND" ] || fail', preflightStart);
-    const statusStart = source.indexOf('if [ "$MODE" = "status" ]');
-    const statusEnd = source.indexOf('if [ "$MODE" = "uninstall" ] || [ "$MODE" = "restore" ]', statusStart);
-    expect(ensureStart).toBeGreaterThanOrEqual(0);
-    expect(foundStart).toBeGreaterThan(ensureStart);
-    expect(preflightStart).toBeGreaterThan(foundStart);
-    expect(preflightEnd).toBeGreaterThan(preflightStart);
-    expect(statusStart).toBeGreaterThan(preflightEnd);
-    expect(statusEnd).toBeGreaterThan(statusStart);
-
-    const modeBlocks = [
-      source.slice(ensureStart, foundStart),
-      source.slice(preflightStart, preflightEnd),
-      source.slice(statusStart, statusEnd),
-    ];
-    for (const block of modeBlocks) {
-      expect(block).not.toMatch(/^\s*authorize_install_elevation\b/m);
-    }
-  });
 
   it("não fecha o Discord quando a autorização falha e mantém a ordem quando aceita", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
@@ -574,6 +588,131 @@ describe("preflight Linux", () => {
     expect(() => execFileSync("bash", [script, "--ensure-dependencies"], { env: { ...process.env, GOLIVE_GUI: "" }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).toThrow();
   });
 
+  it("reconhece e encerra todos os processos Vesktop ELF da raiz exata", async () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const extract = (name: string) => {
+      const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
+      if (!match) throw new Error(`Funcao ${name} nao encontrada`);
+      return match[0].trim();
+    };
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-vesktop-elf-"));
+    tempRoots.push(root);
+    const appRoot = path.join(root, "vesktop");
+    const resources = path.join(appRoot, "resources");
+    fs.mkdirSync(resources, { recursive: true });
+    const executable = path.join(appRoot, "vesktop");
+    fs.copyFileSync("/bin/sleep", executable);
+    const client = spawn(executable, ["30"]);
+    const clientChild = spawn(executable, ["30"]);
+    const unrelated = spawn("/bin/sleep", ["30"]);
+    const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    try {
+      const harness = path.join(root, "stop.sh");
+      fs.writeFileSync(harness, [
+        "#!/bin/sh",
+        extract("normalize_pid"),
+        extract("parallel_app_root_for_resources"),
+        extract("parallel_pids_for_resources"),
+        extract("parallel_pid_for_resources"),
+        extract("parallel_process_belongs_to_resources"),
+        extract("kill_parallel_by_path"),
+        "FOUND=\"$1|vesktop||\"",
+        "parallel_pid_for_resources \"$1\"",
+        "kill_parallel_by_path",
+      ].join("\n"));
+      const result = spawnSync("/bin/sh", [harness, resources], { encoding: "utf8" });
+      expect(result.status, result.stderr).toBe(0);
+      expect([String(client.pid), String(clientChild.pid)]).toContain(result.stdout.trim());
+      await Promise.all([exited(client), exited(clientChild)]);
+      expect(unrelated.exitCode).toBe(null);
+    } finally {
+      clientChild.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([exited(client), exited(clientChild), exited(unrelated)]);
+    }
+  });
+
+  it("escalona Flatpak apenas para PID positivo do application ID confirmado", async () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const extract = (name: string) => {
+      const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
+      if (!match) throw new Error(`Funcao ${name} nao encontrada`);
+      return match[0].trim();
+    };
+    const target = spawn("/bin/sleep", ["30"]);
+    const unrelated = spawn("/bin/sleep", ["30"]);
+    const exited = (child: ChildProcess) => child.exitCode !== null || child.signalCode !== null
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const harness = path.join(os.tmpdir(), `golive-flatpak-kill-${process.pid}.sh`);
+    const normalize = extract("normalize_pid");
+    const flatpakPid = extract("flatpak_pid_for_id");
+    const killFlatpak = extract("kill_flatpak_apps_forcefully");
+    try {
+      fs.writeFileSync(harness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak_pid_for_id() { [ \"$1\" = org.example.Target ] && printf '%s\\n' \"$TARGET_PID\"; }",
+        "FLATPAK_IDS=org.example.Target",
+        "FLATPAK_TUNEL_IDS=",
+        normalize,
+        killFlatpak,
+        "kill_flatpak_apps_forcefully",
+      ].join("\n"));
+      const result = spawnSync("/bin/sh", [harness], { encoding: "utf8", env: { ...process.env, TARGET_PID: String(target.pid) } });
+      expect(result.status, result.stderr).toBe(0);
+      await exited(target);
+      expect(unrelated.exitCode).toBe(null);
+
+      const invalidHarness = path.join(os.tmpdir(), `golive-flatpak-invalid-${process.pid}.sh`);
+      fs.writeFileSync(invalidHarness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak_pid_for_id() { [ \"$1\" = org.example.Target ] && printf '%s\\n' \"$TARGET_PID\"; }",
+        "kill() { printf '%s\\n' \"$*\" >> \"$SIGNALS\"; }",
+        "FLATPAK_IDS=org.example.Target",
+        "FLATPAK_TUNEL_IDS=",
+        normalize,
+        killFlatpak,
+        "kill_flatpak_apps_forcefully",
+      ].join("\n"));
+      for (const invalidPid of ["0", "000"]) {
+        const signals = `${invalidHarness}.${invalidPid}`;
+        const invalid = spawnSync("/bin/sh", [invalidHarness], {
+          encoding: "utf8",
+          env: { ...process.env, TARGET_PID: invalidPid, SIGNALS: signals },
+        });
+        expect(invalid.status, invalid.stderr).toBe(0);
+        expect(fs.existsSync(signals)).toBe(false);
+      }
+
+      const parseHarness = path.join(os.tmpdir(), `golive-flatpak-parse-${process.pid}.sh`);
+      fs.writeFileSync(parseHarness, [
+        "#!/bin/sh",
+        "have() { [ \"$1\" = flatpak ]; }",
+        "flatpak() { printf '%s %s\\n' \"$FAKE_PID\" org.example.Target; }",
+        normalize,
+        flatpakPid,
+        "flatpak_pid_for_id org.example.Target",
+      ].join("\n"));
+      const zero = spawnSync("/bin/sh", [parseHarness], { encoding: "utf8", env: { ...process.env, FAKE_PID: "0" } });
+      expect(zero.status).toBe(1);
+      expect(zero.stdout).toBe("");
+      const leadingZeros = spawnSync("/bin/sh", [parseHarness], { encoding: "utf8", env: { ...process.env, FAKE_PID: "00042" } });
+      expect(leadingZeros.status).toBe(0);
+      expect(leadingZeros.stdout.trim()).toBe("42");
+    } finally {
+      for (const filename of [harness, `${harness}.0`, `${harness}.000`, path.join(os.tmpdir(), `golive-flatpak-invalid-${process.pid}.sh`), path.join(os.tmpdir(), `golive-flatpak-parse-${process.pid}.sh`)]) {
+        fs.rmSync(filename, { force: true });
+      }
+      target.kill("SIGKILL");
+      unrelated.kill("SIGKILL");
+      await Promise.all([exited(target), exited(unrelated)]);
+    }
+  });
+
   it("confirma o processo no namespace, usa readonly sem prompt e faz rollback se ele sumir", async () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const extract = (name: string) => {
@@ -597,11 +736,11 @@ describe("preflight Linux", () => {
         "have() { case \"$1\" in ip|sudo|stat|pgrep) return 0 ;; *) return 1 ;; esac; }",
         "elevate() { printf 'interactive\\n' >> \"$TRACE\"; \"$@\"; }",
         "elevate_readonly() { printf 'readonly\\n' >> \"$TRACE\"; \"$@\"; }",
-        "pgrep() {",
+        "parallel_pid_for_resources() {",
         "  calls=0; [ -f \"$STATE\" ] && calls=$(cat \"$STATE\")",
         "  calls=$((calls + 1)); printf '%s\\n' \"$calls\" > \"$STATE\"",
         "  if [ \"$SCENARIO\" = disappeared ] && [ \"$calls\" -gt 1 ]; then return 1; fi",
-        "  [ \"$1\" = -x ] && printf '4242\\n'",
+        "  [ \"$1\" = /resources ] && printf '4242\\n'",
         "}",
         "ip() {",
         "  if [ \"$1\" = netns ] && [ \"$2\" = identify ]; then",

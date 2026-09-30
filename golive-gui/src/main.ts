@@ -49,6 +49,8 @@ declare global {
         archLike: boolean;
         dependencies: { missing: string[]; required: string[] };
         repairable?: boolean;
+        message?: string;
+        kernel?: { wireguard: string; running: string; modulesInstalled: boolean; userspace: boolean };
         elevation: { available: boolean; method: string };
         netns: { available: boolean };
         discord: { found: boolean; count: number; firstPath: string };
@@ -394,17 +396,37 @@ async function updateStatus() {
       const canPrepare = linuxPreflight.repairable === true;
       statusText.innerText = canPrepare
         ? `Dependências do Linux ausentes: ${missing.join(', ')}. Serão preparadas ao ativar.`
-        : (linuxPreflight.errors[0] || 'Ambiente Linux não está pronto');
+        : (linuxPreflight.message || linuxPreflight.errors[0] || 'Ambiente Linux não está pronto');
       statusTag.textContent = canPrepare ? 'Preparação necessária' : 'Corrija antes de ativar';
       statusTag.classList.add(canPrepare ? 'tag--warn' : 'tag--danger');
       toggleBtn.disabled = !canPrepare || !hasSelectedConf;
       btnText.innerText = canPrepare ? (hasSelectedConf ? 'Preparar e ativar' : 'Selecione uma Configuração') : 'Não Disponível';
       statusCard.hidden = false;
       if (linuxPreflightCommand) {
+        // Sem comando de instalacao nao ha o que executar: a mensagem do status ja diz o
+        // que fazer (ex.: reiniciar apos uma atualizacao de kernel).
         linuxPreflightCommand.textContent = linuxPreflight.installCommand
           ? `Comando: ${linuxPreflight.installCommand}`
-          : 'Verifique sudo/pkexec, iproute2 e o suporte a namespaces.';
-        linuxPreflightCommand.hidden = false;
+          : '';
+        linuxPreflightCommand.hidden = !linuxPreflight.installCommand;
+      }
+    } else if (isLinux && linuxPreflight?.kernel?.wireguard === 'missing' && linuxPreflight.kernel.userspace) {
+      // Sem módulo do kernel, o device sai no espaço do usuário: o usuário precisa saber por
+      // que o túnel funciona aqui e que isso não depende do módulo do kernel.
+      statusText.innerText = 'Discord pronto — este kernel não tem o módulo WireGuard, então o túnel é de usuário (wireguard-go).';
+      statusTag.textContent = 'Pronto (usuário)';
+      statusTag.classList.add('tag--ok');
+      statusCard.hidden = false;
+      if (linuxPreflightCommand) linuxPreflightCommand.hidden = true;
+      if (!hasSelectedConf) {
+        toggleBtn.disabled = true;
+        toggleBtn.title = currentVpnMode === 'proton'
+          ? 'Conecte sua conta ProtonVPN para ativar'
+          : 'Importe uma configuração WireGuard (.conf) para ativar';
+        btnText.innerText = 'Selecione uma Configuração';
+      } else {
+        toggleBtn.disabled = false;
+        btnText.innerText = 'Ativar Bypass';
       }
     } else {
       if (!hasSelectedConf) {

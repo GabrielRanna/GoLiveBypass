@@ -126,7 +126,7 @@ const RTCConnectionStore: DiagnosticStore = findStoreLazy("RTCConnectionStore");
 
 const VIDEO_GUARD = "2026-08-video-guard";
 
-const PLUGIN_VERSION = "2.0.10-beta-2";
+const PLUGIN_VERSION = "2.0.10-beta-3";
 const PLUGIN_UPDATE_STATUS_POLL_INTERVAL_MS = 15_000;
 const PLUGIN_UPDATE_STATUS_TIMEOUT_MS = 10_000;
 const PLUGIN_UPDATE_CHECK_TIMEOUT_MS = 2 * 60_000 + 15_000;
@@ -518,6 +518,7 @@ interface PluginRouteDiscoverySnapshot {
     routes: ProtonRouteCatalogEntry[];
     error?: string;
     updatedAt: number | null;
+    contextMatches?: boolean;
 }
 
 interface PluginRouteDiscoveryResult {
@@ -644,19 +645,20 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
 
     const applySnapshot = React.useCallback((snapshot: PluginRouteDiscoverySnapshot | null) => {
         if (!snapshot) return;
-        const routes = Array.isArray(snapshot.routes) ? snapshot.routes : [];
-        const incomingMeasurementId = snapshot.measurementId ?? null;
-        const measurementChanged = Boolean(incomingMeasurementId && incomingMeasurementId !== measurementIdRef.current);
+        const compatible = snapshot.contextMatches !== false;
+        const incomingMeasurementId = compatible ? snapshot.measurementId ?? null : null;
+        const routes = incomingMeasurementId && Array.isArray(snapshot.routes) ? snapshot.routes : [];
+        const measurementChanged = incomingMeasurementId !== measurementIdRef.current;
         const signature = `${incomingMeasurementId ?? ""}|${snapshot.active === true}|${snapshot.phase ?? ""}|${snapshot.error ?? ""}|${snapshot.updatedAt ?? 0}|${routes.length}`;
-        if (incomingMeasurementId) measurementIdRef.current = incomingMeasurementId;
+        measurementIdRef.current = incomingMeasurementId;
         if (signature === statusSignatureRef.current) return;
         statusSignatureRef.current = signature;
         setCandidates(current => mergeProtonRouteCatalog(measurementChanged ? new Map() : current, routes));
         if (measurementChanged) setAppliedServer(null);
         setDiscovery({
-            active: snapshot.active === true,
-            phase: snapshot.phase ?? null,
-            error: snapshot.error ? safeDiagnosticDetail(snapshot.error, 240) : null,
+            active: compatible && snapshot.active === true,
+            phase: compatible ? snapshot.phase ?? null : null,
+            error: compatible && snapshot.error ? safeDiagnosticDetail(snapshot.error, 240) : null,
         });
     }, []);
 
@@ -664,12 +666,14 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
         const read = Native?.getProtonRouteDiscoveryStatus;
         if (typeof read !== "function") return null;
         try {
-            return await read() as PluginRouteDiscoverySnapshot;
+            const snapshot = await read({ username: account, country, freeOnly, autoPing }) as PluginRouteDiscoverySnapshot;
+            if (!mountedRef.current || filtersKeyRef.current !== filtersKey) return null;
+            return snapshot;
         } catch (error) {
             recordRendererError("Falha ao consultar a descoberta de rotas Proton", error);
             return null;
         }
-    }, []);
+    }, [account, country, freeOnly, autoPing, filtersKey]);
 
     React.useEffect(() => {
         const previousRequestId = requestRef.current;
@@ -708,7 +712,7 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
             const snapshot = await readSnapshot();
             if (disposed || !snapshot) return;
             // Evento de outra geração: descarta sem tocar na lista atual.
-            if (snapshot.active && snapshot.requestId && requestRef.current && snapshot.requestId !== requestRef.current) return;
+            if (snapshot.requestId && requestRef.current && snapshot.requestId !== requestRef.current) return;
             applySnapshot(snapshot);
             if (!snapshot.active) stopTimer();
         };
@@ -716,7 +720,7 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
         const start = async () => {
             const snapshot = await readSnapshot();
             if (disposed) return;
-            if (snapshot?.active) {
+            if (snapshot?.active && snapshot.contextMatches !== false) {
                 // Remount com descoberta em andamento: adota a sessão nativa em
                 // vez de abrir uma segunda e perder o progresso já recebido.
                 applySnapshot(snapshot);
@@ -725,34 +729,56 @@ function useProtonRouteSelection({ active, account, country, freeOnly, autoPing 
                 return;
             }
             if (snapshot) applySnapshot(snapshot);
+            if (snapshot?.active && snapshot.contextMatches === false && typeof Native.cancelProtonRouteDiscovery === "function") {
+                await Native.cancelProtonRouteDiscovery(snapshot.requestId ?? undefined);
+                if (disposed) return;
+            }
             const requestId = `plugin-route-catalog-${Date.now()}-${Math.random().toString(16).slice(2)}`;
             requestRef.current = requestId;
             setDiscovery({ active: true, phase: "catalog", error: null });
             timer = setInterval(() => void poll(), PROTON_ROUTE_DISCOVERY_POLL_INTERVAL_MS);
+            let keepPolling = false;
             try {
                 const result = await Native.discoverProtonRoutes({ requestId, country, freeOnly, autoPing }) as PluginRouteDiscoveryResult;
                 if (disposed) return;
-                if (result?.measurementId) measurementIdRef.current = result.measurementId;
-                if (Array.isArray(result?.routes) && result.routes.length > 0) {
-                    const routes = result.routes;
-                    setCandidates(current => mergeProtonRouteCatalog(current, routes));
-                }
                 const failed = result?.success !== true;
-                setDiscovery({
+                const completed = {
                     active: false,
-                    phase: result?.cancelled ? "cancelled" : failed ? "failed" : "completed",
+                    phase: result?.cancelled ? "cancelled" as const : failed ? "failed" as const : "completed" as const,
                     error: failed ? safeDiagnosticDetail(result?.error || "Não foi possível listar as rotas Proton.", 240) : null,
-                });
+                };
+                if (result?.measurementId) {
+                    const current = await readSnapshot();
+                    if (disposed) return;
+                    // O resultado pode chegar antes do primeiro polling: usa a
+                    // mesma troca de geração. Se outro componente já substituiu
+                    // a operação, o snapshot atual prevalece sobre o retorno.
+                    applySnapshot(current ?? {
+                        ...completed,
+                        error: completed.error ?? undefined,
+                        requestId,
+                        measurementId: result.measurementId,
+                        routes: Array.isArray(result.routes) ? result.routes : [],
+                        updatedAt: Date.now(),
+                        contextMatches: true,
+                    });
+                    if (current?.active && current.contextMatches !== false) {
+                        requestRef.current = current.requestId;
+                        keepPolling = true;
+                    }
+                } else setDiscovery(completed);
             } catch (error) {
                 if (!disposed) {
                     setDiscovery({ active: false, phase: "failed", error: safeDiagnosticDetail(error || "Não foi possível listar as rotas Proton.", 240) });
                 }
             } finally {
-                stopTimer();
+                if (!keepPolling) stopTimer();
             }
         };
 
-        void start();
+        void start().catch(error => {
+            if (!disposed) setDiscovery({ active: false, phase: "failed", error: safeDiagnosticDetail(error, 240) });
+        });
         return () => {
             disposed = true;
             stopTimer();

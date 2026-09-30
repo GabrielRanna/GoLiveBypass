@@ -1,5 +1,7 @@
-// Encode PowerShell instead of interpolating paths into cmd.exe. The service
-// must use the selected profile even when another application installed it.
+import { wireSockOwnershipPowerShell } from "./wiresock-ownership";
+
+// Encode PowerShell instead of interpolating paths into cmd.exe. Only the
+// exact GUI profile may authorize stopping or retargeting an existing service.
 export function wireSockServiceScript(executable: string, config: string, resultPath?: string): string {
   for (const value of [executable, config, resultPath].filter((value): value is string => Boolean(value))) {
     if (!value || /["\r\n\0]/.test(value)) throw new Error("Caminho WireSock inválido");
@@ -20,9 +22,10 @@ function Complete-WireSock([int]$code, [string]$detail) {
 try {
   $serviceNames = @('wiresock-client-service', 'wiresock-pro-client-service')
   $expected = ${literal(command)}
+  ${wireSockOwnershipPowerShell(config)}
   function Get-WireSockInfo {
     foreach ($candidate in $serviceNames) {
-      $info = Get-CimInstance Win32_Service -Filter "Name='$candidate'" -ErrorAction SilentlyContinue
+      $info = Get-CimInstance Win32_Service -Filter "Name='$candidate'" -ErrorAction Stop
       if ($info) { return $info }
     }
     return $null
@@ -37,12 +40,16 @@ try {
     return $false
   }
   function Stop-WireSockService([string]$serviceName) {
+    Assert-GoLiveWireSockRegistration $serviceName
     $current = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
     if (-not $current -or $current.Status -eq 'Stopped') { return }
-    try { Stop-Service -Name $serviceName -Force -ErrorAction Stop } catch {
-      # A service in STOP_PENDING can reject a second Stop-Service. The state
-      # poll below is authoritative and avoids starting over a live WFP child.
+    $null = & sc.exe stop $serviceName
+    if ($LASTEXITCODE -ne 0) {
+      $stopCode = $LASTEXITCODE
       $current = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+      if ($current -and $current.Status -notin @('Stopped', 'StopPending')) {
+        throw "STOP_FAILED: servico=$serviceName codigo=$stopCode"
+      }
     }
     if (-not (Wait-WireSockState $serviceName 'Stopped' 45)) {
       $info = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
@@ -51,6 +58,8 @@ try {
   }
 
   $serviceInfo = Get-WireSockInfo
+  $null = Get-GoLiveWireSockOwnership
+  if ($serviceInfo) { Assert-GoLiveWireSockRegistration $serviceInfo.Name }
   if (-not $serviceInfo) {
     & ${literal(executable)} install -start-type 3 -config ${literal(config)} -log-level info -network-lock disabled
     $installCode = $LASTEXITCODE
@@ -59,8 +68,10 @@ try {
   }
   if (-not $serviceInfo) { throw 'SERVICE_MISSING: Serviço WireSock não encontrado após instalação' }
   $name = [string]$serviceInfo.Name
+  Assert-GoLiveWireSockRegistration $name
   Stop-WireSockService $name
 
+  Assert-GoLiveWireSockRegistration $name
   $change = Invoke-CimMethod -InputObject $serviceInfo -MethodName Change -Arguments @{PathName=$expected; StartMode='Manual'}
   if ($change.ReturnValue -ne 0) { throw "CONFIG_FAILED: codigo=$($change.ReturnValue)" }
   $actual = Get-WireSockInfo
@@ -69,6 +80,7 @@ try {
   $lastStartError = ''
   for ($attempt = 1; $attempt -le 2; $attempt++) {
     try {
+      Assert-GoLiveWireSockRegistration $name
       Start-Service -Name $name -ErrorAction Stop
       if (Wait-WireSockState $name 'Running' 45) {
         $running = Get-WireSockInfo
@@ -126,25 +138,11 @@ function Read-Captured([string]$path) {
     return $text
   } catch { return '' }
 }
-function Wait-ServiceStopped([string]$name, [int]$seconds) {
-  $service = Get-Service -Name $name -ErrorAction SilentlyContinue
-  if (-not $service -or $service.Status -eq 'Stopped') { return }
-  try { Stop-Service -Name $name -Force -ErrorAction Stop } catch {}
-  $deadline = (Get-Date).AddSeconds($seconds)
-  do {
-    $service = Get-Service -Name $name -ErrorAction SilentlyContinue
-    if (-not $service -or $service.Status -eq 'Stopped') { return }
-    Start-Sleep -Milliseconds 250
-  } while ((Get-Date) -lt $deadline)
-  throw "DIRECT_STOP_TIMEOUT: servico=$name estado=$($service.Status)"
-}
+${wireSockOwnershipPowerShell(config)}
 try {
-  foreach ($name in @('wiresock-client-service', 'wiresock-pro-client-service')) {
-    Wait-ServiceStopped $name 45
-  }
-  Get-Process -Name 'wiresock-client' -ErrorAction SilentlyContinue |
-    Stop-Process -Force -ErrorAction SilentlyContinue
+  $null = Stop-GoLiveWireSock
   Start-Sleep -Milliseconds 500
+  if ((Get-GoLiveWireSockOwnership).active) { throw 'WIRESOCK_INSPECTION_FAILED: outra instância iniciou durante a ativação' }
   Remove-Item -LiteralPath $resultPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
   $arguments = @('run', '-config', ('"' + ${literal(config)} + '"'), '-log-level', 'info', '-network-lock', 'disabled')
   $child = Start-Process -FilePath ${literal(executable)} -ArgumentList $arguments -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden -PassThru -ErrorAction Stop
@@ -168,6 +166,37 @@ try {
   [Console]::Error.WriteLine($detail)
   Complete-WireSock 1 $detail
 }`;
+}
+
+/** Cleans only an instance whose exact GUI config is revalidated under UAC. */
+export function wireSockCleanupScript(config: string, resultPath: string): string {
+  for (const value of [config, resultPath]) {
+    if (!value || /["\r\n\0]/.test(value)) throw new Error("Caminho WireSock inválido");
+  }
+  const literal = (value: string) => `'${value.replace(/'/g, "''")}'`;
+  return `\uFEFF$ErrorActionPreference='Stop'
+${wireSockOwnershipPowerShell(config)}
+$result = [PSCustomObject]@{ stopped=$false; attempts=0; resetNetworkLock=$false; dnsCleared=$false; dnsFlushed=$false; servicesResidual=@(); processResidual=$false; residual=@() }
+try {
+  $initial = Get-GoLiveWireSockOwnership
+  $result.attempts = 1
+  $null = Stop-GoLiveWireSock
+  if ($initial.active) {
+    # GUI profiles omit DNS and use network-lock disabled. Config/PID ownership
+    # does not authorize resetting a global lock or saved DNS of other adapters.
+    if ((Get-GoLiveWireSockOwnership).active) { throw 'WIRESOCK_INSPECTION_FAILED: túnel reiniciou durante a limpeza' }
+    try { $null = & ipconfig.exe /flushdns; $result.dnsFlushed = ($LASTEXITCODE -eq 0) } catch {}
+  }
+  $final = Get-GoLiveWireSockOwnership
+  $result.stopped = -not $final.active
+  if ($final.active) { throw 'STOP_TIMEOUT: WireSock próprio ainda está em execução' }
+} catch {
+  $result.residual = @($_.Exception.Message)
+  $result.stopped = $false
+}
+[IO.File]::WriteAllText(${literal(resultPath)}, ($result | ConvertTo-Json -Compress -Depth 4), [Text.UTF8Encoding]::new($false))
+if (-not $result.stopped) { exit 1 }
+`;
 }
 
 /**

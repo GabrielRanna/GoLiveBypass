@@ -2511,7 +2511,7 @@ function linuxPreflight(force = false): Promise<LinuxPreflight> {
         ok: false, platform: "linux", distro: "Linux", archLike: false,
         dependencies: { missing: [], required: ["wg", "ip", "curl"] },
         elevation: { available: false, method: "none" }, netns: { available: false },
-        kernel: { wireguard: "unknown" }, discord: { found: false, count: 0, firstPath: "" },
+        kernel: { wireguard: "unknown", running: "", modulesInstalled: true, userspace: false }, discord: { found: false, count: 0, firstPath: "" },
         errors: [message], installCommand: "",
       } satisfies LinuxPreflight;
     })
@@ -2986,7 +2986,9 @@ ipcMain.handle("get-status", async () => {
 ipcMain.handle("get-linux-preflight", async () => {
   if (!IS_LINUX) return null;
   const preflight = await linuxPreflight();
-  return { ...preflight, repairable: linuxPreflightRepairable(preflight) };
+  // A mensagem vem do backend para a UI nao repetir (e divergir) a prioridade entre
+  // dependencia, modulo e elevacao.
+  return { ...preflight, repairable: linuxPreflightRepairable(preflight), message: linuxPreflightMessage(preflight) };
 });
 ipcMain.handle("get-startup", () => getStartup());
 ipcMain.handle("set-startup", (_event, enabled: unknown) => {

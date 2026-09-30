@@ -70,6 +70,14 @@ export interface ProtonRouteDiscoveryOptions {
     onProgress?: (progress: proton.ProtonOptimizationProgress & { requestId: string; measurementId: string }) => void;
 }
 
+/** Contexto esperado pelo renderer; a resposta só expõe se ele ainda coincide. */
+export interface ProtonRouteDiscoveryContext {
+    username: string;
+    country?: string;
+    freeOnly?: boolean;
+    autoPing?: boolean;
+}
+
 /**
  * Projeção pública de uma rota catalogada. `status` descreve apenas a medição
  * de ping: "testing" aguarda a sonda, "success" tem ping válido e "failed"
@@ -126,6 +134,7 @@ export interface ProtonRouteDiscoveryStatus {
     error?: string;
     updatedAt: number | null;
     expiresAt: number | null;
+    contextMatches?: boolean;
 }
 
 /** Detalhe preservado da ponte de CAPTCHA: recusa e cancelamento não são a mesma coisa. */
@@ -1094,12 +1103,13 @@ export class PluginVpnController {
             return Promise.resolve({ success: false, error: "Já existe uma seleção de rota Proton em andamento." });
         if (this.protonLogin)
             return Promise.resolve({ success: false, error: "Termine o login Proton antes de escolher uma rota." });
-        if (this.routeMeasurement?.active)
+        if (this.routeMeasurement?.active && !this.routeMeasurement.controller.signal.aborted)
             return Promise.resolve({ success: false, error: "Já existe uma descoberta de rotas Proton em andamento." });
 
         const requestId = normalizeLoginRequestId(options.requestId);
         const controller = new AbortController();
         const now = Date.now();
+        const initialSettings = this.settings();
         const measurement: ProtonRouteMeasurement = {
             measurementId: randomUUID().replaceAll("-", ""),
             requestId,
@@ -1107,10 +1117,10 @@ export class PluginVpnController {
             // mais a geração decidem se um evento ou seleção ainda vale.
             owner: Symbol("proton-route-measurement"),
             generation: ++this.routeMeasurementGeneration,
-            username: "",
-            country: "",
-            freeOnly: true,
-            autoPing: true,
+            username: normalizeUsername(initialSettings.protonUsername),
+            country: normalizeCountry(options.country ?? initialSettings.protonCountry),
+            freeOnly: options.freeOnly ?? initialSettings.protonFreeOnly,
+            autoPing: options.autoPing ?? initialSettings.protonAutoPing,
             controller,
             active: true,
             phase: "preparing",
@@ -1193,7 +1203,7 @@ export class PluginVpnController {
         return true;
     }
 
-    public getRouteDiscoveryStatus(): ProtonRouteDiscoveryStatus {
+    public getRouteDiscoveryStatus(context?: ProtonRouteDiscoveryContext): ProtonRouteDiscoveryStatus {
         this.sweepRouteMeasurement();
         const measurement = this.routeMeasurement;
         if (!measurement) {
@@ -1207,9 +1217,20 @@ export class PluginVpnController {
                 measured: 0,
                 updatedAt: null,
                 expiresAt: null,
+                ...(context ? { contextMatches: false } : {}),
             };
         }
         const routes = this.routeCatalogViews(measurement);
+        let contextMatches: boolean | undefined;
+        if (context) {
+            const settings = this.settings();
+            contextMatches = protonUsernamesMatch(measurement.username, normalizeUsername(context.username))
+                && protonUsernamesMatch(measurement.username, settings.protonUsername)
+                && measurement.country === normalizeCountry(context.country ?? settings.protonCountry)
+                && measurement.freeOnly === (context.freeOnly ?? settings.protonFreeOnly)
+                && measurement.autoPing === (context.autoPing ?? settings.protonAutoPing)
+                && !(measurement.active && measurement.controller.signal.aborted);
+        }
         return {
             active: measurement.active,
             requestId: measurement.requestId,
@@ -1221,6 +1242,7 @@ export class PluginVpnController {
             error: measurement.error,
             updatedAt: measurement.updatedAt,
             expiresAt: measurement.expiresAt,
+            ...(context ? { contextMatches } : {}),
         };
     }
 

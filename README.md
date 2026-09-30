@@ -502,7 +502,7 @@ O painel também permite autenticar, resolver o CAPTCHA em uma janela oficial is
 
 - **WireSock externo detectado**: encerre a GUI, o standalone ou o outro plugin que controla o túnel. O plugin não faz `taskkill` amplo e não assume serviços externos.
 - **Windows x64 necessário**: Linux, macOS, Windows 32-bit e Windows ARM64 permanecem fora desta primeira etapa da migração.
-- **`recovery_required`**: a parada do serviço ou a restauração do lock/DNS não foi confirmada. Não tente iniciar outro perfil; abra o log e use **Restaurar rede** ou reinicie o Windows se o filtro continuar ativo.
+- **`recovery_required`**: não foi possível confirmar o perfil ou a parada dos serviços/processos próprios. Não tente iniciar outro perfil; abra o log e use **Restaurar rede** ou reinicie o Windows se o filtro continuar ativo. Perfis atuais omitem DNS e desabilitam `network-lock`; a limpeza preserva DNS de adaptadores e locks globais de outras VPNs.
 - **CAPTCHA Proton**: o login abre uma janela com origem oficial Proton, sem downloads, permissões ou navegação externa. Fechar a janela cancela a tentativa sem alterar a sessão.
 - **Quer ver o que aconteceu**: rode `/golivebypass` ou abra `%LOCALAPPDATA%\GoLiveBypass\plugin-vpn\plugin-vpn.log` (veja [O registro](#o-registro-o-que-o-plugin-anotou)). O arquivo inclui estado, ownership, início/parada do WireSock e probes log-only; não inclui senha nem token.
 - **A região da call não mudou**: saia e entre de novo no canal. Canais de servidor com região fixada por um admin ignoram sua preferência, e numa call que já está rolando a região já foi decidida.
@@ -530,7 +530,7 @@ No plugin, `/golivebypass` copia o estado atual e o ring buffer do processo prin
 O registro responde as perguntas que a tela não responde:
 
 - **se a instância é dona do serviço WireSock** ou encontrou outro controlador
-- **se o WireGuard iniciou, parou e restaurou o lock/DNS**
+- **se o WireGuard iniciou e os serviços/processos próprios foram confirmados como parados**
 - **se os probes de rota e conectividade responderam** — sempre como diagnóstico
 - **se o Discord abriu a sessão com o guard de vídeo atribuído**
 
@@ -614,7 +614,7 @@ O plugin mantém duas responsabilidades separadas:
 1. O patch do renderer mantém a interface de câmera/Go Live coerente com o experimento de vídeo do Discord e preserva as preferências de região da call/stream.
 2. O processo principal controla uma sessão WireGuard/WireSock por aplicativo. O perfil usa a rota padrão, mas `AllowedApps` limita o túnel ao `Discord.exe`, ao `Update.exe` da instalação atual e, quando disponível, a um helper temporário de diagnóstico.
 
-Ao ativar, o controlador valida ou gera o perfil, reserva o lock global, sanitiza DNS/AllowedApps, configura o serviço com `network-lock disabled`, confirma o ownership e reinicia o Discord. Ao desativar, ele para apenas serviços e PIDs cujo comando aponta para o perfil privado, reseta o network lock, limpa DNS somente dos adaptadores WireSock/ProTUN e confirma que não sobrou processo.
+Ao ativar, o controlador valida ou gera o perfil, reserva o lock global, sanitiza DNS/AllowedApps, configura o serviço com `network-lock disabled`, confirma o ownership e reinicia o Discord. Ao desativar, ele para apenas serviços e PIDs cujo comando aponta para o perfil privado e confirma que não sobrou processo próprio. Perfis atuais não alteram DNS global nem habilitam o network-lock; a limpeza preserva essas configurações e pode limpar o cache DNS após confirmar a parada própria. Resíduos de versões antigas que habilitaram lock ou alteraram DNS exigem diagnóstico específico: o perfil/PID atual não prova a origem desses recursos globais.
 
 O estado `active` é deliberadamente operacional: significa que o serviço e o processo próprio foram confirmados. Os probes de DNS, HTTPS e rota são executados em segundo plano e ficam no log como evidência auxiliar; uma falha de probe não bloqueia a ativação, não troca a saída no meio da call e não encerra o Discord.
 

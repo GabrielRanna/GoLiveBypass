@@ -16,6 +16,7 @@
 #   ./golivebypass-standalone.sh --probe
 #   ./golivebypass-standalone.sh --refresh-route
 #   ./golivebypass-standalone.sh --refresh-route-from <profile.conf>  (GUI)
+#   ./golivebypass-standalone.sh --wireguard-go <caminho>  (WireGuard de usuario; GUI/testes)
 #   ./golivebypass-standalone.sh --check-update
 #   ./golivebypass-standalone.sh --update
 
@@ -60,6 +61,9 @@ unset -f _local_probe 2>/dev/null || true
 PATCHER_NAME="golivebypass.js"
 STANDALONE_VERSION="1.1.12-beta.13"
 WG_CONF_CLI=""
+# WireGuard de usuario (wireguard-go): caminho explicito via --wireguard-go/GOLIVE_WIREGUARD_GO.
+# Sem ele o script procura ao lado de si mesmo (AppImage), na arvore de desenvolvimento e no PATH.
+WIREGUARD_GO_CLI="${WIREGUARD_GO_CLI:-}"
 NETNS_NAME="discord-vpn"
 WG_IF="wg-discord"
 NONINTERACTIVE=0
@@ -668,6 +672,7 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --proxy) fail "Proxy nao e mais suportada; use uma configuracao WireGuard." ;;
         --wg-conf) WG_CONF_CLI="${2:-}"; shift ;;
+        --wireguard-go) WIREGUARD_GO_CLI="${2:-}"; shift ;;
         --excluded-countries) EXCLUDED="${2:-BR}"; shift ;;
         --net-mode) shift ;;
         --tor-addr|--tor) fail "Tor foi removido; use uma configuracao WireGuard." ;;
@@ -1573,6 +1578,164 @@ elevate_readonly() {
         elevate "$@"
     fi
 }
+# ======================= WireGuard de usuario (wireguard-go)
+# O modulo do kernel nao e a unica forma de existir um device WireGuard. Um kernel recem
+# atualizado fica sem a arvore de modulos (/lib/modules/<release> apagada pelo gerenciador)
+# ate o reinicio: `modprobe` e `ip link add type wireguard` falham e nenhuma ativacao tem
+# saida. O wireguard-go cria o MESMO device TUN com o mesmo protocolo no espaco do usuario,
+# sem carregar nada no kernel; o que ele exige e /dev/net/tun com o driver `tun` presente
+# (embutido ou ja carregado). O `wg` de wireguard-tools fala com ele pelo socket UAPI em
+# /var/run/wireguard/<interface>.sock, entao setconf/show/telemetria seguem iguais.
+WIREGUARD_GO_BINARY=""
+WIREGUARD_GO_SOURCE=""
+
+wireguard_go_pid_file() { printf '%s\n' "$INSTALL_DIR/wireguard-go.pid"; }
+wireguard_go_log_file() { printf '%s\n' "$INSTALL_DIR/logs/wireguard-go.log"; }
+
+# Ordem: caminho explicito (flag/env; usado pela GUI e pelos testes) -> empacotado ao lado do
+# script (AppImage: resources/extra/wireguard-go) -> arvore de desenvolvimento -> PATH
+# (pacote do sistema). Um caminho explicito vale mesmo quando nao e executavel (sem cair para
+# os seguintes): assim um override recusado e observavel em vez de virar modo silencioso.
+resolve_wireguard_go() {
+    if [ -n "$WIREGUARD_GO_BINARY" ]; then
+        return 0
+    fi
+    local script_dir candidate
+    if [ -n "${WIREGUARD_GO_CLI:-}" ]; then
+        [ -x "$WIREGUARD_GO_CLI" ] || return 1
+        WIREGUARD_GO_BINARY="$WIREGUARD_GO_CLI"
+        WIREGUARD_GO_SOURCE="explicito"
+        return 0
+    fi
+    if [ -n "${GOLIVE_WIREGUARD_GO:-}" ]; then
+        [ -x "$GOLIVE_WIREGUARD_GO" ] || return 1
+        WIREGUARD_GO_BINARY="$GOLIVE_WIREGUARD_GO"
+        WIREGUARD_GO_SOURCE="explicito"
+        return 0
+    fi
+    script_dir="$(dirname "$SCRIPT_PATH")"
+    for candidate in \
+        "$script_dir/../wireguard-go/wireguard-go" \
+        "$script_dir/../tools/wireguard-go/build/wireguard-go"; do
+        [ -n "$candidate" ] || continue
+        if [ -x "$candidate" ]; then
+            WIREGUARD_GO_BINARY="$candidate"
+            WIREGUARD_GO_SOURCE="pacote"
+            return 0
+        fi
+    done
+    candidate="$(resolve_binary wireguard-go || true)"
+    if [ -n "$candidate" ]; then
+        WIREGUARD_GO_BINARY="$candidate"
+        WIREGUARD_GO_SOURCE="sistema"
+        return 0
+    fi
+    return 1
+}
+
+# /sys/class/misc/tun existe quando o driver tun esta no kernel: sem ele nem o wireguard-go
+# consegue criar a interface, entao o modo de usuario nao conta como disponivel.
+wireguard_tun_available() {
+    [ -e /dev/net/tun ] || return 1
+    [ -e /sys/class/misc/tun ] || return 1
+    return 0
+}
+
+wireguard_userspace_available() {
+    resolve_wireguard_go || return 1
+    wireguard_tun_available || return 1
+    return 0
+}
+
+# 'kernel' com o modulo carregado, 'userspace' com wireguard-go + tun, 'none' sem device
+# possivel. Nunca falha: quem chama decide a mensagem.
+wireguard_device_mode() {
+    if wireguard_module_loaded; then
+        printf 'kernel'
+    elif wireguard_userspace_available; then
+        printf 'userspace'
+    else
+        printf 'none'
+    fi
+    return 0
+}
+
+# Barreira da ativacao, antes de fechar o Discord: o modulo do kernel e a primeira escolha
+# (nao depende de um processo a mais); sem ele o WireGuard de usuario entra no lugar. Sem
+# nenhum dos dois, a ativacao para com o motivo que o kernel deu.
+ensure_wireguard_device() {
+    local kernel_error=""
+    if kernel_error="$(ensure_wireguard_module 2>&1)"; then
+        WIREGUARD_DEVICE_MODE="kernel"
+        return 0
+    fi
+    if wireguard_userspace_available; then
+        WIREGUARD_DEVICE_MODE="userspace"
+        # Sem repetir o texto da tentativa do kernel: ele fala em cancelar a ativacao, o que
+        # deixou de ser verdade quando o device de usuario assume.
+        warn "Modulo WireGuard do kernel indisponivel; ativando com o WireGuard de usuario ($WIREGUARD_GO_BINARY)."
+        return 0
+    fi
+    printf '%s\n' "$kernel_error" >&2
+    return 1
+}
+
+# O socket UDP do daemon precisa nascer no uplink original, como o device do kernel.
+# Depois movemos somente o TUN para discord-vpn: o Discord usa o tunel, enquanto o
+# wireguard-go continua alcançando o peer pela rede normal. -f impede daemonizacao
+# para o pidfile identificar o processo vivo que stop_wireguard_userspace encerra.
+start_wireguard_userspace() {
+    local pid_file log_file
+    pid_file="$(wireguard_go_pid_file)"
+    log_file="$(wireguard_go_log_file)"
+    mkdir -p "$INSTALL_DIR/logs" 2>/dev/null || true
+    stop_wireguard_userspace
+    elevate rm -f "$pid_file" 2>/dev/null || true
+
+    step "Iniciando WireGuard de usuario '$WG_IF' com uplink original"
+    elevate sh -c 'echo "$$" > "$1"; shift; exec "$@"' sh "$pid_file" "$WIREGUARD_GO_BINARY" -f "$WG_IF" >>"$log_file" 2>&1 &
+    # Uma unica chamada elevada espera a interface nascer: o daemon cria o device TUN
+    # depois do exec, e criar o namespace tambem leva tempo.
+    if ! elevate sh -c 'i=0; while [ "$i" -lt 50 ]; do ip link show "$1" >/dev/null 2>&1 && exit 0; sleep 0.2; i=$((i+1)); done; exit 1' sh "$WG_IF"; then
+        stop_wireguard_userspace
+        return 1
+    fi
+    if ! elevate ip link set "$WG_IF" netns "$NETNS_NAME"; then
+        stop_wireguard_userspace
+        return 1
+    fi
+    return 0
+}
+
+# `/proc/<pid>` no lugar de `kill -0`: o daemon roda como root e o script como usuario, e o
+# kill(0) de um processo de outro dono responde EPERM (que pareceria processo morto).
+wireguard_go_alive() {
+    [ -n "${1:-}" ] && [ -d "/proc/$1" ]
+}
+
+stop_wireguard_userspace() {
+    local pid_file pid waited
+    pid_file="$(wireguard_go_pid_file)"
+    [ -e "$pid_file" ] || return 0
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    elevate rm -f "$pid_file" 2>/dev/null || true
+    case "$pid" in
+        ''|*[!0-9]*) return 0 ;;
+    esac
+    wireguard_go_alive "$pid" || return 0
+
+    step "Encerrando o WireGuard de usuario (pid $pid)"
+    elevate kill "$pid" 2>/dev/null || true
+    waited=0
+    while [ "$waited" -lt 20 ]; do
+        wireguard_go_alive "$pid" || return 0
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    elevate kill -9 "$pid" 2>/dev/null || true
+    return 0
+}
+
 # O preflight nao carrega o modulo: ele apenas diferencia um modulo disponivel
 # no kernel de um modulo ja carregado. A ativacao interativa faz a carga depois
 # da autorizacao, mas antes de fechar o Discord ou criar o namespace.
@@ -1858,6 +2021,7 @@ discord_dirs() {
 # loop de tentativas de ativacao. Nao instala pacotes nem pede senha.
 linux_preflight_json() {
     local distro id_like missing="" errors="" install="" found_count=0 first_path="" netns_ok=false kernel="unknown" elevated=false
+    local kernel_running="" kernel_modules_installed=true userspace=false
     distro="$(os_field ID)"
     id_like="$(os_field ID_LIKE)"
 
@@ -1883,6 +2047,25 @@ linux_preflight_json() {
         else
             kernel="missing"
             errors="${errors}${errors:+,}modulo wireguard ausente"
+        fi
+    fi
+
+    # Um upgrade de kernel sem reinicio deixa o kernel em execucao sem a arvore de modulos
+    # dela (o gerenciador apaga /lib/modules/<versao antiga> ao instalar a nova): modinfo e
+    # modprobe nao acham nada e nenhuma tentativa de ativacao tem saida sem reiniciar.
+    # O relato de 24/09 chegou aqui com "modulo ausente" generico, depois de autorizar o sudo.
+    if have uname; then
+        kernel_running="$(uname -r 2>/dev/null || true)"
+    fi
+    if [ -n "$kernel_running" ] && [ ! -d "/lib/modules/$kernel_running" ]; then
+        kernel_modules_installed=false
+    fi
+
+    # Sem modulo do kernel o device pode vir do WireGuard de usuario (wireguard-go + tun):
+    # e o caso do kernel recem-atualizado, onde `modprobe` nunca vai funcionar até reiniciar.
+    if [ "$kernel" != "loaded" ] && [ "$kernel" != "available" ]; then
+        if wireguard_userspace_available; then
+            userspace=true
         fi
     fi
 
@@ -1912,14 +2095,20 @@ linux_preflight_json() {
     fi
     local ok=true
     [ -n "$missing" ] && ok=false
+    # "missing" nao e o modulo apenas descarregado: modinfo nao encontrou modulo para o kernel
+    # em execucao, entao o modprobe da ativacao falharia sempre. Reprovar aqui evita pedir a
+    # senha do sudo e criar namespace parcial para uma ativacao que nao tem como concluir —
+    # a menos que o WireGuard de usuario (wireguard-go) esteja disponivel, que e o caso em que
+    # a ativacao funciona sem o modulo.
+    [ "$kernel" = "missing" ] && [ "$userspace" != true ] && ok=false
     [ "$elevated" = true ] || ok=false
     [ "$netns_ok" = true ] || ok=false
     [ "$found_count" -gt 0 ] || ok=false
-    printf '{"ok":%s,"platform":"linux","distro":"%s","archLike":%s,"dependencies":{"missing":[%s],"required":["wg","ip","curl"]},"elevation":{"available":%s,"method":"%s"},"netns":{"available":%s},"kernel":{"wireguard":"%s"},"discord":{"found":%s,"count":%s,"firstPath":"%s"},"errors":[%s],"installCommand":"%s"}\n' \
+    printf '{"ok":%s,"platform":"linux","distro":"%s","archLike":%s,"dependencies":{"missing":[%s],"required":["wg","ip","curl"]},"elevation":{"available":%s,"method":"%s"},"netns":{"available":%s},"kernel":{"wireguard":"%s","running":"%s","modulesInstalled":%s,"userspace":%s},"discord":{"found":%s,"count":%s,"firstPath":"%s"},"errors":[%s],"installCommand":"%s"}\n' \
         "$ok" "$(json_escape "${distro:-Linux}")" \
         "$(case "$distro $id_like" in *arch*) printf true ;; *) printf false ;; esac)" \
         "$missing_json" "$elevated" "$(if [ "$(id -u)" -eq 0 ]; then printf root; elif have sudo; then printf sudo; elif have pkexec; then printf pkexec; else printf none; fi)" \
-        "$netns_ok" "$kernel" "$( [ "$found_count" -gt 0 ] && printf true || printf false )" "$found_count" "$(json_escape "$first_path")" "$error_json" "$(json_escape "$install")"
+        "$netns_ok" "$kernel" "$(json_escape "$kernel_running")" "$( [ "$kernel_modules_installed" = true ] && printf true || printf false )" "$userspace" "$( [ "$found_count" -gt 0 ] && printf true || printf false )" "$found_count" "$(json_escape "$first_path")" "$error_json" "$(json_escape "$install")"
 }
 
 # Instala somente os comandos indispensaveis que faltam para o tunel WireGuard.
@@ -2075,8 +2264,19 @@ flatpak_running_id() {
         | awk -v wanted="$wanted" '$0 == wanted { found=1; exit } END { exit found ? 0 : 1 }'
 }
 
+# Normaliza sequencias decimais para que zero/zeros iniciais nunca sejam passados a kill.
+
+normalize_pid() {
+    local pid="${1:-}"
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    while [ "${pid#0}" != "$pid" ]; do pid="${pid#0}"; done
+    [ -n "$pid" ] || return 1
+    printf '%s\n' "$pid"
+}
+
 # Retorna o PID do processo dentro do sandbox. O child-pid é preferido porque é o
 # processo que herda o namespace de rede; o wrapper fica no host em alguns runtimes.
+
 flatpak_pid_for_id() {
     local wanted="${1:-}" pid="" columns
     [ -n "$wanted" ] && have flatpak || return 1
@@ -2085,10 +2285,10 @@ flatpak_pid_for_id() {
     for columns in child-pid pid; do
         pid="$(flatpak ps --columns="$columns,application" 2>/dev/null \
             | awk -v wanted="$wanted" '$2 == wanted { print $1; exit }')"
-        case "$pid" in
-            ''|*[!0-9]*) continue ;;
-            *) printf '%s\n' "$pid"; return 0 ;;
-        esac
+        pid="$(normalize_pid "$pid" 2>/dev/null)" || continue
+        [ -n "$pid" ] || continue
+        printf '%s\n' "$pid"
+        return 0
     done
     return 1
 }
@@ -2293,13 +2493,12 @@ discord_running() {
     pgrep -x discord-canary >/dev/null 2>&1 && return 0
     pgrep -x discordptb >/dev/null 2>&1 && return 0
 
-    # Clientes paralelos nativos (Vesktop, Equibop, Legcord): o processo costuma ser o
-    # binario generico do Electron (/usr/lib/electron*/electron), entao o NOME do processo
-    # nao identifica nada. O cmdline de todos carrega o caminho do app.asar da pasta
-    # instalada — o running_flav casa pelo nome do flav do install.
+    # Clientes oficiais e paralelos podem usar um Electron generico, cujo nome nao identifica
+    # o app. A raiz da instalacao comparada com /proc/PID/exe evita confundir
+    # outro cliente Electron nativo.
     if [ -n "${FOUND:-}" ]; then
-        if [ -n "$(printf '%s\n' "$FOUND" | while IFS='|' read -r resources flav rest; do
-            case "$flav" in vesktop|equibop|legcord) running_flav "$flav" "" "$resources" && printf 'achou\n' ;; esac
+        if [ -n "$(printf '%s\n' "$FOUND" | while IFS='|' read -r resources flav detect id; do
+            case "$flav" in discord|discordptb|discordcanary|vesktop|equibop|legcord) running_flav "$flav" "$id" "$resources" && printf 'achou\n' ;; esac
         done)" ]; then
             return 0
         fi
@@ -2314,34 +2513,138 @@ discord_running() {
     return 1
 }
 
-# O cliente deste flav esta vivo? Oficiais ("discord*"): pelo NOME do processo. Paralelos
-# (vesktop|equibop|legcord): o caminho exato do app.asar da instalação é a fonte de verdade.
-parallel_pid_for_resources() {
-    local resources="$1" proc pid cmdline
+# Clientes Electron ELF podem omitir app.asar da linha de comando.
+# A identidade exata da instalação vem do executável em /proc/PID/exe.
+
+kill_flatpak_apps_forcefully() {
+    local id pid current_pid
+    have flatpak || return 0
+    for id in $FLATPAK_IDS $FLATPAK_TUNEL_IDS; do
+        pid="$(normalize_pid "$(flatpak_pid_for_id "$id" 2>/dev/null || true)" 2>/dev/null)" || continue
+        # Revalida a associação imediatamente antes do sinal: nunca mata apenas
+        # por nome/command line um processo que possa pertencer a outro cliente.
+        current_pid="$(normalize_pid "$(flatpak_pid_for_id "$id" 2>/dev/null || true)" 2>/dev/null)" || continue
+        [ "$pid" = "$current_pid" ] || continue
+        kill -9 "$pid" 2>/dev/null || true
+    done
+}
+
+parallel_app_root_for_resources() {
+    local resources="${1%/}"
     [ -n "$resources" ] || return 1
+    # O scan também aceita app.asar direto na raiz (por exemplo /usr/lib/equibop).
+    # Só a subpasta resources permite subir: o pai da raiz pode conter outros apps.
+    case "$resources" in */resources) resources="$resources/.." ;; esac
+    readlink -f "$resources" 2>/dev/null
+}
+
+parallel_pids_for_resources() {
+    local resources="$1" proc pid app_root
+    [ -n "$resources" ] || return 1
+    app_root="$(parallel_app_root_for_resources "$resources" || true)"
+    [ -n "$app_root" ] || return 1
+    # Uma captura com find evita um readlink externo por processo alheio. O teste
+    # de suporte é separado: /proc pode mudar ou negar acesso durante a captura,
+    # e esses erros normais não devem disparar outra varredura completa.
+    if find /proc/self/exe -maxdepth 0 -printf '' >/dev/null 2>&1; then
+        for pid in $(find /proc/[0-9]*/exe -maxdepth 0 -printf '%p\0%l\0' 2>/dev/null \
+            | GOLIVE_MATCH_APP_ROOT="$app_root" awk '
+                BEGIN { RS="\0"; root=ENVIRON["GOLIVE_MATCH_APP_ROOT"] }
+                NR % 2 { proc=$0; next }
+                {
+                    exe=$0
+                    sub(/ \(deleted\)$/, "", exe)
+                    name=exe; sub(/^.*\//, "", name)
+                    if (index(exe, root "/") != 1 &&
+                        name !~ /^(electron|Electron|node|nodejs|Discord|DiscordPTB|DiscordCanary|discord|discordptb|discord-canary|vesktop|equibop|legcord)$/ &&
+                        exe !~ /\/electron-?[0-9]/) next
+                    if (proc !~ /^\/proc\/[1-9][0-9]*\/exe$/) next
+                    sub(/^\/proc\//, "", proc); sub(/\/exe$/, "", proc)
+                    print proc
+                }
+            '); do
+            [ "$pid" = "$$" ] && continue
+            # A captura só escolhe candidatos; a identidade continua sendo
+            # conferida ao vivo, inclusive novamente antes de qualquer sinal.
+            parallel_process_belongs_to_resources "$resources" "$pid" "$app_root" && printf '%s\n' "$pid"
+        done
+        return 0
+    fi
     for proc in /proc/[0-9]*/cmdline; do
         [ -r "$proc" ] || continue
         pid="${proc#/proc/}"
         pid="${pid%/cmdline}"
         [ "$pid" = "$$" ] && continue
-        cmdline="$(tr '\0' ' ' < "$proc" 2>/dev/null || true)"
-        case "$cmdline" in
-            *"$resources/app.asar"*|*"$resources/_app.asar"*|*"$resources/arrpc"*)
-                printf '%s\n' "$pid"
-                return 0
-                ;;
+        parallel_process_belongs_to_resources "$resources" "$pid" "$app_root" && printf '%s\n' "$pid"
+    done
+}
+
+parallel_pid_for_resources() {
+    local resources="$1" pid cmdline fallback=""
+    for pid in $(parallel_pids_for_resources "$resources"); do
+        cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true)"
+        case " $cmdline " in
+            *" --type="*) [ -n "$fallback" ] || fallback="$pid" ;;
+            *) printf '%s\n' "$pid"; return 0 ;;
         esac
     done
+    [ -n "$fallback" ] && { printf '%s\n' "$fallback"; return 0; }
     return 1
 }
+
+parallel_process_belongs_to_resources() {
+    local resources="$1" pid="$2" app_root="${3:-}" exe
+    [ -n "$resources" ] && [ -n "$pid" ] || return 1
+    [ -n "$app_root" ] || app_root="$(parallel_app_root_for_resources "$resources" || true)"
+    [ -n "$app_root" ] || return 1
+    exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+    exe="${exe% (deleted)}"
+    case "$exe" in "$app_root"/*) return 0 ;; esac
+    # Pacotes AUR também podem usar o Electron do sistema, fora da raiz do app.
+    # Limitar o fallback a runtimes do cliente evita ler o cmdline de cada processo
+    # alheio. O separador NUL preserva argumentos multiline sem aceitar texto de shell.
+    case "$exe" in
+        */electron|*/Electron|*/electron[0-9]*|*/electron-[0-9]*|*/node|*/nodejs|*/Discord|*/DiscordPTB|*/DiscordCanary|*/discord|*/discordptb|*/discord-canary|*/vesktop|*/equibop|*/legcord) ;;
+        *) return 1 ;;
+    esac
+    GOLIVE_MATCH_RESOURCES="$resources" awk '
+        BEGIN { RS="\0"; resources=ENVIRON["GOLIVE_MATCH_RESOURCES"] }
+        $0 == resources "/app.asar" || $0 == resources "/_app.asar" ||
+        $0 == resources "/arrpc" || index($0, resources "/arrpc/") == 1 { found=1; exit }
+        END { exit found ? 0 : 1 }
+    ' "/proc/$pid/cmdline" 2>/dev/null
+}
+
+kill_parallel_by_path() {
+    local sig="${1:-}" pid
+    [ -n "${FOUND:-}" ] || return 0
+    while IFS='|' read -r resources flav rest; do
+        case "$flav" in
+            discord|discordptb|discordcanary|vesktop|equibop|legcord)
+                for pid in $(parallel_pids_for_resources "$resources" 2>/dev/null); do
+                    pid="$(normalize_pid "$pid" 2>/dev/null)" || continue
+                    parallel_process_belongs_to_resources "$resources" "$pid" || continue
+                    if [ -n "$sig" ]; then kill "$sig" "$pid" 2>/dev/null || true
+                    else kill "$pid" 2>/dev/null || true
+                    fi
+                done
+                ;;
+        esac
+    done <<EOF
+$(printf '%s\n' "$FOUND")
+EOF
+    return 0
+}
+
 
 running_flav() {
     local flav="$1" flatpak_id="${2:-}" resources="${3:-}"
     # No Bazzite/Fedora Atomic o portal pode manter o processo Electron dentro do
     # sandbox mesmo quando o nome dele não aparece no namespace de PID do host.
     # Consultar o ID exato também evita aceitar outro Discord aberto fora do túnel.
-    if [ -n "$flatpak_id" ] && flatpak_running_id "$flatpak_id"; then
-        return 0
+    if [ -n "$flatpak_id" ]; then
+        flatpak_running_id "$flatpak_id"
+        return $?
     fi
     case "$flav" in
         vesktop|equibop|legcord)
@@ -2352,6 +2655,10 @@ running_flav() {
             fi
             ;;
         discord|discordptb|discordcanary)
+            if [ -n "$resources" ]; then
+                parallel_pid_for_resources "$resources" >/dev/null
+                return $?
+            fi
             pgrep -x Discord >/dev/null 2>&1 || pgrep -x discord >/dev/null 2>&1 \
                 || pgrep -x discordptb >/dev/null 2>&1 || pgrep -x discord-canary >/dev/null 2>&1
             ;;
@@ -2363,8 +2670,10 @@ running_flav() {
 # Discord normal (fora do namespace) com a sessao protegida pelo WireGuard.
 discord_pid_flav() {
     local flav="$1" flatpak_id="${2:-}" resources="${3:-}" pid pattern
-    if [ -n "$flatpak_id" ] && pid="$(flatpak_pid_for_id "$flatpak_id" 2>/dev/null || true)"; then
+    if [ -n "$flatpak_id" ]; then
+        pid="$(flatpak_pid_for_id "$flatpak_id" 2>/dev/null || true)"
         [ -n "$pid" ] && { printf '%s\n' "$pid"; return 0; }
+        return 1
     fi
     case "$flav" in
         vesktop|equibop|legcord)
@@ -2378,6 +2687,10 @@ discord_pid_flav() {
             done
             ;;
         discord|discordptb|discordcanary)
+            if [ -n "$resources" ]; then
+                parallel_pid_for_resources "$resources"
+                return $?
+            fi
             for pattern in Discord DiscordPTB discord discordptb discord-canary; do
                 pid="$(pgrep -x "$pattern" 2>/dev/null | head -n1 || true)"
                 [ -n "$pid" ] && { printf '%s\n' "$pid"; return 0; }
@@ -2440,21 +2753,6 @@ discord_pid_in_netns_elevated() {
     [ -n "$pid_ns" ] && [ -n "$netns_ns" ] && [ "$pid_ns" = "$netns_ns" ]
 }
 
-# Mata os clientes paralelos pelo caminho do app.asar: o nome do processo nao basta
-# (o Electron generico nao tem o nome do cliente), mas o cmdline carrega a pasta instalada.
-kill_parallel_by_path() {
-    local sig="${1:-}"
-    [ -n "${FOUND:-}" ] || return 0
-    printf '%s\n' "$FOUND" | while IFS='|' read -r resources flav rest; do
-        case "$flav" in
-            vesktop|equibop|legcord)
-                pkill $sig -f "/$flav/app.asar" 2>/dev/null || true
-                pkill $sig -f "/$flav/arrpc" 2>/dev/null || true
-                ;;
-        esac
-    done
-    return 0
-}
 
 stop_discord() {
     discord_running || return 0
@@ -2490,9 +2788,10 @@ stop_discord() {
         discord_running || return 0
     done
 
-    # SIGTERM nao resolveu em 10s (Discord as vezes segura o fechamento). SIGKILL e o ultimo
-    # recurso: fechar a forca vale mais que travar a injecao com um processo teimoso.
+    # SIGTERM nao resolveu em 10s. O Flatpak nao oferece sinal no `flatpak kill`, entao
+    # escalamos pelo child-pid associado ao application ID exato.
     step "O Discord nao respondeu, forçando o fechamento"
+    kill_flatpak_apps_forcefully
     pkill -9 -x Discord 2>/dev/null || true
     pkill -9 -x DiscordPTB 2>/dev/null || true
     pkill -9 -x discord 2>/dev/null || true
@@ -2829,7 +3128,14 @@ ensure_wireguard_conf() {
 setup_wireguard_netns() {
     have ip || fail "Comando 'ip' nao encontrado no sistema."
     have wg || fail "Comando 'wg' (wireguard-tools) nao encontrado. Instale com seu gerenciador de pacotes."
-    wireguard_module_loaded || fail "Modulo WireGuard nao esta carregado; ativacao cancelada antes de criar o namespace."
+
+    # O device vem do modulo do kernel quando ele esta carregado e do wireguard-go quando o
+    # kernel nao tem modulo nenhum (upgrade de kernel sem reinicio, por exemplo).
+    local device_mode device_note
+    device_mode="$(wireguard_device_mode)"
+    if [ "$device_mode" = "none" ]; then
+        fail "Sem device WireGuard possivel neste kernel: o modulo nao esta disponivel e o WireGuard de usuario (wireguard-go + /dev/net/tun) tambem nao. Ativacao cancelada antes de criar o namespace."
+    fi
 
     ensure_wireguard_conf
     local wg_file="$INSTALL_DIR/wireguard.conf"
@@ -2852,12 +3158,25 @@ setup_wireguard_netns() {
     WIREGUARD_TMP_CONF="$tmp_conf"
     grep -vE "^(Address|DNS)" "$wg_file" > "$tmp_conf"
 
-    elevate ip link add dev "$WG_IF" type wireguard
-    elevate wg setconf "$WG_IF" "$tmp_conf"
-    rm -f "$tmp_conf"
-    WIREGUARD_TMP_CONF=""
+    if [ "$device_mode" = "kernel" ]; then
+        elevate ip link add dev "$WG_IF" type wireguard
+        elevate wg setconf "$WG_IF" "$tmp_conf"
+        rm -f "$tmp_conf"
+        WIREGUARD_TMP_CONF=""
 
-    elevate ip link set "$WG_IF" netns "$NETNS_NAME"
+        elevate ip link set "$WG_IF" netns "$NETNS_NAME"
+    else
+        # O daemon cria o TUN no uplink e o move para o namespace, preservando seu
+        # socket UDP fora do tunel. O setconf usa o socket UAPI do wireguard-go.
+        if ! start_wireguard_userspace; then
+            rm -f "$tmp_conf"
+            WIREGUARD_TMP_CONF=""
+            fail "Nao consegui iniciar o WireGuard de usuario no namespace '$NETNS_NAME'."
+        fi
+        elevate ip netns exec "$NETNS_NAME" wg setconf "$WG_IF" "$tmp_conf"
+        rm -f "$tmp_conf"
+        WIREGUARD_TMP_CONF=""
+    fi
 
     local addr
     addr="$(grep -E "^Address" "$wg_file" | cut -d= -f2 | awk -F, '{print $1}' | tr -d ' ')"
@@ -2870,7 +3189,9 @@ setup_wireguard_netns() {
 
     elevate mkdir -p "/etc/netns/$NETNS_NAME"
     printf 'nameserver 10.2.0.1\nnameserver 1.1.1.1\nnameserver 8.8.8.8\n' | elevate tee "/etc/netns/$NETNS_NAME/resolv.conf" >/dev/null
-    ok "Tunel WireGuard 100% ativo no namespace '$NETNS_NAME'."
+    device_note=""
+    [ "$device_mode" = "kernel" ] || device_note=" (WireGuard de usuario: $WIREGUARD_GO_BINARY)"
+    ok "Tunel WireGuard 100% ativo no namespace '$NETNS_NAME'$device_note."
 }
 
 # Reaplica somente o peer na interface existente. O namespace, a interface e o processo do
@@ -2977,6 +3298,10 @@ wait_for_tunnel_startup() {
 }
 
 teardown_wireguard_netns() {
+    # O daemon de usuario precisa morrer junto: o namespace sai, o device deixa de existir e
+    # o processo ficaria orfao segurando o socket UAPI. Vale tambem para rollback de ativacao
+    # (namespace parcial) e para o uninstall com o namespace ja removido.
+    stop_wireguard_userspace
     if netns_exists; then
         step "Removendo namespace de rede '$NETNS_NAME' e interface WireGuard"
         if ! elevate ip netns del "$NETNS_NAME" 2>/dev/null; then
@@ -3404,6 +3729,17 @@ if [ "$MODE" = "install" ]; then
     preflight_ok="$(printf '%s' "$preflight_now" | sed -n 's/.*"ok":\(true\|false\).*/\1/p')"
     if [ "$preflight_ok" != "true" ]; then
         preflight_hint="$(printf '%s' "$preflight_now" | sed -n 's/.*"installCommand":"\([^"]*\)".*/\1/p')"
+        # O modulo ausente tem prioridade sobre o texto de dependencias: ele nao se resolve
+        # instalando pacote nenhum.
+        preflight_kernel="$(printf '%s' "$preflight_now" | sed -n 's/.*"wireguard":"\([^"]*\)".*/\1/p')"
+        if [ "$preflight_kernel" = "missing" ]; then
+            preflight_running="$(printf '%s' "$preflight_now" | sed -n 's/.*"running":"\([^"]*\)".*/\1/p')"
+            preflight_modules="$(printf '%s' "$preflight_now" | sed -n 's/.*"modulesInstalled":\(true\|false\).*/\1/p')"
+            if [ "$preflight_modules" = "false" ]; then
+                fail "O kernel Linux em execucao (${preflight_running:-atual}) nao possui os modulos instalados. Reinicie no kernel instalado, instale os modulos correspondentes ou instale o wireguard-go (WireGuard de usuario) antes de ativar."
+            fi
+            fail "O modulo WireGuard nao esta disponivel no kernel Linux em execucao (${preflight_running:-atual}). Instale ou ative o modulo WireGuard, ou instale o wireguard-go (WireGuard de usuario), antes de ativar."
+        fi
         fail "Preflight Linux reprovado. Instale as dependencias e tente novamente.${preflight_hint:+ Comando: $preflight_hint}"
     fi
 fi
@@ -3536,7 +3872,7 @@ authorize_install_elevation || fail "Nao foi possivel autorizar a ativacao Linux
 # troca segura para o usuario que deve possuir a sessao grafica.
 ACTIVATION_RUN_USER="${SUDO_USER:-$(id -un 2>/dev/null || whoami)}"
 prepare_run_user "$ACTIVATION_RUN_USER" || fail "Nao foi possivel preparar a execucao segura do Discord. O Discord nao foi encerrado."
-ensure_wireguard_module || fail "Nao foi possivel preparar o modulo WireGuard. O Discord nao foi encerrado."
+ensure_wireguard_device || fail "Nao foi possivel preparar o WireGuard (modulo do kernel ou wireguard-go). O Discord nao foi encerrado."
 # A limpeza legada apaga recursos e configuracoes antigas; so pode acontecer
 # depois de a autorizacao da ativacao ter sido concluida.
 if [ "$CLEANUP_LEGACY" -eq 1 ]; then

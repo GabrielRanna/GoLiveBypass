@@ -61,7 +61,12 @@ static int set_explicit_environment(int argc, char **argv, int first, int end) {
                          (character >= 'a' && character <= 'z') ||
                          (character >= '0' && character <= '9'))) return 0;
         }
-        if (setenv(entry + 6, separator + 1, 1) != 0) return 0;
+        char *name = (char *)(entry + 6);
+        char *value = (char *)separator;
+        *value = '\0';
+        int result = setenv(name, value + 1, 1);
+        *value = '=';
+        if (result != 0) return 0;
     }
     (void)argc;
     return 1;

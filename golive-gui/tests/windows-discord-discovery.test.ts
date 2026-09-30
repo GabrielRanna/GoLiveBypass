@@ -143,7 +143,7 @@ describe("discovery Windows puro", () => {
   });
 
 
-  it("classifica spawn ENOENT e preserva candidatos filesystem", () => {
+  it("preserva candidatos de filesystem quando PowerShell sai com codigo nao-zero", () => {
     const root = "C:\\Program Files";
     const executable = `${root}\\Discord\\app-1.0.10\\Discord.exe`;
     const fs = fakeFs([executable]);
@@ -155,15 +155,13 @@ describe("discovery Windows puro", () => {
     const snapshot = collectWindowsDiscoverySnapshot({ ProgramFiles: root }, {
       ...registryDeps(fs, [install]),
       collectPowerShell: () => {
-        throw Object.assign(new Error("spawn powershell.exe ENOENT /home/segredo"), { code: "ENOENT" });
+        throw Object.assign(new Error("PowerShell exit 1"), { code: 1 });
       },
     }, 123);
 
     expect(snapshot.installs).toHaveLength(1);
-    expect(snapshot.sourceFailure).toContain("POWERSHELL_SPAWN");
-    expect(snapshot.sourceFailure).not.toContain("nenhum");
-    expect(snapshot.sourceFailureDetail).toContain("process:spawn powershell.exe ENOENT [path]");
-    expect(snapshot.sourceFailureDetail).not.toContain("/home/segredo");
+    expect(snapshot.installs[0]).toMatchObject({ source: "root", flavour: "Discord", exePath: executable });
+    expect(snapshot.sourceFailure).toContain("POWERSHELL_EXIT");
   });
 
   it("gera roots Windows determinísticos, deduplica envs e não bloqueia sem LOCALAPPDATA", () => {

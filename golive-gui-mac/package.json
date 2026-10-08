@@ -1,6 +1,6 @@
 {
   "name": "golivebypass-mac",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Reativa o Go Live do Discord no macOS (Apple Silicon) via WireGuard full-device.",
   "main": "dist/main/main.js",

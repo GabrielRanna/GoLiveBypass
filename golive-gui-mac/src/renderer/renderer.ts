@@ -279,11 +279,14 @@ window.addEventListener('focus', () => retryVencord(false));
 
 // ── Atualizações ──────────────────────────────────────────────────────────────
 
-golive.onUpdateAvailable?.((info: any) => {
+function showUpdate(info: any) {
+  if (!info?.available || updateBtn.disabled) return;
   updateMsg.textContent = `Nova versão disponível: v${info.latestVersion} (atual: v${info.currentVersion})`;
   updateBanner.hidden = false;
   updateUrl = info.downloadUrl ?? '';
-});
+}
+golive.onUpdateAvailable?.(showUpdate);
+golive.checkUpdate?.().then(showUpdate).catch(() => {});
 
 golive.onUpdateProgress?.((msg: string) => {
   updateMsg.textContent = msg;

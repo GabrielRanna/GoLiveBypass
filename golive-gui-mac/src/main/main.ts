@@ -420,12 +420,12 @@ app.whenReady().then(async () => {
     }, 1500);
   }
 
-  // Verifica atualizações em segundo plano
-  checkForUpdate().then((info) => {
-    if (info.available && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('update:available', info);
-    }
-  }).catch(() => {});
+  // O renderer consulta ao carregar; aqui só repete, pois fechar a janela não encerra o app.
+  setInterval(() => {
+    checkForUpdate().then((info) => {
+      if (info.available) sendToWindow('update:available', info);
+    }).catch(() => {});
+  }, 6 * 60 * 60_000);
 });
 
 // ─── Shutdown gracioso ────────────────────────────────────────────────────────

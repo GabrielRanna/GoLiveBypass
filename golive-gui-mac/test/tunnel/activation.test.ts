@@ -1,26 +1,61 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { runActivation, runDeactivation } from '../../src/main/tunnel/activation';
 
-const opts = { binDir: '/b', confPath: '/c/golive.conf', iface: 'golive', service: 'Wi-Fi', handshakeTimeoutSec: 15 };
+// Mock do módulo helper para evitar chamadas ao SO em testes unitários
+vi.mock('../../src/main/privileged/helper', () => ({
+  helperReady: vi.fn(() => true),
+  installHelper: vi.fn(async () => ({ ok: true })),
+  runViaHelper: vi.fn(async () => ({ code: 0, stderr: '', usedPrompt: false })),
+}));
+
+import * as helperMod from '../../src/main/privileged/helper';
+
+const opts = {
+  home: '/Users/test',
+  user: 'test',
+  binDir: '/res/bin',
+  service: 'Wi-Fi',
+  setV6Off: false,
+};
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(helperMod.helperReady).mockReturnValue(true);
+});
 
 describe('runActivation', () => {
-  it('code 0 → ok', async () => {
-    const exec = async () => ({ code: 0, stdout: '', stderr: '' });
-    expect(await runActivation({ ...opts, setV6Off: true }, exec)).toEqual({ ok: true });
+  it('helper retorna 0 → ok', async () => {
+    vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 0, stderr: '', usedPrompt: false });
+    expect(await runActivation(opts)).toEqual({ ok: true });
   });
+
   it('stderr com handshake_timeout → erro tipado', async () => {
-    const exec = async () => ({ code: 2, stdout: '', stderr: 'handshake_timeout\n' });
-    expect(await runActivation({ ...opts, setV6Off: true }, exec)).toEqual({ ok: false, error: 'handshake_timeout' });
+    vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 2, stderr: 'handshake_timeout', usedPrompt: false });
+    expect(await runActivation(opts)).toEqual({ ok: false, error: 'handshake_timeout' });
   });
+
   it('cancelamento do usuário → user_cancelled', async () => {
-    const exec = async () => ({ code: 1, stdout: '', stderr: 'User canceled.' });
-    expect(await runActivation({ ...opts, setV6Off: false }, exec)).toEqual({ ok: false, error: 'user_cancelled' });
+    vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 1, stderr: 'User canceled.', usedPrompt: true });
+    expect(await runActivation(opts)).toEqual({ ok: false, error: 'user_cancelled' });
+  });
+
+  it('helper não instalado → instala e continua', async () => {
+    vi.mocked(helperMod.helperReady).mockReturnValue(false);
+    vi.mocked(helperMod.installHelper).mockResolvedValue({ ok: true });
+    vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 0, stderr: '', usedPrompt: false });
+    expect(await runActivation(opts)).toEqual({ ok: true });
+    expect(helperMod.installHelper).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('runDeactivation', () => {
+  it('helper retorna 0 → ok', async () => {
+    vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 0, stderr: '', usedPrompt: false });
+    expect(await runDeactivation(opts)).toEqual({ ok: true });
+  });
+
   it('cancelamento → user_cancelled', async () => {
-    const exec = async () => ({ code: 1, stdout: '', stderr: 'User cancelled.' });
-    expect(await runDeactivation({ ...opts, restoreV6: true }, exec)).toEqual({ ok: false, error: 'user_cancelled' });
+    vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 1, stderr: 'User cancelled.', usedPrompt: true });
+    expect(await runDeactivation(opts)).toEqual({ ok: false, error: 'user_cancelled' });
   });
 });

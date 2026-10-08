@@ -11,13 +11,19 @@ describe('paths', () => {
 describe('importConfig', () => {
   const valid = '[Interface]\nPrivateKey = a\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = b\nEndpoint = 1.2.3.4:51820\nAllowedIPs = 10.0.0.0/24';
 
-  it('grava conf reescrito com mode 0600 e retorna warnings', () => {
+  it('grava conf reescrito com mode 0600 e usa split tunnel Discord', () => {
     const write = vi.fn();
     const io = { write, mkdirp: vi.fn(), configPath: () => '/x/golive.conf' };
     const r = importConfig(valid, io);
     expect(r.ok).toBe(true);
-    expect(r.needsIpv6Off).toBe(true);
-    expect(write).toHaveBeenCalledWith('/x/golive.conf', expect.stringContaining('0.0.0.0/0, ::/0'), 0o600);
+    // Split tunnel: AllowedIPs restrito aos ranges do Discord
+    expect(write).toHaveBeenCalledWith(
+      '/x/golive.conf',
+      expect.stringContaining('162.159.0.0/16'),
+      0o600,
+    );
+    // Com split tunnel não é necessário desligar IPv6 do sistema
+    expect(r.needsIpv6Off).toBe(false);
   });
 
   it('não grava conf inválido', () => {

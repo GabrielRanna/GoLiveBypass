@@ -5,10 +5,24 @@ import * as path from 'path';
 import * as child_process from 'child_process';
 import { app } from 'electron';
 
-const REPO = 'bezumiya/GoLiveBypass';
-// GOLIVE_UPDATE_FEED aponta para um feed local (http://127.0.0.1) só em testes
-const API_URL = process.env.GOLIVE_UPDATE_FEED
-  ?? `https://api.github.com/repos/${REPO}/releases?per_page=30`;
+const DEFAULT_REPO = 'bezumiya/GoLiveBypass';
+
+/** Repo de releases: `updateRepo` do package.json empacotado (definido no build) ou o padrão. */
+export function updateRepo(pkgJson: string | null): string {
+  try {
+    const repo = pkgJson ? JSON.parse(pkgJson).updateRepo : undefined;
+    if (typeof repo === 'string' && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) return repo;
+  } catch { /* package.json ilegível: usa o padrão */ }
+  return DEFAULT_REPO;
+}
+
+function releasesUrl(): string {
+  // GOLIVE_UPDATE_FEED aponta para um feed local (http://127.0.0.1) só em testes
+  if (process.env.GOLIVE_UPDATE_FEED) return process.env.GOLIVE_UPDATE_FEED;
+  let pkg: string | null = null;
+  try { pkg = fs.readFileSync(path.join(app.getAppPath(), 'package.json'), 'utf8'); } catch {}
+  return `https://api.github.com/repos/${updateRepo(pkg)}/releases?per_page=30`;
+}
 
 export interface UpdateInfo {
   available: boolean;
@@ -81,7 +95,7 @@ function pickAsset(assets: any[]): any | undefined {
 export async function checkForUpdate(): Promise<UpdateInfo> {
   const current = app.getVersion();
   try {
-    const releases = JSON.parse(await httpsGet(API_URL)) as any[];
+    const releases = JSON.parse(await httpsGet(releasesUrl())) as any[];
     for (const release of releases) {
       if (release.draft || release.prerelease) continue;
       const asset = pickAsset(release.assets);

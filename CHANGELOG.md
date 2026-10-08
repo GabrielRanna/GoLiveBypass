@@ -6,6 +6,18 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Adicionado
+
+- **Cliente macOS (`golive-gui-mac/`)** (#338, contribuição de @GabrielRanna): app Electron standalone que reativa o Go Live pondo só o tráfego do Discord num túnel WireGuard — split por IP nos ranges Cloudflare do Discord (com rejeição IPv6 para cair no IPv4 tunelado), helper root instalado em `/Library/PrivilegedHelperTools` com sudoers limitado a `up`/`down` e sanitização do conf, geração de perfil Proton via `proton-confgen` com escolha MX/US por ping, conta Proton reutilizável, DMG universal x86_64+arm64, tray, auto-reconexão e auto-updater por assets `GoLiveBypass-macos-<versão>-<arch>.dmg`. Testado em Macs M1/M2/M3 e Intel.
+
+### Pendências do cliente macOS
+
+- O split é por IP, não por processo: outros sites servidos pelos ranges da Cloudflare também passam pelo túnel.
+- Sem notarização (assinatura ad-hoc): Gatekeeper avisa no primeiro uso e a permissão de Gerenciamento de Apps pode pedir renovação a cada versão.
+- Toda release macOS precisa de `make_latest: false` (e assets com o nome esperado) para não virar `/releases/latest` do repositório — o guard automatizado ainda não existe e é gate de release.
+- A injeção de Vencord/FakeNitro hoje acontece automaticamente na ativação: precisa virar opt-in explícito e nunca sobrescrever uma preferência que o usuário desligou.
+- Fila de manutenção: ícone do tray (hoje invisível), SHA-256 na verificação do DMG baixado, remoção da cópia não usada de `golivebypass.js`, proveniência/manifesto do binário `proton-confgen`, timeout e `error` handler no `ProtonFetcher`, e CI para os testes do app.
+
 ## [2.0.6] - 2026-09-18
 
 ### Devlog da release estável

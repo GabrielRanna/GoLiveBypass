@@ -51,10 +51,11 @@ function classifyFailure(combined: string): ProtonFetchResult {
 export class ProtonFetcher extends EventEmitter {
   private proc: child_process.ChildProcess | null = null;
 
-  private run(bin: string, args: string[]): Promise<{ code: number | null; out: string; err: string }> {
+  private run(bin: string, args: string[], stdin?: string): Promise<{ code: number | null; out: string; err: string }> {
     return new Promise(resolve => {
-      const proc = child_process.spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      const proc = child_process.spawn(bin, args, { stdio: [stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'] });
       this.proc = proc;
+      if (stdin !== undefined) proc.stdin?.end(stdin);
       let out = '';
       let err = '';
       proc.stdout?.on('data', (d: Buffer) => { out += d.toString(); });
@@ -72,10 +73,12 @@ export class ProtonFetcher extends EventEmitter {
     }
     fs.mkdirSync(opts.sessDir, { recursive: true });
 
+    // A senha vai pelo stdin (-stdin-secrets), nunca na linha de comando visível no `ps`.
+    // Sem senha, o proton-confgen reutiliza a sessão salva em -session-file.
+    const secrets = opts.password ? JSON.stringify({ password: opts.password }) : undefined;
     const common = [
       '-username', opts.username,
-      // Sem senha, o proton-confgen reutiliza a sessão salva em -session-file
-      ...(opts.password ? ['-password', opts.password] : []),
+      ...(secrets ? ['-stdin-secrets'] : []),
       '-session-file', path.join(opts.sessDir, 'session.json'),
       '-free-only',
       '-countries', PREFERRED_COUNTRIES.join(','),
@@ -83,7 +86,7 @@ export class ProtonFetcher extends EventEmitter {
     ];
 
     this.emit('progress', '[1/3] Medindo ping dos servidores do México e EUA…');
-    const cat = await this.run(bin, [...common, '-route-catalog', '-auto-ping']);
+    const cat = await this.run(bin, [...common, '-route-catalog', '-auto-ping'], secrets);
     if (cat.code !== 0) {
       this.emit('done', classifyFailure(cat.out + cat.err));
       return;
@@ -104,7 +107,7 @@ export class ProtonFetcher extends EventEmitter {
       ...common,
       ...(chosen ? ['-server', chosen.server] : ['-auto-ping']),
       '-output', opts.confOut,
-    ]);
+    ], secrets);
 
     if (gen.code === 0 && fs.existsSync(opts.confOut)) {
       this.emit('progress', 'Configuração obtida com sucesso!');

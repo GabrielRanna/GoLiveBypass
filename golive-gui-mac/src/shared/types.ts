@@ -3,8 +3,6 @@ export type TunnelState = 'active' | 'inactive' | 'unknown';
 export interface WgConfig {
   interfaceLines: string[];
   peerLines: string[];
-  hasIpv6Address: boolean;
-  dns: string[];
 }
 
 export interface ActivateResult {

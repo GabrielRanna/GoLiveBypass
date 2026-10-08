@@ -18,8 +18,8 @@ function classifyError(out: string): PrivilegedError {
 }
 
 async function ensureHelper(opts: ActivationOpts): Promise<ActivationResult> {
-  if (helperReady()) return { ok: true };
-  const r = await installHelper(opts.user, opts.binDir);
+  if (helperReady(opts.binDir)) return { ok: true };
+  const r = await installHelper(opts.binDir);
   if (r.ok) return { ok: true };
   if (r.error === 'user_cancelled') return { ok: false, error: 'user_cancelled' };
   return { ok: false, error: 'wg_failed', detail: r.error };

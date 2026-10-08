@@ -1,5 +1,5 @@
 import {
-  app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, powerMonitor,
+  app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, powerMonitor, net, shell,
 } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
@@ -12,7 +12,6 @@ import { deriveStateFromRoute } from './tunnel/status';
 import { restartDiscord } from './discord/restart';
 import { defaultDiscordCandidates, pickDiscordPath } from './discord/locate';
 import { injectVencord, AppManagementDenied, canModifyApp } from './vencord/inject';
-import { shell } from 'electron';
 import { activate } from './tunnel/up';
 import { deactivate } from './tunnel/down';
 import { runActivation, runDeactivation } from './tunnel/activation';
@@ -24,12 +23,13 @@ import type { AppSettings, TunnelState } from '../shared/types';
 const home   = os.homedir();
 const user   = os.userInfo().username;
 const binDir = path.join(process.resourcesPath ?? path.join(__dirname, '../../resources'), 'bin');
-const IFACE  = 'golive';
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let tunnelActive = false;
+// Túnel derrubado pela suspensão: volta sozinho ao acordar
+let resumeTunnel = false;
 
 // ─── Persistência de estado ──────────────────────────────────────────────────
 
@@ -76,16 +76,59 @@ function storeConfig(rawText: string) {
   });
 }
 
-// ─── Shutdown gracioso (#1) ──────────────────────────────────────────────────
+// ─── Operações do túnel ──────────────────────────────────────────────────────
+
+type TunnelUiState = 'active' | 'inactive' | 'activating' | 'deactivating';
+let tunnelOp: Promise<unknown> | null = null;
+
+function pushState(state?: TunnelUiState) {
+  sendToWindow('tunnel:state', { state: state ?? (tunnelActive ? 'active' : 'inactive') });
+}
+
+/** Uma ativação/desativação por vez; um pedido durante outra operação recebe 'busy'. */
+async function exclusive<T>(fn: () => Promise<T>): Promise<T | { error: 'busy' }> {
+  if (tunnelOp) return { error: 'busy' };
+  const op = fn();
+  tunnelOp = op;
+  try { return await op; } finally { tunnelOp = null; }
+}
+
+/**
+ * Derruba o túnel ao sair, desligar ou suspender. Não grava lastTunnelState:
+ * a intenção do usuário continua "ativo" e o túnel volta ao reabrir/acordar.
+ */
+async function bringDownQuietly(): Promise<boolean> {
+  if (!tunnelActive) return false;
+  try {
+    const r = await runDeactivation(await activationOpts());
+    if (r.ok) { tunnelActive = false; updateTray(); pushState(); }
+    return r.ok;
+  } catch { return false; }
+}
 
 async function deactivateBeforeQuit(): Promise<void> {
-  if (!tunnelActive) return;
-  try {
-    const opts = await activationOpts();
-    await runDeactivation(opts);
-    tunnelActive = false;
-    saveSettings({ lastTunnelState: 'inactive' });
-  } catch {}
+  if (tunnelOp) await tunnelOp.catch(() => {});
+  await bringDownQuietly();
+}
+
+/**
+ * Encerramento único: derruba o túnel e sai com app.exit. Reentrar no
+ * app.quit() depois de um before-quit cancelado deixava o processo vivo e sem
+ * janela (o encerramento do Chromium já tinha começado).
+ */
+let shuttingDown = false;
+async function shutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  isQuitting = true;
+  try { await deactivateBeforeQuit(); } finally { app.exit(0); }
+}
+
+async function waitForNetwork(timeoutMs: number): Promise<void> {
+  const until = Date.now() + timeoutMs;
+  while (!net.isOnline() && Date.now() < until) await new Promise(r => setTimeout(r, 1000));
+  // A interface pode estar "online" antes do DHCP/rota padrão assentarem
+  await new Promise(r => setTimeout(r, 2000));
 }
 
 // ─── Tray ────────────────────────────────────────────────────────────────────
@@ -101,11 +144,7 @@ function buildTrayMenu() {
     { type: 'separator' },
     {
       label: 'Sair',
-      click: async () => {
-        isQuitting = true;
-        await deactivateBeforeQuit();
-        app.quit();
-      },
+      click: () => { void shutdown(); },
     },
   ]);
 }
@@ -187,6 +226,7 @@ async function tryInjectVencord(): Promise<InjectOutcome> {
 // ─── IPC handlers ────────────────────────────────────────────────────────────
 
 const protonFetcher = new ProtonFetcher();
+let protonFetching = false;
 
 const handlers = {
   async importConfig({ rawText }: { rawText: string }) {
@@ -194,44 +234,54 @@ const handlers = {
   },
 
   async activate() {
-    const opts = await activationOpts();
-    const r = await activate({
-      opts,
-      // Injeta antes do restart para o Discord já subir com o Vencord
-      restartDiscord: async () => { await tryInjectVencord(); await restartDiscord(); },
-      publicIp,
+    return exclusive(async () => {
+      pushState('activating');
+      const r = await activate({
+        opts: await activationOpts(),
+        // Injeta antes do restart para o Discord já subir com o Vencord
+        restartDiscord: async () => { await tryInjectVencord(); await restartDiscord(); },
+        publicIp,
+      });
+      if ('error' in r) sendToWindow('log', `Falha ao ativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+      else {
+        tunnelActive = true;
+        resumeTunnel = false;
+        saveSettings({ lastTunnelState: 'active' });
+        updateTray();
+      }
+      pushState();
+      return r;
     });
-    if ('error' in r) sendToWindow('log', `Falha ao ativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
-    else {
-      tunnelActive = true;
-      saveSettings({ lastTunnelState: 'active' });
-      updateTray();
-    }
-    return r;
   },
 
   async deactivate() {
-    const opts = await activationOpts();
-    const r = await deactivate({ opts, restartDiscord });
-    if ('error' in r) sendToWindow('log', `Falha ao desativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
-    else {
-      tunnelActive = false;
-      saveSettings({ lastTunnelState: 'inactive' });
-      updateTray();
-    }
-    return r;
+    return exclusive(async () => {
+      pushState('deactivating');
+      const r = await deactivate({ opts: await activationOpts(), restartDiscord });
+      if ('error' in r) sendToWindow('log', `Falha ao desativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+      else {
+        tunnelActive = false;
+        resumeTunnel = false;
+        saveSettings({ lastTunnelState: 'inactive' });
+        updateTray();
+      }
+      pushState();
+      return r;
+    });
   },
 
   async status() {
     const state = deriveStateFromRoute(await readDefaultRoute());
-    tunnelActive = state === 'active';
-    return { state, hasConfig: refreshConfigState().hasConfig };
+    if (!tunnelOp) tunnelActive = state === 'active';
+    return { state, hasConfig: refreshConfigState().hasConfig, busy: !!tunnelOp };
   },
 
   async fetchProton({ username, password }: { username: string; password?: string }) {
+    if (protonFetching) return { ok: false, error: 'busy' };
+    protonFetching = true;
     return new Promise<object>((resolve) => {
       fs.mkdirSync(appDataDir(home), { recursive: true, mode: 0o700 });
-      const confOut = path.join(appDataDir(home), 'proton-raw.conf');
+      const confOut = path.join(appDataDir(home), `proton-raw-${process.pid}-${Date.now()}.conf`);
 
       protonFetcher.removeAllListeners();
 
@@ -240,7 +290,8 @@ const handlers = {
       });
 
       protonFetcher.on('done', (result: { ok: boolean }) => {
-        if (!result.ok) return resolve(result);
+        protonFetching = false;
+        if (!result.ok) { fs.rmSync(confOut, { force: true }); return resolve(result); }
         try {
           // O conf do Proton vem full-tunnel; passa pela reescrita split tunnel
           const stored = storeConfig(fs.readFileSync(confOut, 'utf8'));
@@ -335,25 +386,34 @@ app.whenReady().then(async () => {
     await deactivateBeforeQuit();
   });
 
-  powerMonitor.on('suspend', async () => {
-    if (tunnelActive) {
-      try {
-        const opts = await activationOpts();
-        await runDeactivation(opts);
-        tunnelActive = false;
-        saveSettings({ lastTunnelState: 'inactive' });
-        updateTray();
-      } catch {}
-    }
+  powerMonitor.on('suspend', () => {
+    if (!tunnelActive) return;
+    void exclusive(async () => {
+      if (await bringDownQuietly()) resumeTunnel = true;
+    });
+  });
+
+  powerMonitor.on('resume', async () => {
+    if (!resumeTunnel) return;
+    resumeTunnel = false;
+    sendToWindow('log', 'Mac acordou; reativando o bypass…');
+    await waitForNetwork(30_000);
+    await exclusive(async () => {
+      pushState('activating');
+      // Sem reiniciar o Discord: as conexões dele caíram na suspensão e
+      // reconectam sozinhas, já pelas rotas do túnel
+      const r = await runActivation(await activationOpts());
+      if (r.ok) { tunnelActive = true; updateTray(); }
+      else sendToWindow('log', `Falha ao reativar após suspensão: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+      pushState();
+    });
   });
 
   // Auto-reconnect: restaura último estado
   const { lastTunnelState } = loadSettings();
   if (lastTunnelState === 'active' && refreshConfigState().hasConfig) {
     setTimeout(async () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('log', 'Auto-reconectando bypass…');
-      }
+      sendToWindow('log', 'Auto-reconectando bypass…');
       try {
         await handlers.activate();
       } catch {}
@@ -370,13 +430,15 @@ app.whenReady().then(async () => {
 
 // ─── Shutdown gracioso ────────────────────────────────────────────────────────
 
-app.on('before-quit', async (e) => {
-  if (isQuitting) return;
-  isQuitting = true;
+app.on('before-quit', (e) => {
+  if (shuttingDown) return;
   e.preventDefault();
-  await deactivateBeforeQuit();
-  app.quit();
+  void shutdown();
 });
+
+// kill/logout mandam SIGTERM: sem isto o Chromium fecha as janelas e o túnel fica no ar
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('SIGINT', () => { void shutdown(); });
 
 app.on('window-all-closed', () => {
   // No macOS, manter vivo no tray

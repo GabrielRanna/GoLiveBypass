@@ -36,12 +36,22 @@ describe('isVencordInjected', () => {
 import { canModifyApp } from '../src/main/vencord/inject';
 
 describe('canModifyApp', () => {
-  it('true quando dá para escrever no bundle; false quando negado', () => {
+  const makeApp = () => {
     const app = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-p-'));
     const res = path.join(app, 'Contents', 'Resources');
     fs.mkdirSync(res, { recursive: true });
+    return { app, res };
+  };
+
+  it('true quando dá para escrever no bundle, sem deixar o arquivo de teste', () => {
+    const { app, res } = makeApp();
     expect(canModifyApp(app)).toBe(true);
     expect(fs.readdirSync(res)).toEqual([]);
+  });
+
+  // O root escreve mesmo sem permissão de escrita, então o caso negado não se reproduz
+  it.skipIf(process.getuid?.() === 0)('false quando a escrita é negada', () => {
+    const { app, res } = makeApp();
     fs.chmodSync(res, 0o555);
     try { expect(canModifyApp(app)).toBe(false); } finally { fs.chmodSync(res, 0o755); }
   });

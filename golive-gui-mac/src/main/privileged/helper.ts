@@ -1,4 +1,6 @@
 import * as fs from 'fs';
+import * as path from 'path';
+import * as crypto from 'crypto';
 import * as child_process from 'child_process';
 import { promisify } from 'util';
 import { DISCORD_ALLOWED_IPS, DISCORD_REJECT_V6 } from '../config/rewrite';
@@ -14,13 +16,29 @@ export type HelperAction = 'up' | 'down';
 
 interface ExecResult { code: number; stdout: string; stderr: string; }
 
-async function execCmd(cmd: string, args: string[]): Promise<ExecResult> {
+// Pedidos de senha esperam o usuário: precisam de mais tempo que um comando comum
+const PROMPT_TIMEOUT_MS = 5 * 60_000;
+
+async function execCmd(cmd: string, args: string[], timeout = 90_000): Promise<ExecResult & { timedOut?: boolean }> {
   try {
-    const r = await execFile(cmd, args, { encoding: 'utf8', timeout: 90_000 }) as any;
+    const r = await execFile(cmd, args, { encoding: 'utf8', timeout }) as any;
     return { code: 0, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   } catch (e: any) {
-    return { code: typeof e.code === 'number' ? e.code : 1, stdout: e.stdout ?? '', stderr: e.stderr ?? String(e.message ?? '') };
+    return {
+      code: typeof e.code === 'number' ? e.code : 1,
+      stdout: e.stdout ?? '', stderr: e.stderr ?? String(e.message ?? ''),
+      timedOut: e.killed === true && e.signal === 'SIGTERM',
+    };
   }
+}
+
+export const HELPER_BINS = ['wg', 'wg-quick', 'wireguard-go'];
+
+/** Hash dos binários empacotados: mudar qualquer um força reinstalar o helper. */
+export function binsHash(binDir: string): string {
+  const h = crypto.createHash('sha256');
+  for (const b of HELPER_BINS) h.update(b).update(fs.readFileSync(path.join(binDir, b)));
+  return h.digest('hex');
 }
 
 function shq(s: string): string {
@@ -32,11 +50,12 @@ function shq(s: string): string {
  * AllowedIPs é sempre forçado para os ranges do Discord, qualquer que seja o
  * conf. Binários ficam numa pasta root-owned, nunca no bundle gravável do app.
  */
-export function helperScript(): string {
+export function helperScript(bins = ''): string {
   const D = HELPER_DIR;
   const v6 = DISCORD_REJECT_V6.join(' ');
   return `#!/bin/bash
-# GoLiveBypass privileged helper v3 — não edite; gerado pelo app.
+# GoLiveBypass privileged helper v4 — não edite; gerado pelo app.
+# bins: ${bins}
 set -euo pipefail
 export PATH='${D}/bin:/usr/bin:/bin:/usr/sbin:/sbin'
 export WG_QUICK_USERSPACE_IMPLEMENTATION=wireguard-go
@@ -53,9 +72,20 @@ name_file=/var/run/wireguard/golive.name
 sanitize() {
   [ -f "$src" ] && [ ! -L "$src" ] || { echo no_config >&2; exit 65; }
   awk -v allowed='${DISCORD_ALLOWED_IPS}' '
-    /^\\[Interface\\]$/ {print; next}
-    /^\\[Peer\\]$/ {print; print "AllowedIPs = " allowed; next}
-    /^(PrivateKey|Address|ListenPort|MTU|PublicKey|PresharedKey|Endpoint|PersistentKeepalive) *=/ {print}
+    BEGIN {
+      keep["privatekey"]="PrivateKey"; keep["address"]="Address"; keep["listenport"]="ListenPort"
+      keep["mtu"]="MTU"; keep["publickey"]="PublicKey"; keep["presharedkey"]="PresharedKey"
+      keep["endpoint"]="Endpoint"; keep["persistentkeepalive"]="PersistentKeepalive"
+    }
+    { t=$0; sub(/\\r$/,"",t); gsub(/^[ \\t]+|[ \\t]+$/,"",t); lt=tolower(t) }
+    lt=="[interface]" {print "[Interface]"; next}
+    lt=="[peer]" {print "[Peer]"; print "AllowedIPs = " allowed; next}
+    {
+      i=index(t,"="); if (i==0) next
+      k=tolower(substr(t,1,i-1)); gsub(/[ \\t]+$/,"",k)
+      v=substr(t,i+1); gsub(/^[ \\t]+/,"",v)
+      if (k in keep) print keep[k] " = " v
+    }
   ' "$src" > "$conf.tmp"
   mv -f "$conf.tmp" "$conf"
 }
@@ -74,7 +104,7 @@ case "\${1:-}" in
 
     ok=0
     for i in $(seq 1 15); do
-      hs=$(wg show "$real_iface" latest-handshakes 2>/dev/null | awk '{print $2}' | head -1)
+      hs=$(wg show "$real_iface" latest-handshakes 2>/dev/null | awk '{print $2}' | head -1 || true)
       if [ -n "$hs" ] && [ "$hs" != "0" ]; then ok=1; break; fi
       sleep 1
     done
@@ -97,41 +127,38 @@ esac
 `;
 }
 
-function sudoersContent(user: string): string {
+/** Vale para qualquer administrador; o helper acha o conf de cada um pelo SUDO_USER. */
+export function sudoersContent(): string {
   return (
     `Defaults!${HELPER_PATH} !requiretty\n` +
-    `${user} ALL=(root) NOPASSWD: ${HELPER_PATH} up, ${HELPER_PATH} down\n`
+    `%admin ALL=(root) NOPASSWD: ${HELPER_PATH} up, ${HELPER_PATH} down\n`
   );
 }
 
-/** Pronto = sudoers presente e helper root-owned com o conteúdo desta versão. */
-export function helperReady(): boolean {
+/** Pronto = sudoers presente e helper root-owned com o conteúdo desta versão e destes binários. */
+export function helperReady(binDir: string): boolean {
   try {
     if (!fs.existsSync(SUDOERS_PATH)) return false;
     const st = fs.statSync(HELPER_PATH);
     if (st.uid !== 0 || (st.mode & 0o022) !== 0) return false;
-    return fs.readFileSync(HELPER_PATH, 'utf8') === helperScript();
+    return fs.readFileSync(HELPER_PATH, 'utf8') === helperScript(binsHash(binDir));
   } catch { return false; }
 }
 
 /** Instala/atualiza helper, binários e sudoers via osascript (prompt de admin). */
-export async function installHelper(
-  user: string,
-  binDir: string,
-): Promise<{ ok: boolean; error?: string }> {
-  if (!/^[A-Za-z0-9._-]+$/.test(user)) return { ok: false, error: 'bad_user' };
+export async function installHelper(binDir: string): Promise<{ ok: boolean; error?: string }> {
   const installScript = `
 set -e
 mkdir -p ${shq(HELPER_DIR)}/bin
-for b in wg wg-quick wireguard-go; do cp -f ${shq(binDir)}/"$b" ${shq(HELPER_DIR)}/bin/"$b"; done
+for b in ${HELPER_BINS.join(' ')}; do cp -f ${shq(binDir)}/"$b" ${shq(HELPER_DIR)}/bin/"$b"; done
 chown -R root:wheel ${shq(HELPER_DIR)}
 chmod 755 ${shq(HELPER_DIR)} ${shq(HELPER_DIR)}/bin ${shq(HELPER_DIR)}/bin/*
 cat > ${shq(HELPER_PATH)} << 'HELPEREOF'
-${helperScript()}HELPEREOF
+${helperScript(binsHash(binDir))}HELPEREOF
 chmod 755 ${shq(HELPER_PATH)}
 chown root:wheel ${shq(HELPER_PATH)}
 cat > ${shq(SUDOERS_PATH)}.tmp << 'SUDOERSEOF'
-${sudoersContent(user)}SUDOERSEOF
+${sudoersContent()}SUDOERSEOF
 chmod 440 ${shq(SUDOERS_PATH)}.tmp
 chown root:wheel ${shq(SUDOERS_PATH)}.tmp
 visudo -c -f ${shq(SUDOERS_PATH)}.tmp >/dev/null
@@ -139,9 +166,10 @@ mv -f ${shq(SUDOERS_PATH)}.tmp ${shq(SUDOERS_PATH)}
 `;
   const b64 = Buffer.from(installScript).toString('base64');
   const osaCmd = `printf %s '${b64}' | base64 -D | bash 2>&1`;
-  const r = await execCmd('osascript', ['-e', `do shell script "${osaCmd}" with administrator privileges`]);
+  const r = await execCmd('osascript', ['-e', `do shell script "${osaCmd}" with administrator privileges`], PROMPT_TIMEOUT_MS);
   if (r.code !== 0) {
     const out = r.stdout + r.stderr;
+    if (r.timedOut) return { ok: false, error: 'o pedido de senha expirou sem resposta' };
     if (/user cancel|-128/i.test(out)) return { ok: false, error: 'user_cancelled' };
     return { ok: false, error: out.trim() || 'install_failed' };
   }
@@ -161,6 +189,6 @@ export async function runViaHelper(
 
   // Fora do sudo não há SUDO_USER; o helper usa-o para achar o conf do usuário
   const osaCmd = `SUDO_USER=${user} ${HELPER_PATH} ${action} 2>&1`;
-  const o = await execCmd('osascript', ['-e', `do shell script "${osaCmd}" with administrator privileges`]);
+  const o = await execCmd('osascript', ['-e', `do shell script "${osaCmd}" with administrator privileges`], PROMPT_TIMEOUT_MS);
   return { code: o.code, stderr: o.stdout + o.stderr, usedPrompt: true };
 }

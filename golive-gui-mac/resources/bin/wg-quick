@@ -68,6 +68,24 @@ parse_options() {
     done < "$CONFIG_FILE"
 }
 
+# ── Rede padrão e endpoints ────────────────────────────────────────────────
+default_route_field() { route -n get default 2>/dev/null | awk -v f="$1:" '$1==f{print $2; exit}'; }
+
+# IPs IPv4 dos Endpoint do conf (hostnames e IPv6 ficam de fora)
+endpoint_ips() {
+    printf '%s\n' "$WG_CONFIG" | awk -F= '
+        { k=$1; gsub(/[ \t]/,"",k) }
+        tolower(k)=="endpoint" { v=$2; gsub(/[ \t]/,"",v); sub(/:[0-9]+$/,"",v); print v }
+    ' | grep -E '^[0-9]+(\.[0-9]+){3}$' || true
+}
+
+# Remove rotas de host para os endpoints, inclusive sobras de uma rede anterior
+delete_endpoint_routes() {
+    for ep_ip in $(endpoint_ips); do
+        route -q -n delete -inet -host "$ep_ip" >/dev/null 2>&1 || true
+    done
+}
+
 # ── Interface real (utun*) ──────────────────────────────────────────────────
 get_real_interface() {
     name_file="/var/run/wireguard/${INTERFACE}.name"
@@ -94,18 +112,17 @@ cmd_up() {
     chmod 755 /var/run/wireguard 2>/dev/null || true
     info "Interface para $INTERFACE é $REAL_INTERFACE"
 
-    # Configurar WireGuard (PrivateKey, Peer, etc.)
-    printf '%s\n' "[Interface]" > /tmp/golive-wg-$$.conf
-    printf '%s\n' "$WG_CONFIG" >> /tmp/golive-wg-$$.conf
-    cmd wg setconf "$REAL_INTERFACE" /tmp/golive-wg-$$.conf
-    rm -f /tmp/golive-wg-$$.conf
+    # Configurar WireGuard (PrivateKey, Peer, etc.) pelo stdin: a chave privada
+    # nunca passa por um arquivo em disco
+    printf '[Interface]\n%s\n' "$WG_CONFIG" | cmd wg setconf "$REAL_INTERFACE" /dev/stdin
 
     # MTU automático se não especificado
     if [ -n "$MTU_VAL" ]; then
         cmd ifconfig "$REAL_INTERFACE" mtu "$MTU_VAL"
     else
-        default_mtu="$(netstat -nr -f inet 2>/dev/null | awk '/^default/{print $6}' | head -1 | \
-            xargs -I{} ifconfig {} 2>/dev/null | awk '/mtu/{print $NF}' | head -1)"
+        default_if="$(default_route_field interface)"
+        default_mtu=""
+        [ -n "$default_if" ] && default_mtu="$(ifconfig "$default_if" 2>/dev/null | awk '/mtu/{print $NF; exit}')"
         if [ -n "$default_mtu" ] && [ "$default_mtu" -gt 80 ] 2>/dev/null; then
             cmd ifconfig "$REAL_INTERFACE" mtu $(( default_mtu - 80 ))
         fi
@@ -144,19 +161,15 @@ cmd_up() {
         done
     done
 
-    # Rota direta para os endpoints dos peers (evitar loop de roteamento)
-    gw4="$(netstat -nr -f inet  2>/dev/null | awk '/^default/{print $2}' | head -1)"
-    wg show "$REAL_INTERFACE" endpoints 2>/dev/null | while read -r _ ep; do
-        ep_ip="${ep%:*}"; ep_ip="${ep_ip#[}"; ep_ip="${ep_ip%]}"
-        [ -n "$ep_ip" ] || continue
-        case "$ep_ip" in
-            *:*) : ;;  # IPv6 endpoint — ignorar por ora
-            *)
-                [ -n "$gw4" ] && \
-                    cmd route -q -n add -inet "$ep_ip" -gateway "$gw4" 2>/dev/null || true
-                ;;
-        esac
-    done
+    # Rota direta para os endpoints pelo gateway atual (evitar loop de roteamento).
+    # Apaga antes qualquer rota antiga: de outra rede, ela levaria a um gateway morto.
+    gw4="$(default_route_field gateway)"
+    delete_endpoint_routes
+    if [ -n "$gw4" ]; then
+        for ep_ip in $(endpoint_ips); do
+            cmd route -q -n add -inet -host "$ep_ip" "$gw4" >/dev/null 2>&1 || true
+        done
+    fi
 
     # DNS via networksetup (opcional — falha silenciosa)
     if [ -n "$DNS_SERVERS" ]; then
@@ -177,11 +190,12 @@ cmd_down() {
 
     get_real_interface || die "'$INTERFACE' não é uma interface WireGuard ativa"
 
-    # Remover rotas da interface
-    netstat -nr -f inet 2>/dev/null | awk -v iface="$REAL_INTERFACE" '$6==iface{print $1}' | \
+    # Remover rotas da interface (coluna 4 do netstat do macOS = Netif)
+    netstat -nr -f inet 2>/dev/null | awk -v iface="$REAL_INTERFACE" '$4==iface{print $1}' | \
     while read -r dst; do
-        route -q -n delete -inet "$dst" 2>/dev/null || true
+        route -q -n delete -inet "$dst" -interface "$REAL_INTERFACE" >/dev/null 2>&1 || true
     done
+    delete_endpoint_routes
 
     # Restaurar DNS
     if [ -n "$DNS_SERVERS" ]; then

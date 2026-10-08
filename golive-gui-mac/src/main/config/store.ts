@@ -1,6 +1,6 @@
 import { parseWgConfig } from './parse';
 import { validateWgConfig } from './validate';
-import { rewriteForFullTunnel } from './rewrite';
+import { rewriteForSplitTunnel } from './rewrite';
 
 export interface StoreIo {
   write(path: string, data: string, mode: number): void;
@@ -13,24 +13,22 @@ export interface ReadIo {
 }
 
 /** Recalcula o estado derivado do conf armazenado (chamado no startup). */
-export function readConfigState(io: ReadIo): { hasConfig: boolean; needsIpv6Off: boolean } {
+export function readConfigState(io: ReadIo): { hasConfig: boolean } {
   const text = io.read();
-  if (text == null || text.trim() === '') return { hasConfig: false, needsIpv6Off: false };
-  const parsed = parseWgConfig(text);
-  const v = validateWgConfig(parsed);
-  return { hasConfig: v.ok, needsIpv6Off: !parsed.hasIpv6Address };
+  if (text == null || text.trim() === '') return { hasConfig: false };
+  return { hasConfig: validateWgConfig(parseWgConfig(text)).ok };
 }
 
 export function importConfig(rawText: string, io: StoreIo): {
-  ok: boolean; errors: string[]; warnings: string[]; needsIpv6Off?: boolean;
+  ok: boolean; errors: string[]; warnings: string[];
 } {
   const parsed = parseWgConfig(rawText);
   const v = validateWgConfig(parsed);
   if (!v.ok) return { ok: false, errors: v.errors, warnings: v.warnings };
 
-  const { text, needsIpv6Off } = rewriteForFullTunnel(parsed);
+  const text = rewriteForSplitTunnel(parsed);
   const target = io.configPath();
   io.mkdirp(target.substring(0, target.lastIndexOf('/')));
   io.write(target, text, 0o600);
-  return { ok: true, errors: [], warnings: v.warnings, needsIpv6Off };
+  return { ok: true, errors: [], warnings: v.warnings };
 }

@@ -1,18 +1,32 @@
 import type { TunnelState } from '../../shared/types';
 import { nextState } from '../state';
+import { DISCORD_ALLOWED_IPS } from '../config/rewrite';
 
-// Prefixos de rede que o split tunnel roteia pelo utun (ranges Discord/Cloudflare)
-const DISCORD_PREFIXES = ['162.159', '104.16', '104.17', '104.18', '104.19', '104.20', '104.21',
-  '104.22', '104.23', '104.24', '104.25', '104.26', '104.27', '104.28', '104.29', '104.30', '104.31'];
+/**
+ * Formas como o `netstat -rn` do macOS escreve uma rede: sem os octetos zero do
+ * fim e sem o /len quando ele é implícito ("162.159" = 162.159.0.0/16,
+ * "104.16/12" = 104.16.0.0/12). A forma CIDR completa também é aceita.
+ */
+export function netstatForms(cidr: string): string[] {
+  const [addr, lenStr] = cidr.trim().split('/');
+  const len = Number(lenStr);
+  const octets = addr.split('.');
+  while (octets.length > 1 && octets[octets.length - 1] === '0') octets.pop();
+  const short = octets.join('.');
+  return [len === octets.length * 8 ? short : `${short}/${len}`, `${addr}/${len}`];
+}
 
-export function defaultRouteIsUtun(netstatRn: string): boolean {
-  // Split tunnel: verifica se alguma rota do Discord vai por utun (não a rota default)
-  return netstatRn
-    .split(/\r?\n/)
-    .some(l => /\butun\d+\b/.test(l) && DISCORD_PREFIXES.some(p => l.includes(p)));
+const DISCORD_ROUTES = new Set(DISCORD_ALLOWED_IPS.split(',').flatMap(netstatForms));
+
+/** Algum range do Discord está roteado por um utun (colunas: Destination Gateway Flags Netif). */
+export function discordRoutesViaUtun(netstatRn: string): boolean {
+  return netstatRn.split(/\r?\n/).some(l => {
+    const [dest, , , netif] = l.trim().split(/\s+/);
+    return !!dest && DISCORD_ROUTES.has(dest) && /^utun\d+$/.test(netif ?? '');
+  });
 }
 
 /** Estado do túnel derivado da tabela de rotas (não-privilegiado). */
 export function deriveStateFromRoute(netstatRn: string): TunnelState {
-  return nextState('unknown', defaultRouteIsUtun(netstatRn) ? 'detected_tunnel' : 'detected_clean');
+  return nextState('unknown', discordRoutesViaUtun(netstatRn) ? 'detected_tunnel' : 'detected_clean');
 }

@@ -79,30 +79,50 @@ function setState(s: 'inactive' | 'active' | 'busy' | 'unknown') {
   }
 }
 
+let hasConfig = false;
+
+/** Aplica o estado vindo do main (evento tunnel:state, status ou resultado de uma ação). */
+function applyTunnelState(st: string) {
+  if (st === 'activating' || st === 'deactivating') {
+    active = st === 'deactivating';
+    toggle.disabled = true;
+    setState('busy');
+    return;
+  }
+  const wasActive = active;
+  active = st === 'active';
+  setState(active ? 'active' : st === 'unknown' ? 'unknown' : 'inactive');
+  toggle.disabled = !(active || hasConfig);
+  if (active && (!wasActive || exitLabel.hidden)) showExit();
+}
+
 async function refresh() {
   try {
     const s = await golive.status();
-    active = s.state === 'active';
-    toggle.disabled = !(active || s.hasConfig);
-    setState(s.state);
-    if (active) showExit();
-    log(`[status] state=${s.state} hasConfig=${s.hasConfig}`);
+    hasConfig = s.hasConfig;
+    if (s.busy) { toggle.disabled = true; setState('busy'); }
+    else applyTunnelState(s.state);
+    log(`[status] state=${s.state} hasConfig=${s.hasConfig}${s.busy ? ' (operação em andamento)' : ''}`);
   } catch (e) {
     log(`[status erro] ${e}`, true);
   }
 }
 
+golive.onTunnelState?.((p: { state: string }) => applyTunnelState(p.state));
+
 // ── Toggle ────────────────────────────────────────────────────────────────────
 
 toggle.addEventListener('click', async () => {
-  log(active ? 'Desativando bypass…' : 'Ativando bypass…');
+  const deactivating = active;
+  log(deactivating ? 'Desativando bypass…' : 'Ativando bypass…');
   toggle.disabled = true;
   setState('busy');
 
-  const r = active ? await golive.deactivate() : await golive.activate();
+  const r = deactivating ? await golive.deactivate() : await golive.activate();
 
   if (r?.error) {
     const msgs: Record<string, string> = {
+      busy:              'Já existe uma ativação ou desativação em andamento.',
       user_cancelled:    'Senha cancelada pelo usuário.',
       handshake_timeout: 'Timeout de handshake — nenhum peer respondeu em 15s.',
       binary_missing:    'Binário wg-quick não encontrado.',
@@ -115,10 +135,7 @@ toggle.addEventListener('click', async () => {
     return;
   }
 
-  active = !active;
-  setState(active ? 'active' : 'inactive');
-  if (active) showExit();
-  toggle.disabled = false;
+  applyTunnelState(r?.state ?? (deactivating ? 'inactive' : 'active'));
 });
 
 // ── ProtonVPN fetch ───────────────────────────────────────────────────────────
@@ -150,7 +167,8 @@ fetchBtn.addEventListener('click', async () => {
     protonStatus.textContent = where
       ? `Servidor: ${where}.${active ? ' Desative e ative de novo para usar.' : ' Você já pode ativar.'}`
       : 'Servidor configurado! Você já pode ativar.';
-    toggle.disabled = false;
+    hasConfig = true;
+    if (document.body.dataset.state !== 'busy') toggle.disabled = false;
     log('Config ProtonVPN importada com sucesso.');
     return;
   }
@@ -168,6 +186,7 @@ fetchBtn.addEventListener('click', async () => {
   const errMsgs: Record<string, string> = {
     auth_failed:    'Usuário ou senha incorretos.',
     no_servers:     'Nenhum servidor free disponível agora.',
+    busy:           'Já existe uma busca em andamento.',
     binary_missing: 'proton-confgen não encontrado nos recursos.',
     unknown:        'Erro desconhecido — veja o log.',
   };
@@ -183,7 +202,8 @@ importBtn.addEventListener('click', async () => {
   const r = await golive.importConfig(raw);
   if (!r.ok) { log('Erro ao importar: ' + r.errors?.join(' '), true); return; }
   r.warnings?.forEach((w: string) => log('Aviso: ' + w));
-  toggle.disabled = false;
+  hasConfig = true;
+  if (document.body.dataset.state !== 'busy') toggle.disabled = false;
   protonStatus.textContent = 'Configuração importada.';
   log('Config .conf importada com sucesso.');
 });

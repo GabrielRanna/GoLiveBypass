@@ -12,8 +12,6 @@ export function validateWgConfig(c: WgConfig): { ok: boolean; errors: string[]; 
     if (!has(c.peerLines, 'PublicKey')) errors.push('O bloco [Peer] não tem PublicKey.');
     if (!has(c.peerLines, 'Endpoint')) errors.push('O bloco [Peer] não tem Endpoint (servidor).');
   }
-  if (c.dns.length === 0) warnings.push('Sem DNS no .conf — um DNS padrão será adicionado.');
-  // AllowedIPs será reescrito para os ranges do Discord (split tunnel) — sem warning necessário.
 
   return { ok: errors.length === 0, errors, warnings };
 }

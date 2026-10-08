@@ -6,7 +6,15 @@ do Mac continua na sua conexão normal.
 
 Funciona em Apple Silicon (M1, M2, M3…) e Intel, com um único DMG universal.
 
-**[Baixar a versão mais recente](https://github.com/GabrielRanna/GoLiveBypass/releases/latest)**
+> **O app agora faz parte do projeto oficial.** O código foi mesclado no
+> [GoLiveBypass](https://github.com/bezumiya/GoLiveBypass) (pasta `golive-gui-mac/`,
+> [PR #338](https://github.com/bezumiya/GoLiveBypass/pull/338)) e a versão para macOS é
+> mantida por [@GabrielRanna](https://github.com/GabrielRanna). A próxima versão, 0.6.0,
+> está no [PR #339](https://github.com/bezumiya/GoLiveBypass/pull/339) e vai sair nas
+> releases `macos-v*` do repositório oficial. Até lá, as versões 0.4.0 a 0.5.1 continuam
+> aqui no fork.
+
+**[Baixar a versão mais recente do fork](https://github.com/GabrielRanna/GoLiveBypass/releases/latest)**
 
 ## Instalação
 
@@ -32,9 +40,12 @@ Requisitos: macOS 13 Ventura ou mais novo e o Discord em `/Applications/Discord.
    não pedem senha.
 3. O Discord reinicia já pelo túnel, e o app mostra o país e o IP de saída.
 
-Ao ativar, o app também instala o Vencord no Discord com o plugin FakeNitro ligado. Para
-isso o macOS precisa liberar o GoLiveBypass em **Ajustes do Sistema › Privacidade e
-Segurança › Gerenciamento de Apps**; o app mostra um botão que abre essa tela.
+Nas versões 0.4.0 a 0.5.1 deste fork, o app também instala o Vencord no Discord com o
+plugin FakeNitro ligado ao ativar. A partir da 0.6.0 isso é opcional: fica em **Extras ›
+Instalar o Vencord com o plugin FakeNitro ao ativar**, desligado por padrão, e o app não
+religa um FakeNitro que você desligou no Vencord. Para instalar o Vencord, o macOS precisa
+liberar o GoLiveBypass em **Ajustes do Sistema › Privacidade e Segurança › Gerenciamento de
+Apps**; o app mostra um botão que abre essa tela.
 
 O app fica na barra de menu. Fechar a janela não desliga o bypass; para sair, use
 **Sair** no ícone da barra de menu ou Cmd+Q.
@@ -47,7 +58,8 @@ O app fica na barra de menu. Fechar a janela não desliga o bypass; para sair, u
 - **Volta sozinho.** Se o bypass estava ligado, ele reconecta ao abrir o app e depois
   que o Mac acorda da suspensão.
 - **Atualiza pelo próprio app.** Quando sai uma versão nova, aparece um aviso no topo
-  da janela com o botão **Atualizar**.
+  da janela com o botão **Atualizar**. A partir da 0.6.0 o app confere o SHA-256 do DMG
+  antes de abrir e busca as atualizações no repositório oficial.
 
 ## Desinstalar
 
@@ -60,12 +72,15 @@ O app fica na barra de menu. Fechar a janela não desliga o bypass; para sair, u
 
 ## Compilar
 
-O código do app está em [`golive-gui-mac/`](https://github.com/GabrielRanna/GoLiveBypass/tree/feat/macos-gui/golive-gui-mac),
-na branch `feat/macos-gui`.
+O código do app está em
+[`golive-gui-mac/`](https://github.com/bezumiya/GoLiveBypass/tree/main/golive-gui-mac) no
+repositório oficial. O passo a passo de build e de release está no
+[README do app](https://github.com/bezumiya/GoLiveBypass/blob/main/golive-gui-mac/README.md).
 
 ```bash
-cd golive-gui-mac
-npm install
+git clone https://github.com/bezumiya/GoLiveBypass.git
+cd GoLiveBypass/golive-gui-mac
+npm ci
 npm run dist:mac   # gera o DMG universal em dist-build/
 ```
 
@@ -73,7 +88,8 @@ npm run dist:mac   # gera o DMG universal em dist-build/
 
 Este repositório é um fork do [GoLiveBypass](https://github.com/bezumiya/GoLiveBypass),
 que tem as versões para Windows, Linux e o plugin para Equicord/Vencord. O app para
-macOS foi feito aqui e está proposto ao projeto original no
-[PR #338](https://github.com/bezumiya/GoLiveBypass/pull/338).
+macOS nasceu aqui e foi incorporado ao projeto oficial no
+[PR #338](https://github.com/bezumiya/GoLiveBypass/pull/338). Bugs e sugestões vão nas
+[issues do repositório oficial](https://github.com/bezumiya/GoLiveBypass/issues).
 
 Licença [GPL-3.0](LICENSE), a mesma do projeto original.

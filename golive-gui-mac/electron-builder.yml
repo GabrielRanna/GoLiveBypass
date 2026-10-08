@@ -1,0 +1,29 @@
+appId: dev.golivebypass.mac
+productName: GoLiveBypass
+directories:
+  output: dist-build
+files:
+  - dist/**
+extraResources:
+  - from: resources/bin
+    to: bin
+  - from: resources/extra
+    to: extra
+asarUnpack:
+  - "**/bin/**"
+  - "**/extra/**"
+mac:
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch: universal
+  hardenedRuntime: false
+  # wg, wireguard-go e proton-confgen já vêm universais
+  x64ArchFiles: "Contents/Resources/{bin,extra}/**"
+  identity: null
+  notarize: false
+  electronUpdaterCompatibility: ">=2.16"
+afterPack: scripts/adhoc-sign.js
+dmg:
+  writeUpdateInfo: false
+  artifactName: GoLiveBypass-macos-${version}-${arch}.${ext}

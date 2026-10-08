@@ -1,11 +1,14 @@
 import * as https from 'https';
+import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as child_process from 'child_process';
 import { app } from 'electron';
 
 const REPO = 'bezumiya/GoLiveBypass';
-const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+// GOLIVE_UPDATE_FEED aponta para um feed local (http://127.0.0.1) só em testes
+const API_URL = process.env.GOLIVE_UPDATE_FEED
+  ?? `https://api.github.com/repos/${REPO}/releases?per_page=30`;
 
 export interface UpdateInfo {
   available: boolean;
@@ -14,40 +17,44 @@ export interface UpdateInfo {
   currentVersion: string;
 }
 
-function httpsGet(url: string): Promise<string> {
+const isLocal = (u: string) => /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(u);
+
+/** GET com redirecionamentos; http só é aceito para localhost. */
+function request(url: string, redirects = 5): Promise<http.IncomingMessage> {
   return new Promise((resolve, reject) => {
-    const get = (u: string) => {
-      https.get(u, {
-        headers: { 'User-Agent': 'GoLiveBypass-Updater', Accept: 'application/vnd.github+json' },
-      }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) return get(res.headers.location!);
-        let data = '';
-        res.on('data', (c: Buffer) => { data += c.toString(); });
-        res.on('end', () => {
-          if (res.statusCode !== 200) reject(new Error(`HTTP ${res.statusCode}`));
-          else resolve(data);
-        });
-      }).on('error', reject);
-    };
-    get(url);
+    const mod = url.startsWith('https://') ? https : isLocal(url) ? http : null;
+    if (!mod) return reject(new Error(`URL não permitida: ${url}`));
+    mod.get(url, {
+      headers: { 'User-Agent': 'GoLiveBypass-Updater', Accept: 'application/vnd.github+json, application/octet-stream' },
+      timeout: 30_000,
+    }, (res) => {
+      const code = res.statusCode ?? 0;
+      if ([301, 302, 303, 307, 308].includes(code) && res.headers.location) {
+        res.resume();
+        if (redirects <= 0) return reject(new Error('Redirecionamentos demais'));
+        return resolve(request(new URL(res.headers.location, url).toString(), redirects - 1));
+      }
+      if (code !== 200) { res.resume(); return reject(new Error(`HTTP ${code}`)); }
+      resolve(res);
+    }).on('error', reject).on('timeout', function (this: http.ClientRequest) { this.destroy(new Error('timeout')); });
   });
 }
 
-function downloadFile(url: string, dest: string): Promise<void> {
-  return new Promise((resolve, reject) => {
+async function httpsGet(url: string): Promise<string> {
+  const res = await request(url);
+  let data = '';
+  for await (const c of res) data += c.toString();
+  return data;
+}
+
+export async function downloadFile(url: string, dest: string): Promise<void> {
+  const res = await request(url);
+  await new Promise<void>((resolve, reject) => {
     const file = fs.createWriteStream(dest);
-    const get = (u: string) => {
-      https.get(u, { headers: { 'User-Agent': 'GoLiveBypass-Updater' } }, (res) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
-          file.close();
-          return get(res.headers.location!);
-        }
-        if (res.statusCode !== 200) { file.close(); return reject(new Error(`HTTP ${res.statusCode}`)); }
-        res.pipe(file);
-        file.on('finish', () => file.close(() => resolve()));
-      }).on('error', reject);
-    };
-    get(url);
+    res.pipe(file);
+    file.on('finish', () => file.close(() => resolve()));
+    file.on('error', reject);
+    res.on('error', reject);
   });
 }
 
@@ -60,30 +67,31 @@ function semverGt(a: string, b: string): boolean {
   return ap > bp;
 }
 
-/** Consulta GitHub Releases e retorna info de atualização */
+// Só o DMG deste app; o GoLiveBypass.dmg das releases upstream é outro produto
+const ASSET_RE = /^GoLiveBypass-macos-.+-(arm64|x64|universal)\.dmg$/;
+
+function pickAsset(assets: any[]): any | undefined {
+  const mine = (assets ?? []).filter((a: any) => ASSET_RE.test(a.name));
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  return mine.find((a: any) => a.name.endsWith(`-${arch}.dmg`))
+      ?? mine.find((a: any) => a.name.endsWith('-universal.dmg'));
+}
+
+/** Consulta GitHub Releases estáveis e retorna info de atualização */
 export async function checkForUpdate(): Promise<UpdateInfo> {
   const current = app.getVersion();
   try {
-    const body = await httpsGet(API_URL);
-    const release = JSON.parse(body);
-    const latest: string = release.tag_name?.replace(/^v/, '') ?? '0.0.0';
-
-    if (!semverGt(latest, current)) return { available: false, currentVersion: current };
-
-    // Encontra asset DMG universal
-    const asset = (release.assets as any[])?.find(
-      (a: any) => /universal.*\.dmg$|\.dmg$/i.test(a.name),
-    );
-
-    return {
-      available: true,
-      latestVersion: latest,
-      downloadUrl: asset?.browser_download_url,
-      currentVersion: current,
-    };
-  } catch {
-    return { available: false, currentVersion: current };
-  }
+    const releases = JSON.parse(await httpsGet(API_URL)) as any[];
+    for (const release of releases) {
+      if (release.draft || release.prerelease) continue;
+      const asset = pickAsset(release.assets);
+      if (!asset) continue;
+      const latest: string = String(release.tag_name ?? '').replace(/^v/, '');
+      if (!/^\d+\.\d+\.\d+$/.test(latest) || !semverGt(latest, current)) break;
+      return { available: true, latestVersion: latest, downloadUrl: asset.browser_download_url, currentVersion: current };
+    }
+  } catch {}
+  return { available: false, currentVersion: current };
 }
 
 /** Baixa a nova versão e abre o Finder para instalar */

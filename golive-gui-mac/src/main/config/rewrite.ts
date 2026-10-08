@@ -9,7 +9,10 @@ import type { WgConfig } from '../../shared/types';
  *   162.159.0.0/16  — Cloudflare (gateway.discord.gg, servidores de voz *.discord.media)
  *   104.16.0.0/12   — Cloudflare (104.16–104.31, CDN e mídia do Discord)
  */
-const DISCORD_ALLOWED_IPS = '162.159.0.0/16, 104.16.0.0/12';
+export const DISCORD_ALLOWED_IPS = '162.159.0.0/16, 104.16.0.0/12';
+
+/** Ranges IPv6 da Cloudflare rejeitados com o túnel ativo, para o Discord cair no IPv4 tunelado. */
+export const DISCORD_REJECT_V6 = ['2606:4700::/32', '2a06:98c0::/29'];
 
 export function rewriteForFullTunnel(
   c: WgConfig,

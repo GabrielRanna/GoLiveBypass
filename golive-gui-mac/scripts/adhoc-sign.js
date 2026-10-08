@@ -26,8 +26,21 @@ exports.default = async function afterPack(context) {
 
   removeUnusedLocales(appPath);
 
+  // No build universal, as fatias x64/arm64 são juntadas depois; assiná-las antes
+  // gera CodeResources diferentes e o merge falha. Assina só o app final.
+  if (/-temp$/.test(path.basename(appOutDir))) return;
+
   // Assina ad-hoc (sem identidade de desenvolvedor)
+  const isMachO = (p) => {
+    const fd = fs.openSync(p, 'r');
+    const b = Buffer.alloc(4);
+    fs.readSync(fd, b, 0, 4, 0);
+    fs.closeSync(fd);
+    return ['cafebabe', 'feedfacf', 'cffaedfe', 'bebafeca'].includes(b.toString('hex'));
+  };
+
   const sign = (target) => {
+    if (fs.statSync(target).isFile() && !isMachO(target)) return;
     try {
       execSync(`codesign --force --deep --sign - ${JSON.stringify(target)}`, { stdio: 'inherit' });
     } catch (e) {

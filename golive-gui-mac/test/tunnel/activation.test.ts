@@ -14,8 +14,6 @@ const opts = {
   home: '/Users/test',
   user: 'test',
   binDir: '/res/bin',
-  service: 'Wi-Fi',
-  setV6Off: false,
 };
 
 beforeEach(() => {
@@ -31,12 +29,12 @@ describe('runActivation', () => {
 
   it('stderr com handshake_timeout → erro tipado', async () => {
     vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 2, stderr: 'handshake_timeout', usedPrompt: false });
-    expect(await runActivation(opts)).toEqual({ ok: false, error: 'handshake_timeout' });
+    expect(await runActivation(opts)).toMatchObject({ ok: false, error: 'handshake_timeout' });
   });
 
   it('cancelamento do usuário → user_cancelled', async () => {
     vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 1, stderr: 'User canceled.', usedPrompt: true });
-    expect(await runActivation(opts)).toEqual({ ok: false, error: 'user_cancelled' });
+    expect(await runActivation(opts)).toMatchObject({ ok: false, error: 'user_cancelled' });
   });
 
   it('helper não instalado → instala e continua', async () => {
@@ -56,6 +54,6 @@ describe('runDeactivation', () => {
 
   it('cancelamento → user_cancelled', async () => {
     vi.mocked(helperMod.runViaHelper).mockResolvedValue({ code: 1, stderr: 'User cancelled.', usedPrompt: true });
-    expect(await runDeactivation(opts)).toEqual({ ok: false, error: 'user_cancelled' });
+    expect(await runDeactivation(opts)).toMatchObject({ ok: false, error: 'user_cancelled' });
   });
 });

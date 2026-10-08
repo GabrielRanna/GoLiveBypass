@@ -4,7 +4,6 @@ directories:
   output: dist-build
 files:
   - dist/**
-  - src/renderer/**
 extraResources:
   - from: resources/bin
     to: bin
@@ -19,9 +18,12 @@ mac:
     - target: dmg
       arch: universal
   hardenedRuntime: false
+  # wg, wireguard-go e proton-confgen já vêm universais
+  x64ArchFiles: "Contents/Resources/{bin,extra}/**"
   identity: null
   notarize: false
   electronUpdaterCompatibility: ">=2.16"
 afterPack: scripts/adhoc-sign.js
 dmg:
   writeUpdateInfo: false
+  artifactName: GoLiveBypass-macos-${version}-${arch}.${ext}

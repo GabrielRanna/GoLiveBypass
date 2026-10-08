@@ -5,50 +5,33 @@ export interface ActivationOpts {
   home: string;
   user: string;
   binDir: string;
-  service: string;
-  setV6Off: boolean;
 }
 
-function v6Args(action: HelperAction, opts: ActivationOpts): string[] {
-  if (action === 'up'   && opts.setV6Off)  return ['--setv6off',  opts.service];
-  if (action === 'down' && opts.setV6Off)  return ['--restorev6', opts.service];
-  return [];
-}
+export interface ActivationResult { ok: boolean; error?: PrivilegedError; detail?: string }
 
-function classifyError(stderr: string): PrivilegedError {
-  const s = stderr.toLowerCase();
-  if (s.includes('user cancel') || s.includes('user cancelled')) return 'user_cancelled';
-  if (s.includes('handshake_timeout'))                           return 'handshake_timeout';
-  if (s.includes('command not found'))                           return 'binary_missing';
+function classifyError(out: string): PrivilegedError {
+  const s = out.toLowerCase();
+  if (s.includes('user cancel') || s.includes('(-128)')) return 'user_cancelled';
+  if (s.includes('handshake_timeout'))                  return 'handshake_timeout';
+  if (s.includes('command not found') || s.includes('no such file')) return 'binary_missing';
   return 'wg_failed';
 }
 
-async function ensureHelper(opts: ActivationOpts): Promise<{ ok: boolean; error?: PrivilegedError }> {
-  if (helperReady(opts.user)) return { ok: true };
-  const r = await installHelper(opts.home, opts.user, opts.binDir);
-  if (!r.ok) {
-    if (r.error === 'user_cancelled') return { ok: false, error: 'user_cancelled' };
-    return { ok: false, error: 'wg_failed' };
-  }
-  return { ok: true };
+async function ensureHelper(opts: ActivationOpts): Promise<ActivationResult> {
+  if (helperReady()) return { ok: true };
+  const r = await installHelper(opts.user, opts.binDir);
+  if (r.ok) return { ok: true };
+  if (r.error === 'user_cancelled') return { ok: false, error: 'user_cancelled' };
+  return { ok: false, error: 'wg_failed', detail: r.error };
 }
 
-export async function runActivation(
-  opts: ActivationOpts,
-): Promise<{ ok: boolean; error?: PrivilegedError }> {
+async function run(action: HelperAction, opts: ActivationOpts): Promise<ActivationResult> {
   const install = await ensureHelper(opts);
   if (!install.ok) return install;
-  const r = await runViaHelper('up', v6Args('up', opts));
+  const r = await runViaHelper(action, opts.user);
   if (r.code === 0) return { ok: true };
-  return { ok: false, error: classifyError(r.stderr) };
+  return { ok: false, error: classifyError(r.stderr), detail: r.stderr.trim().slice(-500) };
 }
 
-export async function runDeactivation(
-  opts: ActivationOpts,
-): Promise<{ ok: boolean; error?: PrivilegedError }> {
-  const install = await ensureHelper(opts);
-  if (!install.ok) return install;
-  const r = await runViaHelper('down', v6Args('down', opts));
-  if (r.code === 0) return { ok: true };
-  return { ok: false, error: classifyError(r.stderr) };
-}
+export const runActivation   = (opts: ActivationOpts) => run('up', opts);
+export const runDeactivation = (opts: ActivationOpts) => run('down', opts);

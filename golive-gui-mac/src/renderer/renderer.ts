@@ -11,14 +11,50 @@ const importBtn   = document.getElementById('import-btn') as HTMLButtonElement;
 const protonStatus = document.getElementById('proton-status')!;
 const captchaHint  = document.getElementById('captcha-hint')!;
 const captchaLink  = document.getElementById('captcha-link') as HTMLAnchorElement;
-const vencordBtn   = document.getElementById('vencord-btn') as HTMLButtonElement;
-const vencordStatus = document.getElementById('vencord-status')!;
+const exitLabel   = document.getElementById('exit-label')!;
+const exitFlag    = document.getElementById('exit-flag')!;
+const exitCountry = document.getElementById('exit-country')!;
+const accountRow  = document.getElementById('account-row')!;
+const accountLabel = document.getElementById('account-label')!;
+const logoutBtn   = document.getElementById('logout-btn') as HTMLButtonElement;
+const permCard    = document.getElementById('perm-card')!;
+const permOpen    = document.getElementById('perm-open') as HTMLButtonElement;
+const permRetry   = document.getElementById('perm-retry') as HTMLButtonElement;
+const permStatus  = document.getElementById('perm-status')!;
 const updateBanner  = document.getElementById('update-banner')!;
 const updateMsg     = document.getElementById('update-msg')!;
 const updateBtn     = document.getElementById('update-btn') as HTMLButtonElement;
 
 let active = false;
 let updateUrl = '';
+let savedAccount: { username: string; expiresAt: string } | null = null;
+
+const countryNames = new Intl.DisplayNames(['pt-BR'], { type: 'region' });
+
+function flagEmoji(cc: string): string {
+  return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
+function hideExit() {
+  exitLabel.hidden = true;
+  exitFlag.textContent = '';
+  exitCountry.textContent = '';
+}
+
+let exitSeq = 0;
+async function showExit() {
+  const seq = ++exitSeq;
+  exitLabel.hidden = false;
+  exitFlag.textContent = '';
+  exitCountry.textContent = 'Verificando país…';
+  const info = await golive.exitInfo().catch(() => null);
+  if (seq !== exitSeq || !active) return;
+  if (!info) { exitCountry.textContent = 'País indisponível'; return; }
+  exitFlag.textContent = info.country ? flagEmoji(info.country) : '';
+  exitCountry.textContent = info.country ? (countryNames.of(info.country) ?? info.country) : 'País desconhecido';
+  ipLabel.textContent = `IP: ${info.ip}`;
+  log(`Saída do Discord: ${info.country ?? '?'} (${info.ip})`);
+}
 
 function log(m: string, isErr = false) {
   const line = `[${new Date().toLocaleTimeString()}] ${m}\n`;
@@ -36,7 +72,9 @@ function setState(s: 'inactive' | 'active' | 'busy' | 'unknown') {
     stateLabel.textContent = s === 'unknown' ? 'Verificando…' : 'Inativo';
     toggle.setAttribute('aria-label', 'Ativar');
     ipLabel.textContent = '';
+    hideExit();
   } else {
+    hideExit();
     stateLabel.textContent = active ? 'Desativando…' : 'Ativando…';
   }
 }
@@ -47,7 +85,7 @@ async function refresh() {
     active = s.state === 'active';
     toggle.disabled = !(active || s.hasConfig);
     setState(s.state);
-    if (!active) ipLabel.textContent = '';
+    if (active) showExit();
     log(`[status] state=${s.state} hasConfig=${s.hasConfig}`);
   } catch (e) {
     log(`[status erro] ${e}`, true);
@@ -70,14 +108,16 @@ toggle.addEventListener('click', async () => {
       binary_missing:    'Binário wg-quick não encontrado.',
       wg_failed:         'Falha ao controlar o WireGuard.',
     };
-    log(`Erro: ${msgs[r.error] ?? r.error}`, true);
+    const msg = msgs[r.error] ?? r.error;
+    log(`Erro: ${msg}${r.detail ? ` — ${r.detail}` : ''}`, true);
     await refresh();
+    ipLabel.textContent = `Erro: ${msg}`;
     return;
   }
 
   active = !active;
   setState(active ? 'active' : 'inactive');
-  if (active && r?.publicIp) ipLabel.textContent = `IP: ${r.publicIp}`;
+  if (active) showExit();
   toggle.disabled = false;
 });
 
@@ -91,18 +131,25 @@ golive.onProtonProgress?.((msg: string) => {
 fetchBtn.addEventListener('click', async () => {
   const user = protonUser.value.trim();
   const pass = protonPass.value;
-  if (!user || !pass) { protonStatus.textContent = 'Preencha usuário e senha.'; return; }
+  const usesSession = !!savedAccount && savedAccount.username === user;
+  if (!user || (!pass && !usesSession)) { protonStatus.textContent = 'Preencha usuário e senha.'; return; }
 
   captchaHint.hidden = true;
   fetchBtn.disabled = true;
   protonStatus.textContent = 'Iniciando…';
 
-  const r = await golive.fetchProton(user, pass);
+  const r = await golive.fetchProton(user, pass || undefined);
 
   fetchBtn.disabled = false;
+  protonPass.value = '';
+  await refreshAccount();
 
   if (r.ok) {
-    protonStatus.textContent = 'Servidor configurado! Você já pode ativar.';
+    const c = r.chosen;
+    const where = c ? `${c.country ? flagEmoji(c.country) + ' ' : ''}${c.city} (${c.server})${c.pingMs ? ` · ${c.pingMs} ms` : ''}` : '';
+    protonStatus.textContent = where
+      ? `Servidor: ${where}.${active ? ' Desative e ative de novo para usar.' : ' Você já pode ativar.'}`
+      : 'Servidor configurado! Você já pode ativar.';
     toggle.disabled = false;
     log('Config ProtonVPN importada com sucesso.');
     return;
@@ -141,41 +188,74 @@ importBtn.addEventListener('click', async () => {
   log('Config .conf importada com sucesso.');
 });
 
-// ── Vencord ───────────────────────────────────────────────────────────────────
+// ── Conta Proton salva ────────────────────────────────────────────────────────
 
-golive.onVencordProgress?.((msg: string) => {
-  vencordStatus.textContent = msg;
-  log(`[vencord] ${msg}`);
-});
-
-async function refreshVencordStatus() {
-  try {
-    const r = await golive.vencordStatus();
-    if (r.status === 'discord_not_found') {
-      vencordStatus.textContent = 'Discord não encontrado em /Applications.';
-      vencordBtn.disabled = true;
-    } else if (r.status === 'installed') {
-      vencordStatus.textContent = 'Vencord já instalado ✓';
-      vencordBtn.textContent = 'Reinstalar Vencord';
-    }
-  } catch {}
+async function refreshAccount() {
+  savedAccount = await golive.protonAccount().catch(() => null);
+  if (!savedAccount) {
+    accountRow.hidden = true;
+    protonPass.placeholder = 'Senha';
+    return;
+  }
+  const until = new Date(savedAccount.expiresAt).toLocaleDateString('pt-BR');
+  accountLabel.textContent = `Conta salva: ${savedAccount.username} · sessão até ${until}`;
+  accountLabel.title = savedAccount.username;
+  accountRow.hidden = false;
+  if (!protonUser.value) protonUser.value = savedAccount.username;
+  protonPass.placeholder = 'Senha (não precisa)';
 }
 
-vencordBtn.addEventListener('click', async () => {
-  vencordBtn.disabled = true;
-  vencordStatus.textContent = 'Instalando…';
-
-  const r = await golive.installVencord();
-
-  if (r.ok) {
-    vencordStatus.textContent = 'Vencord instalado! FakeNitro ativado. Reinicie o Discord.';
-    log('Vencord instalado com sucesso.');
-  } else {
-    vencordStatus.textContent = `Erro: ${r.error}`;
-    log(`Vencord erro: ${r.error}`, true);
-  }
-  vencordBtn.disabled = false;
+logoutBtn.addEventListener('click', async () => {
+  await golive.protonLogout();
+  protonUser.value = '';
+  protonPass.value = '';
+  protonStatus.textContent = 'Sessão removida. A configuração atual continua salva.';
+  log('Sessão Proton removida.');
+  await refreshAccount();
 });
+
+// ── Permissão de Gerenciamento de Apps (Vencord) ───────────────────────────────
+
+golive.onVencordPermission?.((p: { granted: boolean }) => {
+  permCard.hidden = p.granted;
+  if (!p.granted) permStatus.textContent = '';
+});
+
+permOpen.addEventListener('click', async () => {
+  await golive.vencordOpenSettings();
+  permStatus.textContent = 'Ligue o GoLiveBypass e volte para esta janela.';
+});
+
+let retrying = false;
+async function retryVencord(manual: boolean) {
+  if (retrying || permCard.hidden) return;
+  retrying = true;
+  try {
+    const { granted } = await golive.vencordPermission();
+    if (!granted) {
+      if (manual) permStatus.textContent = 'Ainda bloqueado. Confira se a chave do GoLiveBypass está ligada.';
+      return;
+    }
+    permStatus.textContent = 'Permissão liberada! Injetando Vencord…';
+    permRetry.disabled = permOpen.disabled = true;
+    const { outcome } = await golive.vencordRetry();
+    if (outcome === 'ok') {
+      permCard.hidden = true;
+      log('Vencord pronto. O Discord foi reiniciado com o FakeNitro.');
+    } else {
+      permStatus.textContent = outcome === 'needs_permission'
+        ? 'O macOS ainda bloqueou. Feche e reabra o GoLiveBypass e tente de novo.'
+        : 'Não deu certo — veja o log abaixo.';
+    }
+  } finally {
+    permRetry.disabled = permOpen.disabled = false;
+    retrying = false;
+  }
+}
+
+permRetry.addEventListener('click', () => retryVencord(true));
+// Ao voltar dos Ajustes, confere sozinho
+window.addEventListener('focus', () => retryVencord(false));
 
 // ── Atualizações ──────────────────────────────────────────────────────────────
 
@@ -193,7 +273,14 @@ golive.onUpdateProgress?.((msg: string) => {
 updateBtn.addEventListener('click', async () => {
   if (!updateUrl) { log('URL de download não disponível.', true); return; }
   updateBtn.disabled = true;
-  await golive.downloadUpdate(updateUrl);
+  const r = await golive.downloadUpdate(updateUrl);
+  if (!r?.ok) {
+    updateMsg.textContent = `Falha ao baixar: ${r?.error ?? 'erro desconhecido'}`;
+    log(`[update] erro: ${r?.error}`, true);
+    updateBtn.disabled = false;
+    return;
+  }
+  updateMsg.textContent = 'Arraste o novo GoLiveBypass para Aplicativos e reabra o app.';
 });
 
 // ── Notificação de segundo plano (ao fechar janela) ────────────────────────────
@@ -203,4 +290,4 @@ golive.onLog?.((m: string) => log(m));
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 refresh();
-refreshVencordStatus();
+refreshAccount();

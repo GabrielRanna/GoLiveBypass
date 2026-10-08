@@ -4,7 +4,7 @@
 
 ### Build
 - [ ] `npm run build:ts` sem erros de TypeScript
-- [ ] `npm run dist:mac` produz DMG universal (~177 MB)
+- [ ] `npm run dist:mac` produz `GoLiveBypass-macos-<versão>-universal.dmg` (~186 MB)
 - [ ] `file GoLiveBypass.app/Contents/MacOS/GoLiveBypass` mostra `universal binary`
 
 ### Instalação
@@ -30,7 +30,3 @@
 ### Auto-reconexão
 - [ ] Fechar e reabrir o app com bypass previamente ativo → reconecta automaticamente
 - [ ] Estado correto mostrado na UI após reconexão
-
-### Vencord
-- [ ] Botão "Instalar Vencord" baixa e patcha o Discord
-- [ ] FakeNitro aparece como plugin habilitado nas configurações do Vencord

@@ -8,7 +8,7 @@ vi.mock('../../src/main/privileged/helper', () => ({
 }));
 
 const baseOpts = {
-  home: '/Users/test', user: 'test', binDir: '/res/bin', service: 'Wi-Fi', setV6Off: false,
+  home: '/Users/test', user: 'test', binDir: '/res/bin',
 };
 
 describe('deactivate', () => {
@@ -24,7 +24,7 @@ describe('deactivate', () => {
     vi.mocked(runViaHelper).mockResolvedValueOnce({ code: 1, stderr: 'User cancelled.', usedPrompt: true });
     const restartDiscord = vi.fn(async () => {});
     const r = await deactivate({ opts: baseOpts, restartDiscord });
-    expect(r).toEqual({ error: 'user_cancelled' });
+    expect(r).toMatchObject({ error: 'user_cancelled' });
     expect(restartDiscord).not.toHaveBeenCalled();
   });
 });

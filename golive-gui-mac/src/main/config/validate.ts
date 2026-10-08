@@ -13,8 +13,7 @@ export function validateWgConfig(c: WgConfig): { ok: boolean; errors: string[]; 
     if (!has(c.peerLines, 'Endpoint')) errors.push('O bloco [Peer] não tem Endpoint (servidor).');
   }
   if (c.dns.length === 0) warnings.push('Sem DNS no .conf — um DNS padrão será adicionado.');
-  const allowed = c.peerLines.find(l => l.toLowerCase().startsWith('allowedips')) ?? '';
-  if (!allowed.includes('0.0.0.0/0')) warnings.push('AllowedIPs não cobre todo o tráfego — será reescrito para full-tunnel.');
+  // AllowedIPs será reescrito para os ranges do Discord (split tunnel) — sem warning necessário.
 
   return { ok: errors.length === 0, errors, warnings };
 }

@@ -7,15 +7,17 @@ import * as path from 'path';
 import { makeRouter } from './ipc';
 import { importConfig, readConfigState } from './config/store';
 import { configPath, settingsPath, sessionDir, appDataDir } from './paths';
-import { readDefaultRoute, publicIp } from './tunnel/collect';
+import { readDefaultRoute, publicIp, exitInfo } from './tunnel/collect';
 import { deriveStateFromRoute } from './tunnel/status';
 import { restartDiscord } from './discord/restart';
-import { primaryService } from './net/ipv6';
+import { defaultDiscordCandidates, pickDiscordPath } from './discord/locate';
+import { injectVencord, AppManagementDenied, canModifyApp } from './vencord/inject';
+import { shell } from 'electron';
 import { activate } from './tunnel/up';
 import { deactivate } from './tunnel/down';
 import { runActivation, runDeactivation } from './tunnel/activation';
 import { ProtonFetcher } from './proton/fetch';
-import { installVencord, vencordStatus } from './vencord/install';
+import { readSavedAccount, clearSavedAccount } from './proton/account';
 import { checkForUpdate, downloadAndInstall } from './updater';
 import type { AppSettings, TunnelState } from '../shared/types';
 
@@ -49,18 +51,29 @@ function saveSettings(patch: Partial<AppSettings>): void {
 
 // ─── Config WireGuard ────────────────────────────────────────────────────────
 
-let needsIpv6Off = false;
+function readStoredConf(): string | null {
+  const p = configPath(home);
+  return fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null;
+}
 
 function refreshConfigState() {
-  const p = configPath(home);
-  const state = readConfigState({ read: () => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : null) });
-  needsIpv6Off = state.needsIpv6Off;
-  return state;
+  return readConfigState({ read: readStoredConf });
 }
 
 async function activationOpts() {
-  const service = await primaryService();
-  return { home, user, binDir, service, setV6Off: needsIpv6Off };
+  return { home, user, binDir };
+}
+
+function sendToWindow(channel: string, payload: unknown) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload);
+}
+
+function storeConfig(rawText: string) {
+  return importConfig(rawText, {
+    configPath: () => configPath(home),
+    mkdirp: (p: string) => fs.mkdirSync(p, { recursive: true, mode: 0o700 }),
+    write: (p: string, data: string, mode: number) => { fs.writeFileSync(p, data, { mode }); fs.chmodSync(p, mode); },
+  });
 }
 
 // ─── Shutdown gracioso (#1) ──────────────────────────────────────────────────
@@ -84,7 +97,7 @@ function buildTrayMenu() {
       enabled: false,
     },
     { type: 'separator' },
-    { label: 'Abrir janela', click: () => mainWindow?.show() },
+    { label: 'Abrir janela', click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); } },
     { type: 'separator' },
     {
       label: 'Sair',
@@ -109,7 +122,7 @@ function createTray() {
     : nativeImage.createEmpty();
   icon.setTemplateImage(true);
   tray = new Tray(icon);
-  tray.on('click', () => mainWindow?.show());
+  tray.on('click', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); });
   updateTray();
 }
 
@@ -140,29 +153,56 @@ function createWindow() {
   });
 }
 
+// ─── Vencord ─────────────────────────────────────────────────────────────────
+
+const APP_MANAGEMENT_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AppBundles';
+
+function discordAppPath(): string | null {
+  return pickDiscordPath(defaultDiscordCandidates(home).map(p => ({ path: p, exists: fs.existsSync(p) })));
+}
+
+type InjectOutcome = 'ok' | 'needs_permission' | 'no_discord' | 'failed';
+
+async function tryInjectVencord(): Promise<InjectOutcome> {
+  const discordApp = discordAppPath();
+  if (!discordApp) { sendToWindow('log', 'Discord não encontrado; Vencord não injetado.'); return 'no_discord'; }
+  try {
+    await injectVencord({
+      home, discordApp, cacheDir: path.join(appDataDir(home), 'vencord'),
+      log: m => sendToWindow('log', m),
+    });
+    sendToWindow('vencord:permission', { granted: true });
+    return 'ok';
+  } catch (e: any) {
+    if (e instanceof AppManagementDenied) {
+      sendToWindow('log', 'O macOS precisa liberar o GoLiveBypass em Gerenciamento de Apps para alterar o Discord.');
+      sendToWindow('vencord:permission', { granted: false });
+      return 'needs_permission';
+    }
+    sendToWindow('log', `Falha ao injetar Vencord: ${e?.message ?? e}`);
+    return 'failed';
+  }
+}
+
 // ─── IPC handlers ────────────────────────────────────────────────────────────
 
 const protonFetcher = new ProtonFetcher();
 
 const handlers = {
   async importConfig({ rawText }: { rawText: string }) {
-    const r = importConfig(rawText, {
-      configPath: () => configPath(home),
-      mkdirp: (p: string) => fs.mkdirSync(p, { recursive: true, mode: 0o700 }),
-      write: (p: string, data: string, mode: number) => { fs.writeFileSync(p, data, { mode }); fs.chmodSync(p, mode); },
-    });
-    if (r.ok) needsIpv6Off = r.needsIpv6Off ?? false;
-    return r;
+    return storeConfig(rawText);
   },
 
   async activate() {
     const opts = await activationOpts();
     const r = await activate({
       opts,
-      restartDiscord,
+      // Injeta antes do restart para o Discord já subir com o Vencord
+      restartDiscord: async () => { await tryInjectVencord(); await restartDiscord(); },
       publicIp,
     });
-    if (!('error' in r)) {
+    if ('error' in r) sendToWindow('log', `Falha ao ativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+    else {
       tunnelActive = true;
       saveSettings({ lastTunnelState: 'active' });
       updateTray();
@@ -173,7 +213,8 @@ const handlers = {
   async deactivate() {
     const opts = await activationOpts();
     const r = await deactivate({ opts, restartDiscord });
-    if (!('error' in r)) {
+    if ('error' in r) sendToWindow('log', `Falha ao desativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+    else {
       tunnelActive = false;
       saveSettings({ lastTunnelState: 'inactive' });
       updateTray();
@@ -187,19 +228,28 @@ const handlers = {
     return { state, hasConfig: refreshConfigState().hasConfig };
   },
 
-  async fetchProton({ username, password }: { username: string; password: string }) {
+  async fetchProton({ username, password }: { username: string; password?: string }) {
     return new Promise<object>((resolve) => {
-      const confOut = configPath(home);
-      fs.mkdirSync(appDataDir(home), { recursive: true });
+      fs.mkdirSync(appDataDir(home), { recursive: true, mode: 0o700 });
+      const confOut = path.join(appDataDir(home), 'proton-raw.conf');
 
       protonFetcher.removeAllListeners();
 
       protonFetcher.on('progress', (msg: string) => {
-        mainWindow?.webContents.send('proton:progress', msg);
+        sendToWindow('proton:progress', msg);
       });
 
-      protonFetcher.on('done', (result: object) => {
-        resolve(result);
+      protonFetcher.on('done', (result: { ok: boolean }) => {
+        if (!result.ok) return resolve(result);
+        try {
+          // O conf do Proton vem full-tunnel; passa pela reescrita split tunnel
+          const stored = storeConfig(fs.readFileSync(confOut, 'utf8'));
+          resolve(stored.ok ? result : { ok: false, error: stored.errors.join(' ') });
+        } catch (e: any) {
+          resolve({ ok: false, error: String(e?.message ?? e) });
+        } finally {
+          fs.rmSync(confOut, { force: true });
+        }
       });
 
       protonFetcher.fetch({
@@ -212,15 +262,33 @@ const handlers = {
     });
   },
 
-  async installVencord() {
-    const tmpDir = app.getPath('temp');
-    return installVencord(tmpDir, (p) => {
-      mainWindow?.webContents.send('vencord:progress', p.step);
-    });
+  async vencordPermission() {
+    const discordApp = discordAppPath();
+    return { granted: discordApp ? canModifyApp(discordApp) : false };
   },
 
-  async vencordStatus() {
-    return { status: vencordStatus() };
+  async vencordOpenSettings() {
+    await shell.openExternal(APP_MANAGEMENT_PANE);
+    return { ok: true };
+  },
+
+  async vencordRetry() {
+    const outcome = await tryInjectVencord();
+    if (outcome === 'ok' && tunnelActive) await restartDiscord();
+    return { outcome };
+  },
+
+  async exitInfo() {
+    return exitInfo();
+  },
+
+  async protonAccount() {
+    return readSavedAccount(sessionDir(home));
+  },
+
+  async protonLogout() {
+    clearSavedAccount(sessionDir(home));
+    return { ok: true };
   },
 
   async checkUpdate() {
@@ -229,7 +297,7 @@ const handlers = {
 
   async downloadUpdate({ url }: { url: string }) {
     return downloadAndInstall(url, (msg) => {
-      mainWindow?.webContents.send('update:progress', msg);
+      sendToWindow('update:progress', msg);
     });
   },
 };
@@ -238,8 +306,17 @@ const router = makeRouter(handlers as any);
 
 // ─── Inicialização ────────────────────────────────────────────────────────────
 
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); }
+});
+
 app.whenReady().then(async () => {
-  refreshConfigState();
+  // Confs gravados por versões anteriores podem estar full-tunnel: normaliza
+  const stored = readStoredConf();
+  if (stored && /AllowedIPs\s*=.*(0\.0\.0\.0\/0|::\/0)/i.test(stored)) storeConfig(stored);
   createTray();
   createWindow();
 
@@ -253,11 +330,30 @@ app.whenReady().then(async () => {
     return fs.readFileSync(r.filePaths[0], 'utf8');
   });
 
+  // powerMonitor só pode ser usado depois de app.whenReady()
+  powerMonitor.on('shutdown', async () => {
+    await deactivateBeforeQuit();
+  });
+
+  powerMonitor.on('suspend', async () => {
+    if (tunnelActive) {
+      try {
+        const opts = await activationOpts();
+        await runDeactivation(opts);
+        tunnelActive = false;
+        saveSettings({ lastTunnelState: 'inactive' });
+        updateTray();
+      } catch {}
+    }
+  });
+
   // Auto-reconnect: restaura último estado
   const { lastTunnelState } = loadSettings();
   if (lastTunnelState === 'active' && refreshConfigState().hasConfig) {
     setTimeout(async () => {
-      mainWindow?.webContents.send('log', 'Auto-reconectando bypass…');
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('log', 'Auto-reconectando bypass…');
+      }
       try {
         await handlers.activate();
       } catch {}
@@ -266,8 +362,8 @@ app.whenReady().then(async () => {
 
   // Verifica atualizações em segundo plano
   checkForUpdate().then((info) => {
-    if (info.available) {
-      mainWindow?.webContents.send('update:available', info);
+    if (info.available && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update:available', info);
     }
   }).catch(() => {});
 });
@@ -282,28 +378,10 @@ app.on('before-quit', async (e) => {
   app.quit();
 });
 
-// Detecta suspensão / desligamento do sistema
-powerMonitor.on('shutdown', async () => {
-  await deactivateBeforeQuit();
-});
-
-powerMonitor.on('suspend', async () => {
-  // Derruba o túnel ao suspender para evitar leak de estado
-  if (tunnelActive) {
-    try {
-      const opts = await activationOpts();
-      await runDeactivation(opts);
-      tunnelActive = false;
-      saveSettings({ lastTunnelState: 'inactive' });
-      updateTray();
-    } catch {}
-  }
-});
-
 app.on('window-all-closed', () => {
   // No macOS, manter vivo no tray
 });
 
 app.on('activate', () => {
-  mainWindow?.show();
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
 });

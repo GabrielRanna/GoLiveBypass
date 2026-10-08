@@ -3,9 +3,13 @@ export interface RouterHandlers {
   activate(): Promise<unknown>;
   deactivate(): Promise<unknown>;
   status(): Promise<unknown>;
-  fetchProton(payload: { username: string; password: string }): Promise<unknown>;
-  installVencord(): Promise<unknown>;
-  vencordStatus(): Promise<unknown>;
+  fetchProton(payload: { username: string; password?: string }): Promise<unknown>;
+  exitInfo(): Promise<unknown>;
+  vencordPermission(): Promise<unknown>;
+  vencordOpenSettings(): Promise<unknown>;
+  vencordRetry(): Promise<unknown>;
+  protonAccount(): Promise<unknown>;
+  protonLogout(): Promise<unknown>;
   checkUpdate(): Promise<unknown>;
   downloadUpdate(payload: { url: string }): Promise<unknown>;
 }
@@ -18,8 +22,12 @@ export function makeRouter(h: RouterHandlers) {
       case 'tunnel:deactivate':   return h.deactivate();
       case 'tunnel:status':       return h.status();
       case 'proton:fetch':        return h.fetchProton(payload);
-      case 'vencord:install':     return h.installVencord();
-      case 'vencord:status':      return h.vencordStatus();
+      case 'tunnel:exit':         return h.exitInfo();
+      case 'vencord:permission':  return h.vencordPermission();
+      case 'vencord:openSettings': return h.vencordOpenSettings();
+      case 'vencord:retry':       return h.vencordRetry();
+      case 'proton:account':      return h.protonAccount();
+      case 'proton:logout':       return h.protonLogout();
       case 'app:checkUpdate':     return h.checkUpdate();
       case 'app:downloadUpdate':  return h.downloadUpdate(payload);
       default: throw new Error(`Canal IPC desconhecido: ${channel}`);

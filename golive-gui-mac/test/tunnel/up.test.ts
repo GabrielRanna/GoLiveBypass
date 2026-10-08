@@ -8,7 +8,7 @@ vi.mock('../../src/main/privileged/helper', () => ({
 }));
 
 const baseOpts = {
-  home: '/Users/test', user: 'test', binDir: '/res/bin', service: 'Wi-Fi', setV6Off: false,
+  home: '/Users/test', user: 'test', binDir: '/res/bin',
 };
 
 function deps(over: Partial<Parameters<typeof activate>[0]> = {}) {
@@ -33,7 +33,7 @@ describe('activate', () => {
     vi.mocked(runViaHelper).mockResolvedValueOnce({ code: 2, stderr: 'handshake_timeout', usedPrompt: false });
     const d = deps();
     const r = await activate(d);
-    expect(r).toEqual({ error: 'handshake_timeout' });
+    expect(r).toMatchObject({ error: 'handshake_timeout' });
     expect(d.restartDiscord).not.toHaveBeenCalled();
   });
 
@@ -42,6 +42,6 @@ describe('activate', () => {
     vi.mocked(runViaHelper).mockResolvedValueOnce({ code: 1, stderr: 'User canceled.', usedPrompt: true });
     const d = deps();
     const r = await activate(d);
-    expect(r).toEqual({ error: 'user_cancelled' });
+    expect(r).toMatchObject({ error: 'user_cancelled' });
   });
 });

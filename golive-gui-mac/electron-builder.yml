@@ -1,0 +1,27 @@
+appId: dev.golivebypass.mac
+productName: GoLiveBypass
+directories:
+  output: dist-build
+files:
+  - dist/**
+  - src/renderer/**
+extraResources:
+  - from: resources/bin
+    to: bin
+  - from: resources/extra
+    to: extra
+asarUnpack:
+  - "**/bin/**"
+  - "**/extra/**"
+mac:
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch: universal
+  hardenedRuntime: false
+  identity: null
+  notarize: false
+  electronUpdaterCompatibility: ">=2.16"
+afterPack: scripts/adhoc-sign.js
+dmg:
+  writeUpdateInfo: false

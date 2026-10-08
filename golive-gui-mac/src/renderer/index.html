@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="styles.css" />
+  <title>GoLiveBypass</title>
+</head>
+<body>
+  <!-- Área de arrasto da titlebar oculta -->
+  <div class="drag-region"></div>
+
+  <!-- Banner de atualização (oculto por padrão) -->
+  <div id="update-banner" hidden>
+    <span id="update-msg">Nova versão disponível!</span>
+    <button id="update-btn" class="pill-btn">Atualizar</button>
+  </div>
+
+  <main>
+    <!-- Botão de ativar/desativar com spinner -->
+    <div class="power-wrap">
+      <button id="toggle" class="power" disabled aria-label="Ativar">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3v8" />
+          <path d="M6.3 6.8a8 8 0 1 0 11.4 0" />
+        </svg>
+      </button>
+    </div>
+
+    <p id="state-label" class="state-label">Verificando…</p>
+    <p id="ip-label" class="ip-label"></p>
+
+    <!-- Seção ProtonVPN -->
+    <section class="card" id="proton-section">
+      <h2 class="card-title">Configuração ProtonVPN</h2>
+      <div class="field-row">
+        <input id="proton-user" type="text"    placeholder="Usuário" autocomplete="off" spellcheck="false" />
+        <input id="proton-pass" type="password" placeholder="Senha" />
+      </div>
+      <div class="btn-row">
+        <button id="fetch-btn" class="pill-btn">Buscar melhor servidor</button>
+        <button id="import-btn" class="pill-btn ghost">Importar .conf</button>
+      </div>
+      <p id="proton-status" class="hint"></p>
+      <p id="captcha-hint" class="hint warn" hidden>
+        Verificação humana necessária. Resolva o CAPTCHA no navegador e tente novamente.
+        <a id="captcha-link" href="#" class="pill-btn mini">Abrir CAPTCHA</a>
+      </p>
+    </section>
+
+    <!-- Seção Vencord -->
+    <section class="card" id="vencord-section">
+      <h2 class="card-title">Vencord + FakeNitro</h2>
+      <p class="hint" id="vencord-hint">Instala o Vencord no Discord e ativa o FakeNitro automaticamente.</p>
+      <div class="btn-row">
+        <button id="vencord-btn" class="pill-btn">Instalar Vencord</button>
+      </div>
+      <p id="vencord-status" class="hint"></p>
+    </section>
+
+    <!-- Log -->
+    <pre id="log" class="log"></pre>
+  </main>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

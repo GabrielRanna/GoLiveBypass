@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Roda no macOS (qualquer arquitetura, inclusive Intel). Popula resources/bin com
+# wireguard-go e wg UNIVERSAIS (x86_64 + arm64 via lipo) e o wg-quick (script).
+# Assim o .dmg universal roda tanto em Intel quanto em Apple Silicon.
+set -euo pipefail
+
+DEST="$(cd "$(dirname "$0")/.." && pwd)/resources/bin"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$DEST"
+
+command -v brew >/dev/null 2>&1 || { echo "Homebrew é necessário." >&2; exit 1; }
+command -v lipo >/dev/null 2>&1 || { echo "lipo (Xcode Command Line Tools) é necessário." >&2; exit 1; }
+
+# Codinome do macOS -> tag de bottle (ex.: sequoia, sonoma, ventura).
+CODENAME=$(brew config 2>/dev/null | awk -F': ' '/^macOS/ {print $2}' | tr '[:upper:]' '[:lower:]' | sed -E 's/.*\b(sequoia|sonoma|ventura|monterey)\b.*/\1/')
+[ -n "$CODENAME" ] || { echo "Não deduzi o codinome do macOS para o bottle. Ajuste CODENAME no script." >&2; exit 1; }
+echo "Bottles alvo: ${CODENAME} (x86_64) e arm64_${CODENAME}"
+
+# Extrai bin/<name> de um bottle de uma formula para um arquivo de saída.
+extract_bin() {  # formula tag name out
+  local formula="$1" tag="$2" name="$3" out="$4" dir
+  brew fetch --force --bottle-tag="$tag" "$formula" >/dev/null
+  local tar; tar=$(brew --cache --bottle-tag="$tag" "$formula")
+  dir="$WORK/${formula}-${tag}"; mkdir -p "$dir"
+  tar -xzf "$tar" -C "$dir"
+  local found; found=$(find "$dir" -type f -path "*/bin/${name}" | head -1)
+  [ -n "$found" ] || { echo "Não achei bin/${name} no bottle ${formula}/${tag}." >&2; exit 1; }
+  cp "$found" "$out"
+}
+
+make_universal() {  # formula binname
+  local formula="$1" name="$2"
+  extract_bin "$formula" "$CODENAME"        "$name" "$WORK/${name}.x64"
+  extract_bin "$formula" "arm64_${CODENAME}" "$name" "$WORK/${name}.arm64"
+  lipo -create "$WORK/${name}.x64" "$WORK/${name}.arm64" -output "$DEST/${name}"
+  chmod +x "$DEST/${name}"
+  echo "universal: ${name} -> $(lipo -archs "$DEST/${name}")"
+}
+
+make_universal wireguard-go  wireguard-go
+make_universal wireguard-tools wg
+
+# wg-quick é script bash (independe de arquitetura): pega de qualquer bottle já baixado.
+WGQ=$(find "$WORK/wireguard-tools-${CODENAME}" -type f -path "*/bin/wg-quick" | head -1)
+[ -n "$WGQ" ] || { echo "Não achei wg-quick." >&2; exit 1; }
+cp "$WGQ" "$DEST/wg-quick"; chmod +x "$DEST/wg-quick"
+
+echo "Binários universais em $DEST"

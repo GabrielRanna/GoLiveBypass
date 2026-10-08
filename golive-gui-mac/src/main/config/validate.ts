@@ -1,0 +1,20 @@
+import type { WgConfig } from '../../shared/types';
+
+export function validateWgConfig(c: WgConfig): { ok: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const has = (lines: string[], key: string) =>
+    lines.some(l => l.toLowerCase().startsWith(key.toLowerCase()));
+
+  if (!has(c.interfaceLines, 'PrivateKey')) errors.push('O bloco [Interface] não tem PrivateKey.');
+  if (c.peerLines.length === 0) errors.push('O arquivo não tem um bloco [Peer].');
+  else {
+    if (!has(c.peerLines, 'PublicKey')) errors.push('O bloco [Peer] não tem PublicKey.');
+    if (!has(c.peerLines, 'Endpoint')) errors.push('O bloco [Peer] não tem Endpoint (servidor).');
+  }
+  if (c.dns.length === 0) warnings.push('Sem DNS no .conf — um DNS padrão será adicionado.');
+  const allowed = c.peerLines.find(l => l.toLowerCase().startsWith('allowedips')) ?? '';
+  if (!allowed.includes('0.0.0.0/0')) warnings.push('AllowedIPs não cobre todo o tráfego — será reescrito para full-tunnel.');
+
+  return { ok: errors.length === 0, errors, warnings };
+}

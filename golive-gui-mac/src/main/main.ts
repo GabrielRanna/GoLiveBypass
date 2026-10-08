@@ -15,9 +15,10 @@ import { injectVencord, AppManagementDenied, canModifyApp } from './vencord/inje
 import { activate } from './tunnel/up';
 import { deactivate } from './tunnel/down';
 import { runActivation, runDeactivation } from './tunnel/activation';
+import { cleanupStaleV6Rejects } from './privileged/helper';
 import { ProtonFetcher } from './proton/fetch';
 import { readSavedAccount, clearSavedAccount } from './proton/account';
-import { checkForUpdate, downloadAndInstall } from './updater';
+import { checkForUpdate, downloadAndInstall, type UpdateInfo, type PendingUpdate } from './updater';
 import type { AppSettings, TunnelState } from '../shared/types';
 
 const home   = os.homedir();
@@ -155,10 +156,10 @@ function updateTray() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, '../../resources', 'icon-tray.png');
-  const icon = fs.existsSync(iconPath)
-    ? nativeImage.createFromPath(iconPath)
-    : nativeImage.createEmpty();
+  // Fora do asar: vem por extraResources (o @2x é carregado junto pelo nome)
+  const trayDir = app.isPackaged ? path.join(process.resourcesPath, 'tray') : path.join(__dirname, '../../resources/tray');
+  const icon = nativeImage.createFromPath(path.join(trayDir, 'iconTemplate.png'));
+  if (icon.isEmpty()) sendToWindow('log', `Ícone da barra de menu não encontrado em ${trayDir}`);
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.on('click', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); });
@@ -170,7 +171,7 @@ function createTray() {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 420,
-    height: 560,
+    height: 640,
     resizable: false,
     titleBarStyle: 'hiddenInset',
     vibrancy: 'under-window',
@@ -226,6 +227,14 @@ async function tryInjectVencord(): Promise<InjectOutcome> {
 // ─── IPC handlers ────────────────────────────────────────────────────────────
 
 const protonFetcher = new ProtonFetcher();
+let pendingUpdate: PendingUpdate | null = null;
+
+function rememberUpdate(info: UpdateInfo): UpdateInfo {
+  if (info.available && info.downloadUrl && info.sha256) {
+    pendingUpdate = { downloadUrl: info.downloadUrl, sha256: info.sha256 };
+  }
+  return info;
+}
 let protonFetching = false;
 
 const handlers = {
@@ -238,8 +247,11 @@ const handlers = {
       pushState('activating');
       const r = await activate({
         opts: await activationOpts(),
-        // Injeta antes do restart para o Discord já subir com o Vencord
-        restartDiscord: async () => { await tryInjectVencord(); await restartDiscord(); },
+        // Com o opt-in, injeta antes do restart para o Discord já subir com o Vencord
+        restartDiscord: async () => {
+          if (loadSettings().vencordOptIn) await tryInjectVencord();
+          await restartDiscord();
+        },
         publicIp,
       });
       if ('error' in r) sendToWindow('log', `Falha ao ativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
@@ -324,9 +336,26 @@ const handlers = {
   },
 
   async vencordRetry() {
+    if (!loadSettings().vencordOptIn) return { outcome: 'disabled' };
     const outcome = await tryInjectVencord();
     if (outcome === 'ok' && tunnelActive) await restartDiscord();
     return { outcome };
+  },
+
+  async vencordGetOptIn() {
+    return { enabled: loadSettings().vencordOptIn === true };
+  },
+
+  async vencordSetOptIn({ enabled }: { enabled: boolean }) {
+    saveSettings({ vencordOptIn: enabled });
+    if (!enabled) {
+      sendToWindow('vencord:permission', { granted: true });
+      sendToWindow('log', 'Vencord/FakeNitro desligado no GoLiveBypass: o app não mexe mais no Discord. Um Vencord já instalado continua lá.');
+      return { enabled, outcome: 'disabled' };
+    }
+    const outcome = await tryInjectVencord();
+    if (outcome === 'ok' && tunnelActive) await restartDiscord();
+    return { enabled, outcome };
   },
 
   async exitInfo() {
@@ -343,11 +372,13 @@ const handlers = {
   },
 
   async checkUpdate() {
-    return checkForUpdate();
+    return rememberUpdate(await checkForUpdate());
   },
 
-  async downloadUpdate({ url }: { url: string }) {
-    return downloadAndInstall(url, (msg) => {
+  // Baixa só a release que o próprio main encontrou, com o SHA-256 dela
+  async downloadUpdate() {
+    if (!pendingUpdate) return { ok: false, error: 'nenhuma atualização pendente' };
+    return downloadAndInstall(pendingUpdate, (msg) => {
       sendToWindow('update:progress', msg);
     });
   },
@@ -365,9 +396,11 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
-  // Confs gravados por versões anteriores podem estar full-tunnel: normaliza
+  // Confs gravados por versões anteriores podem estar full-tunnel ou sem keepalive: normaliza
   const stored = readStoredConf();
-  if (stored && /AllowedIPs\s*=.*(0\.0\.0\.0\/0|::\/0)/i.test(stored)) storeConfig(stored);
+  if (stored && (/AllowedIPs\s*=.*(0\.0\.0\.0\/0|::\/0)/i.test(stored) || !/^PersistentKeepalive\s*=/im.test(stored))) {
+    storeConfig(stored);
+  }
   createTray();
   createWindow();
 
@@ -411,7 +444,13 @@ app.whenReady().then(async () => {
 
   // Auto-reconnect: restaura último estado
   const { lastTunnelState } = loadSettings();
-  if (lastTunnelState === 'active' && refreshConfigState().hasConfig) {
+  const reconnect = lastTunnelState === 'active' && refreshConfigState().hasConfig;
+  if (!reconnect && deriveStateFromRoute(await readDefaultRoute()) !== 'active') {
+    cleanupStaleV6Rejects(binDir).then(done => {
+      if (done) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
+    }).catch(() => {});
+  }
+  if (reconnect) {
     setTimeout(async () => {
       sendToWindow('log', 'Auto-reconectando bypass…');
       try {
@@ -423,7 +462,7 @@ app.whenReady().then(async () => {
   // O renderer consulta ao carregar; aqui só repete, pois fechar a janela não encerra o app.
   setInterval(() => {
     checkForUpdate().then((info) => {
-      if (info.available) sendToWindow('update:available', info);
+      if (rememberUpdate(info).available) sendToWindow('update:available', info);
     }).catch(() => {});
   }, 6 * 60 * 60_000);
 });

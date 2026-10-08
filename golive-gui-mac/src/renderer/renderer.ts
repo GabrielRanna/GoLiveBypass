@@ -21,6 +21,7 @@ const permCard    = document.getElementById('perm-card')!;
 const permOpen    = document.getElementById('perm-open') as HTMLButtonElement;
 const permRetry   = document.getElementById('perm-retry') as HTMLButtonElement;
 const permStatus  = document.getElementById('perm-status')!;
+const vencordOptIn = document.getElementById('vencord-optin') as HTMLInputElement;
 const updateBanner  = document.getElementById('update-banner')!;
 const updateMsg     = document.getElementById('update-msg')!;
 const updateBtn     = document.getElementById('update-btn') as HTMLButtonElement;
@@ -188,7 +189,9 @@ fetchBtn.addEventListener('click', async () => {
     no_servers:     'Nenhum servidor free disponível agora.',
     busy:           'Já existe uma busca em andamento.',
     binary_missing: 'proton-confgen não encontrado nos recursos.',
-    unknown:        'Erro desconhecido — veja o log.',
+    binary_integrity: 'proton-confgen não confere com o manifesto do app; reinstale o GoLiveBypass.',
+    timeout:        'O Proton demorou demais para responder. Tente de novo.',
+    unknown:       'Erro desconhecido — veja o log.',
   };
   protonStatus.textContent = `Erro: ${errMsgs[r.error] ?? r.error}`;
   log(`ProtonVPN erro: ${r.error}`, true);
@@ -237,7 +240,7 @@ logoutBtn.addEventListener('click', async () => {
 // ── Permissão de Gerenciamento de Apps (Vencord) ───────────────────────────────
 
 golive.onVencordPermission?.((p: { granted: boolean }) => {
-  permCard.hidden = p.granted;
+  permCard.hidden = p.granted || !vencordOptIn.checked;
   if (!p.granted) permStatus.textContent = '';
 });
 
@@ -261,7 +264,7 @@ async function retryVencord(manual: boolean) {
     const { outcome } = await golive.vencordRetry();
     if (outcome === 'ok') {
       permCard.hidden = true;
-      log('Vencord pronto. O Discord foi reiniciado com o FakeNitro.');
+      log('Vencord pronto.');
     } else {
       permStatus.textContent = outcome === 'needs_permission'
         ? 'O macOS ainda bloqueou. Feche e reabra o GoLiveBypass e tente de novo.'
@@ -274,6 +277,21 @@ async function retryVencord(manual: boolean) {
 }
 
 permRetry.addEventListener('click', () => retryVencord(true));
+
+golive.vencordGetOptIn?.().then((r: { enabled: boolean }) => { vencordOptIn.checked = !!r?.enabled; });
+
+vencordOptIn.addEventListener('change', async () => {
+  const enabled = vencordOptIn.checked;
+  vencordOptIn.disabled = true;
+  try {
+    const r = await golive.vencordSetOptIn(enabled);
+    if (!enabled) { permCard.hidden = true; return; }
+    if (r?.outcome === 'ok') log('Vencord pronto.');
+    else if (r?.outcome === 'no_discord') log('Discord não encontrado em Aplicativos.', true);
+  } finally {
+    vencordOptIn.disabled = false;
+  }
+});
 // Ao voltar dos Ajustes, confere sozinho
 window.addEventListener('focus', () => retryVencord(false));
 
@@ -296,7 +314,7 @@ golive.onUpdateProgress?.((msg: string) => {
 updateBtn.addEventListener('click', async () => {
   if (!updateUrl) { log('URL de download não disponível.', true); return; }
   updateBtn.disabled = true;
-  const r = await golive.downloadUpdate(updateUrl);
+  const r = await golive.downloadUpdate();
   if (!r?.ok) {
     updateMsg.textContent = `Falha ao baixar: ${r?.error ?? 'erro desconhecido'}`;
     log(`[update] erro: ${r?.error}`, true);

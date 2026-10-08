@@ -23,8 +23,13 @@ command -v lipo >/dev/null 2>&1 || { echo "lipo (Xcode Command Line Tools) é ne
 
 # Codinome do macOS -> tag de bottle (ex.: sequoia, sonoma, ventura).
 CODENAME=${CODENAME:-}
-[ -n "$CODENAME" ] || CODENAME=$(brew config 2>/dev/null | awk -F': ' '/^macOS/ {print $2}' | tr '[:upper:]' '[:lower:]' | sed -E 's/.*\b(sequoia|sonoma|ventura|monterey)\b.*/\1/')
-[ -n "$CODENAME" ] || { echo "Não deduzi o codinome do macOS (este script conhece sequoia, sonoma, ventura e monterey). Rode com CODENAME=<bottle> no ambiente." >&2; exit 1; }
+if [ -z "$CODENAME" ]; then
+  # brew config só traz o número (ex.: "26.7.1-x86_64"); o codinome vem da versão principal
+  case "$(sw_vers -productVersion | cut -d. -f1)" in
+    12) CODENAME=monterey ;; 13) CODENAME=ventura ;; 14) CODENAME=sonoma ;; 15) CODENAME=sequoia ;; 26) CODENAME=tahoe ;;
+  esac
+fi
+[ -n "$CODENAME" ] || { echo "Não sei o codinome deste macOS para escolher o bottle. Rode com CODENAME=<bottle> (ex.: CODENAME=sonoma)." >&2; exit 1; }
 echo "Bottles alvo: ${CODENAME} (x86_64) e arm64_${CODENAME}"
 
 # Extrai bin/<name> de um bottle de uma formula para um arquivo de saída.

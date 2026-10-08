@@ -55,6 +55,8 @@ describe('workflow de release', () => {
   it('publica só pelo script com guarda', () => {
     const wf = fs.readFileSync('../.github/workflows/release-macos.yml', 'utf8');
     expect(wf).toContain('npm run release:mac');
+    expect(wf).toContain('--publish-draft');
+    expect(fs.readFileSync('scripts/release-mac.mjs', 'utf8')).toMatch(/draft: true, make_latest: 'false'/);
     expect(wf).not.toMatch(/make_latest:\s*true|--latest\b/);
   });
 });

@@ -13,7 +13,7 @@ export interface RouterHandlers {
   protonAccount(): Promise<unknown>;
   protonLogout(): Promise<unknown>;
   checkUpdate(): Promise<unknown>;
-  downloadUpdate(): Promise<unknown>;
+  downloadUpdate(payload: { version?: string }): Promise<unknown>;
 }
 
 export function makeRouter(h: RouterHandlers) {
@@ -33,7 +33,7 @@ export function makeRouter(h: RouterHandlers) {
       case 'proton:account':      return h.protonAccount();
       case 'proton:logout':       return h.protonLogout();
       case 'app:checkUpdate':     return h.checkUpdate();
-      case 'app:downloadUpdate':  return h.downloadUpdate();
+      case 'app:downloadUpdate':  return h.downloadUpdate({ version: typeof payload?.version === 'string' ? payload.version : undefined });
       default: throw new Error(`Canal IPC desconhecido: ${channel}`);
     }
   };

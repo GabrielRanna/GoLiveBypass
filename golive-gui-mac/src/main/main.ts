@@ -159,7 +159,12 @@ function createTray() {
   // Fora do asar: vem por extraResources (o @2x é carregado junto pelo nome)
   const trayDir = app.isPackaged ? path.join(process.resourcesPath, 'tray') : path.join(__dirname, '../../resources/tray');
   const icon = nativeImage.createFromPath(path.join(trayDir, 'iconTemplate.png'));
-  if (icon.isEmpty()) sendToWindow('log', `Ícone da barra de menu não encontrado em ${trayDir}`);
+  if (icon.isEmpty()) {
+    // O tray nasce antes da janela: o aviso espera o renderer carregar
+    const msg = `Ícone da barra de menu não encontrado em ${trayDir}`;
+    console.error(msg);
+    app.once('browser-window-created', (_e, w) => w.webContents.once('did-finish-load', () => w.webContents.send('log', msg)));
+  }
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.on('click', () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); });
@@ -227,12 +232,13 @@ async function tryInjectVencord(): Promise<InjectOutcome> {
 // ─── IPC handlers ────────────────────────────────────────────────────────────
 
 const protonFetcher = new ProtonFetcher();
-let pendingUpdate: PendingUpdate | null = null;
+let pendingUpdate: (PendingUpdate & { version: string }) | null = null;
 
+/** Guarda a última checagem: some se a release sumir, troca se sair outra. */
 function rememberUpdate(info: UpdateInfo): UpdateInfo {
-  if (info.available && info.downloadUrl && info.sha256) {
-    pendingUpdate = { downloadUrl: info.downloadUrl, sha256: info.sha256 };
-  }
+  pendingUpdate = info.available && info.downloadUrl && info.sha256 && info.latestVersion
+    ? { downloadUrl: info.downloadUrl, sha256: info.sha256, version: info.latestVersion }
+    : null;
   return info;
 }
 let protonFetching = false;
@@ -376,8 +382,15 @@ const handlers = {
   },
 
   // Baixa só a release que o próprio main encontrou, com o SHA-256 dela
-  async downloadUpdate() {
+  async downloadUpdate({ version }: { version?: string } = {}) {
     if (!pendingUpdate) return { ok: false, error: 'nenhuma atualização pendente' };
+    // O aviso pode estar mostrando uma versão anterior à última checagem
+    if (version && version !== pendingUpdate.version) {
+      return {
+        ok: false, error: `a versão disponível agora é a ${pendingUpdate.version}; confira o aviso e clique de novo`,
+        update: { available: true, latestVersion: pendingUpdate.version, downloadUrl: pendingUpdate.downloadUrl, currentVersion: app.getVersion() },
+      };
+    }
     return downloadAndInstall(pendingUpdate, (msg) => {
       sendToWindow('update:progress', msg);
     });
@@ -445,9 +458,11 @@ app.whenReady().then(async () => {
   // Auto-reconnect: restaura último estado
   const { lastTunnelState } = loadSettings();
   const reconnect = lastTunnelState === 'active' && refreshConfigState().hasConfig;
-  if (!reconnect && deriveStateFromRoute(await readDefaultRoute()) !== 'active') {
-    cleanupStaleV6Rejects(binDir).then(done => {
-      if (done) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
+  if (!reconnect) {
+    // Dentro do exclusive: um Ativar no meio receberia 'busy' em vez de ter o túnel novo derrubado
+    void exclusive(async () => {
+      if (deriveStateFromRoute(await readDefaultRoute()) === 'active') return;
+      if (await cleanupStaleV6Rejects(binDir)) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
     }).catch(() => {});
   }
   if (reconnect) {

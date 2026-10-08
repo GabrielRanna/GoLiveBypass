@@ -37,5 +37,12 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      # Garante que o proton-confgen compila da fonte e bate com o manifesto
-      - run: npm run build:proton
+      # O proton-confgen compila da fonte e sai byte a byte igual em duas compilações
+      - name: proton-confgen reproduzível
+        run: |
+          npm run build:proton
+          first=$(node -p 'require("./resources/extra/proton-confgen/proton-confgen-manifest.json").universal.sha256')
+          npm run build:proton
+          second=$(node -p 'require("./resources/extra/proton-confgen/proton-confgen-manifest.json").universal.sha256')
+          test "$first" = "$second"
+          test "$(shasum -a 256 resources/extra/proton-confgen/proton-confgen | cut -c1-64)" = "$second"

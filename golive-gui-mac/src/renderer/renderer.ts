@@ -28,6 +28,7 @@ const updateBtn     = document.getElementById('update-btn') as HTMLButtonElement
 
 let active = false;
 let updateUrl = '';
+let updateVersion = '';
 let savedAccount: { username: string; expiresAt: string } | null = null;
 
 const countryNames = new Intl.DisplayNames(['pt-BR'], { type: 'region' });
@@ -302,6 +303,7 @@ function showUpdate(info: any) {
   updateMsg.textContent = `Nova versão disponível: v${info.latestVersion} (atual: v${info.currentVersion})`;
   updateBanner.hidden = false;
   updateUrl = info.downloadUrl ?? '';
+  updateVersion = info.latestVersion ?? '';
 }
 golive.onUpdateAvailable?.(showUpdate);
 golive.checkUpdate?.().then(showUpdate).catch(() => {});
@@ -314,11 +316,12 @@ golive.onUpdateProgress?.((msg: string) => {
 updateBtn.addEventListener('click', async () => {
   if (!updateUrl) { log('URL de download não disponível.', true); return; }
   updateBtn.disabled = true;
-  const r = await golive.downloadUpdate();
+  const r = await golive.downloadUpdate(updateVersion);
   if (!r?.ok) {
     updateMsg.textContent = `Falha ao baixar: ${r?.error ?? 'erro desconhecido'}`;
     log(`[update] erro: ${r?.error}`, true);
     updateBtn.disabled = false;
+    if (r?.update) showUpdate(r.update);
     return;
   }
   updateMsg.textContent = 'Arraste o novo GoLiveBypass para Aplicativos e reabra o app.';

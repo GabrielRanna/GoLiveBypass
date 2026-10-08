@@ -49,12 +49,20 @@ run('codesign', ['--force', '--sign', '-', out]);
 if (!statSync(out).size) throw new Error('proton-confgen universal vazio');
 
 const repoRoot = path.join(root, '..');
+let buildCommit = null;
 let sourceCommit = null;
-try { sourceCommit = run('git', ['log', '-1', '--format=%H', '--', 'tools/proton-confgen'], { cwd: repoRoot }) || null; } catch {}
+try {
+  buildCommit = run('git', ['rev-parse', 'HEAD'], { cwd: repoRoot });
+  // Num clone raso o git log atribui tudo ao commit-enxerto: sem histórico, não há como saber
+  if (run('git', ['rev-parse', '--is-shallow-repository'], { cwd: repoRoot }) === 'false') {
+    sourceCommit = run('git', ['log', '-1', '--format=%H', '--', 'tools/proton-confgen'], { cwd: repoRoot }) || null;
+  }
+} catch {}
 
 const manifest = {
   version,
   source: 'tools/proton-confgen',
+  buildCommit,
   sourceCommit,
   goVersion: run('go', ['env', 'GOVERSION'], { cwd: src }),
   buildArgs: buildArgs.slice(0, -1),

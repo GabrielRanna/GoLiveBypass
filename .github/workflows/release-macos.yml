@@ -16,11 +16,12 @@ on:
         required: false
         type: string
         default: main
-      rascunho:
-        description: 'Deixar como draft para conferir antes de publicar'
-        required: false
-        type: boolean
-        default: true
+      acao:
+        description: 'rascunho = build e draft para conferir; publicar-rascunho = publica o draft já conferido (sem rebuild); publicar = build e publica direto. Nunca publique o draft pelo botão do GitHub: ele marca latest por padrão.'
+        required: true
+        type: choice
+        options: [rascunho, publicar-rascunho, publicar]
+        default: rascunho
 
 permissions:
   contents: write
@@ -35,6 +36,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          # Histórico completo: o manifesto do proton-confgen registra o último commit da fonte
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -46,11 +49,22 @@ jobs:
         env:
           VERSAO: ${{ inputs.versao }}
         run: test "$(node -p 'require("./package.json").version')" = "$VERSAO"
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build:mac
+      - name: Publicar draft já conferido
+        if: ${{ inputs.acao == 'publicar-rascunho' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: node scripts/release-mac.mjs --repo "$REPO" --publish-draft
+      - if: ${{ inputs.acao != 'publicar-rascunho' }}
+        run: npm ci
+      - if: ${{ inputs.acao != 'publicar-rascunho' }}
+        run: npm run typecheck
+      - if: ${{ inputs.acao != 'publicar-rascunho' }}
+        run: npm test
+      - if: ${{ inputs.acao != 'publicar-rascunho' }}
+        run: npm run build:mac
       - name: Notas a partir do CHANGELOG
+        if: ${{ inputs.acao != 'publicar-rascunho' }}
         env:
           VERSAO: ${{ inputs.versao }}
         run: |
@@ -61,11 +75,12 @@ jobs:
           ' ../CHANGELOG.md > "$RUNNER_TEMP/notas.md"
           test -s "$RUNNER_TEMP/notas.md" || { echo "CHANGELOG sem a seção ## [macos-$VERSAO]" >&2; exit 1; }
       - name: Publicar com guarda de latest
+        if: ${{ inputs.acao != 'publicar-rascunho' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          RASCUNHO: ${{ inputs.rascunho }}
+          ACAO: ${{ inputs.acao }}
         run: |
           extra=""
-          [ "$RASCUNHO" = "true" ] && extra="--draft"
+          [ "$ACAO" = "rascunho" ] && extra="--draft"
           npm run release:mac -- --repo "$REPO" --notes-file "$RUNNER_TEMP/notas.md" $extra

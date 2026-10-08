@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('golive', {
   protonAccount:  () => ipcRenderer.invoke('golive', 'proton:account'),
   protonLogout:   () => ipcRenderer.invoke('golive', 'proton:logout'),
   checkUpdate:    () => ipcRenderer.invoke('golive', 'app:checkUpdate'),
-  downloadUpdate: () => ipcRenderer.invoke('golive', 'app:downloadUpdate'),
+  downloadUpdate: (version: string) => ipcRenderer.invoke('golive', 'app:downloadUpdate', { version }),
 
   onVencordPermission: (cb: (p: { granted: boolean }) => void) => ipcRenderer.on('vencord:permission', (_e, p) => cb(p)),
   onTunnelState: (cb: (p: { state: string }) => void) => ipcRenderer.on('tunnel:state', (_e, p) => cb(p)),

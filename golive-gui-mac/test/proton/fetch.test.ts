@@ -44,11 +44,11 @@ describe('binaryMatchesManifest', () => {
     return bin;
   };
   const h = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
-  it('aceita só quando o hash confere', () => {
-    expect(binaryMatchesManifest(setup('abc', h('abc')))).toBe(true);
-    expect(binaryMatchesManifest(setup('abc', h('outro')))).toBe(false);
+  it('aceita só quando o hash confere', async () => {
+    expect(await binaryMatchesManifest(setup('abc', h('abc')))).toBe(true);
+    expect(await binaryMatchesManifest(setup('abc', h('outro')))).toBe(false);
   });
-  it('recusa sem manifesto', () => {
-    expect(binaryMatchesManifest(setup('abc'))).toBe(false);
+  it('recusa sem manifesto', async () => {
+    expect(await binaryMatchesManifest(setup('abc'))).toBe(false);
   });
 });

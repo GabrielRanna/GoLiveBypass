@@ -31,12 +31,15 @@ interface RunResult { code: number | null; out: string; err: string; timedOut: b
 const RUN_TIMEOUT_MS = 3 * 60_000;
 
 /** O binário só roda se o hash bater com o manifesto gerado por scripts/build-proton.mjs. */
-export function binaryMatchesManifest(bin: string): boolean {
+export async function binaryMatchesManifest(bin: string): Promise<boolean> {
   try {
-    const manifest = JSON.parse(fs.readFileSync(path.join(path.dirname(bin), 'proton-confgen-manifest.json'), 'utf8'));
+    const manifest = JSON.parse(await fs.promises.readFile(path.join(path.dirname(bin), 'proton-confgen-manifest.json'), 'utf8'));
     const expected = String(manifest?.universal?.sha256 ?? '');
     if (!/^[0-9a-f]{64}$/.test(expected)) return false;
-    return crypto.createHash('sha256').update(fs.readFileSync(bin)).digest('hex') === expected;
+    // Em stream: o binário tem ~29 MB e isto roda no processo principal
+    const hash = crypto.createHash('sha256');
+    for await (const chunk of fs.createReadStream(bin)) hash.update(chunk);
+    return hash.digest('hex') === expected;
   } catch { return false; }
 }
 
@@ -108,7 +111,7 @@ export class ProtonFetcher extends EventEmitter {
       this.emit('done', { ok: false, error: 'binary_missing' } satisfies ProtonFetchResult);
       return;
     }
-    if (!binaryMatchesManifest(bin)) {
+    if (!(await binaryMatchesManifest(bin))) {
       this.emit('done', { ok: false, error: 'binary_integrity' } satisfies ProtonFetchResult);
       return;
     }

@@ -54,14 +54,18 @@ O build sai assinado ad-hoc. Depois de um build local, use o `xattr` acima.
 ## Release
 
 Releases macOS **só** pelo workflow `release-macos.yml` (Actions › release-macos ›
-versão do `package.json`). Ele roda testes e build e chama `npm run release:mac`, que:
+versão do `package.json`). Fluxo recomendado: `acao=rascunho` (build e draft para
+conferir) e depois `acao=publicar-rascunho`. **Não publique o draft pelo botão do
+GitHub:** ele marca "Set as the latest release" por padrão. O workflow chama
+`npm run release:mac`, que:
 
 - cria a tag `macos-v<versão>` com `make_latest: false` e os assets
   `GoLiveBypass-macos-<versão>-universal.dmg` + `.sha256`;
 - antes de publicar, confere no DMG a versão, o repositório de atualização e o
   `proton-confgen` contra o manifesto;
-- depois, confere os assets, o digest e que `/releases/latest` não mudou. Se mudou,
-  devolve a latest anterior e falha.
+- depois de publicar, confere os assets, o digest e que `/releases/latest` não mudou.
+  Se algo falhar, a release volta para draft, a latest anterior é devolvida e o job falha;
+- recusa criar a release se já existir uma com a mesma tag, draft incluído.
 
 As notas vêm da seção `## [macos-<versão>]` do `CHANGELOG.md` da raiz.
 

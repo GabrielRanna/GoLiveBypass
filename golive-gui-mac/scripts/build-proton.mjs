@@ -43,8 +43,11 @@ for (const t of targets) {
 }
 
 run('lipo', ['-create', ...targets.map(t => path.join(work, `proton-confgen-${t.key}`)), '-output', out]);
-// O afterPack assina de novo com o mesmo nome de arquivo; a assinatura ad-hoc
-// é determinística, então o hash abaixo continua valendo dentro do .app.
+// A assinatura acontece só aqui, uma vez. O hash gravado no manifesto é o do
+// binário já assinado, e é esse hash que fica travado: o afterPack
+// (scripts/adhoc-sign.js) não re-assina extra/ porque codesign --force troca a
+// assinatura e reescreve o arquivo — re-assinar mudaria estes bytes e reprovaria
+// o manifest no guard da release e no app em runtime.
 run('codesign', ['--force', '--sign', '-', out]);
 if (!statSync(out).size) throw new Error('proton-confgen universal vazio');
 

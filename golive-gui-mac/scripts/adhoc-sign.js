@@ -58,14 +58,28 @@ exports.default = async function afterPack(context) {
 
   const extraDir = path.join(appPath, 'Contents', 'Resources', 'extra');
   if (fs.existsSync(extraDir)) {
-    const walk = (dir) => {
+    // extra/ não é re-assinado aqui. O proton-confgen já sai assinado de
+    // scripts/build-proton.mjs e o SHA-256 dele está travado no manifesto ao
+    // lado, conferido pelo guard da release (scripts/release-mac.mjs,
+    // inspectDmg) e pelo app em runtime (src/main/proton/fetch.ts
+    // binaryMatchesManifest). codesign --force troca a assinatura e reescreve o
+    // arquivo: re-assinar aqui mudaria esses bytes e reprovaria as duas
+    // conferências.
+    const checkSigned = (dir) => {
       for (const f of fs.readdirSync(dir)) {
         const p = path.join(dir, f);
-        if (fs.statSync(p).isDirectory()) walk(p);
-        else sign(p);
+        if (fs.statSync(p).isDirectory()) checkSigned(p);
+        else if (isMachO(p)) {
+          // Um Mach-O sem assinatura válida não corre no Apple Silicon.
+          try {
+            execSync(`codesign --verify ${JSON.stringify(p)}`, { stdio: 'ignore' });
+          } catch {
+            throw new Error(`${p} é Mach-O sem assinatura válida; assine no script de build — o afterPack não re-assina extra/ para preservar o SHA-256 do manifesto`);
+          }
+        }
       }
     };
-    walk(extraDir);
+    checkSigned(extraDir);
   }
 
   // Assina o app inteiro

@@ -1372,9 +1372,16 @@ export async function generateOptimalProtonConfig(
         if (options.country?.trim()) args.push("-countries", options.country.trim());
 
         try {
+            // Os eventos "preparing" da verificação rápida nomeiam cada finalista
+            // testada: a sonda estendida de diagnóstico usa a primeira delas.
+            const probedServers: string[] = [];
+            const onProgress: RunConfgenOptions["onProgress"] = progress => {
+                if (progress.phase === "preparing" && progress.server && !probedServers.includes(progress.server)) probedServers.push(progress.server);
+                options.onProgress?.(progress);
+            };
             const result = options.speedTest
-                ? await runIsolatedSpeedSelection(args, options.signal, options.onProgress, options.log, dataDir)
-                : await runConfgen({ args, timeoutMs: 60_000, signal: options.signal, runtimeDirectory: dataDir, onProgress: options.onProgress, log: options.log });
+                ? await runIsolatedSpeedSelection(args, options.signal, onProgress, options.log, dataDir)
+                : await runConfgen({ args, timeoutMs: 60_000, signal: options.signal, runtimeDirectory: dataDir, onProgress, log: options.log });
             const measured = !options.speedTest || (finitePositive(result.json?.downloadMbps) && finitePositive(result.json?.uploadMbps));
             if (result.code === 0 && result.json?.success === true && measured && fs.existsSync(staging)) {
                 if (options.signal?.aborted) throw abortError();
@@ -1400,7 +1407,27 @@ export async function generateOptimalProtonConfig(
                     confFile: output,
                 };
             }
-            return { success: false, error: safeDiagnosticDetail(result.json?.error || result.stderr || "Falha ao gerar a configuração Proton.") };
+            const helperError = result.json && typeof result.json.error === "string" ? result.json.error : "";
+            let failure = safeDiagnosticDetail(helperError || result.stderr || "Falha ao gerar a configuração Proton.");
+            if (options.speedTest && !options.signal?.aborted && probedServers.length > 0 &&
+                helperError.includes("nenhum candidato respondeu pelo túnel")) {
+                // O helper só devolve o erro agregado quando descarta as doze
+                // finalistas — igual para falha de handshake, DNS, TLS ou HTTP.
+                // A sonda estendida separa as etapas para a falha não virar um
+                // descarte silencioso de todas as rotas.
+                const diagnosis = await diagnoseSpeedPreflightFailure({
+                    dataDir,
+                    sessionFile: sessionFileToUse,
+                    username: requestedUsername,
+                    server: probedServers[0],
+                    freeOnly: options.freeOnly,
+                    country: options.country,
+                    signal: options.signal,
+                    log: options.log,
+                });
+                if (diagnosis) failure = safeDiagnosticDetail(`${failure} · ${diagnosis}`, 700);
+            }
+            return { success: false, error: failure };
         } catch (error) {
             if (error instanceof Error && error.name === "AbortError") throw error;
             options.log?.("error", "falha ao gerar configuração Proton", { erro: logError(error) });
@@ -1412,6 +1439,48 @@ export async function generateOptimalProtonConfig(
     };
 
     return withProtonSession(dataDir, availability, (tempFile, commitIfUpdated) => runGeneration(tempFile, commitIfUpdated));
+}
+
+type SpeedPreflightDiagnosisOptions = {
+    dataDir: string;
+    sessionFile: string;
+    username: string;
+    server: string;
+    freeOnly?: boolean;
+    country?: string;
+    signal?: AbortSignal;
+    log?: RunConfgenOptions["log"];
+};
+
+/**
+ * Quando a verificação rápida descarta todas as finalistas, o helper devolve só
+ * o erro agregado — igual para falha de handshake, DNS, TLS ou HTTP. Esta sonda
+ * estendida (15 s do `-manual-probe`, contra os 6 s da verificação rápida) roda
+ * na finalista que respondeu ao ping e devolve a etapa que falhou; se ela
+ * responder pelo túnel, o descarte veio do limite de tempo e a rota continua
+ * aplicável pela seleção manual. O staging sai no finally: nenhuma troca de
+ * perfil acontece aqui.
+ */
+async function diagnoseSpeedPreflightFailure(options: SpeedPreflightDiagnosisOptions): Promise<string | null> {
+    const staging = path.join(options.dataDir, `.wireguard.conf.diagnostico-${randomUUID()}.tmp`);
+    const args = ["-username", options.username, "-session-file", options.sessionFile, "-server", options.server, "-output", staging, "-json", "-ipv6", "-manual-probe", "-exclude-countries", "BR"];
+    if (options.freeOnly !== false) args.push("-free-only");
+    if (options.country?.trim()) args.push("-countries", options.country.trim());
+    options.log?.("info", "sonda estendida da verificação rápida", { servidor: options.server });
+    try {
+        const result = await runConfgen({ args, timeoutMs: 45_000, runtimeDirectory: options.dataDir, signal: options.signal, log: options.log });
+        const json = result.json;
+        if (result.code === 0 && json?.success === true && json?.manual === true && json?.preflight === "success") {
+            return `sonda estendida (15 s) em ${options.server}: a rota respondeu pelo túnel — o limite de 6 s expirou nesta rede; escolha essa rota na seleção manual para aplicá-la.`;
+        }
+        return `sonda estendida (15 s) em ${options.server}: ${safeDiagnosticDetail(json?.error || result.stderr || "sem detalhe do helper", 200)}`;
+    } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return null;
+        options.log?.("warn", "sonda estendida da verificação rápida falhou", { erro: logError(error) });
+        return `sonda estendida (15 s) em ${options.server}: helper indisponível (${safeDiagnosticDetail(error, 120)})`;
+    } finally {
+        try { fs.rmSync(staging, { force: true }); } catch {}
+    }
 }
 
 export interface ProtonRouteCatalogEntry {

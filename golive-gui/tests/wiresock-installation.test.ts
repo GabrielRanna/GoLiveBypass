@@ -237,3 +237,30 @@ describe("ativação extraída do fluxo real", () => {
     }
   });
 });
+
+// #281: o serviço precisa nascer e permanecer Manual — um registro Auto volta
+// sozinho no reboot como serviço órfão, roteando o Discord sem sessão esperada.
+describe("servico WireSock sempre em StartMode=Manual (#281)", () => {
+  const pluginSource = fs.readFileSync(path.resolve(process.cwd(), "../goLiveBypass/vpn-windows.ts"), "utf8");
+
+  it("script da GUI instala com start-type 3 e força StartMode Manual antes de iniciar", () => {
+    const script = wireSockServiceScript(
+      "C:\\Program Files\\WireSock Secure Connect\\wiresock-client.exe",
+      String.raw`C:\Users\u\AppData\Local\GoLiveBypass\wiresock-discord.conf`,
+    );
+    expect(script).toContain("install -start-type 3");
+    expect(script).toContain("StartMode='Manual'");
+    expect(script.indexOf("StartMode='Manual'")).toBeLessThan(script.indexOf("Start-Service"));
+  });
+
+  it("script do plugin instala com start-type 3 e força StartMode Manual antes de iniciar", () => {
+    const start = pluginSource.indexOf("function serviceScript(");
+    const end = pluginSource.indexOf("function elevatedPowerShellArgs", start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const script = pluginSource.slice(start, end);
+    expect(script).toContain("install -start-type 3");
+    expect(script).toContain("StartMode='Manual'");
+    expect(script.indexOf("StartMode='Manual'")).toBeLessThan(script.indexOf("Start-Service"));
+  });
+});

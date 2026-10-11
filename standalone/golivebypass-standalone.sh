@@ -752,6 +752,8 @@ ACTIVATION_ROLLBACK_REOPEN=0
 ACTIVATION_ROLLBACK_TARGET=""
 ACTIVATION_NETNS_TOUCH_STARTED=0
 START_DISCORD_HOST_ONLY=0
+# Log do launcher da ultima abertura; a mensagem de falha da ativacao o cita.
+START_DISCORD_LOG=""
 WIREGUARD_TMP_CONF=""
 # Executor escolhido uma vez por ativacao. O nome nunca vai para logs; uid/gid
 # numericos permitem usar setpriv sem interpolar identidade em um comando shell.
@@ -2293,6 +2295,19 @@ flatpak_pid_for_id() {
     return 1
 }
 
+# IDs da lista suportada que o `flatpak ps` mostra em execucao agora. O ID exato e a
+# chave que o `flatpak kill` aceita e o unico sinal que alcanca o cliente dentro do
+# sandbox do bubblewrap: pkill por nome no host nao encerra a sessao registrada e a
+# ativacao ficava presa no "SIGKILL nao matou" sem dizer qual ID sobrou (#327).
+flatpak_ids_em_execucao() {
+    local id
+    have flatpak || return 0
+    for id in $FLATPAK_IDS $FLATPAK_TUNEL_IDS; do
+        flatpak_running_id "$id" && printf '%s\n' "$id"
+    done
+    return 0
+}
+
 flatpak_is_user_install() {
     have flatpak && flatpak info --user "$1" >/dev/null 2>&1
 }
@@ -2757,6 +2772,17 @@ discord_pid_in_netns_elevated() {
 stop_discord() {
     discord_running || return 0
     step "Fechando o Discord"
+    # Flatpak primeiro: o cliente mora no sandbox do bubblewrap e a sessao continua
+    # registrada no `flatpak ps` enquanto o gerenciador de instancia nao a encerra —
+    # pkill por nome no host nao derruba essa sessao (#327). FLATPAK_TUNEL_IDS junto:
+    # o Serein e um cliente de tunel sem asar; sem fecha-lo aqui, o `flatpak run` da
+    # reabertura so ativa a instancia velha (fora do namespace) e a confirmacao do
+    # PID nunca chega. Nenhum kill -9 genérico roda antes deste ponto.
+    local id
+    for id in $(flatpak_ids_em_execucao); do
+        step "Encerrando o Flatpak $id"
+        flatpak kill "$id" >/dev/null 2>&1 || warn "flatpak kill $id nao respondeu; tento de novo na escalada."
+    done
     # Os nomes possiveis do processo do Discord em Linux: maiusculo (Windows), minusculo
     # (tar.gz/.deb/Flatpak) e os sufixos -canary/-ptb. pkill sem -x pegaria "discord" dentro
     # de outro comando (ex.: "discordctl"), entao vamos de nome exato, um por um.
@@ -2772,15 +2798,6 @@ stop_discord() {
     rm -f "$_USER_HOME/.config/discordptb/Singleton"* 2>/dev/null || true
     rm -f "$_USER_HOME/.config/discordcanary/Singleton"* 2>/dev/null || true
     kill_parallel_by_path
-    if have flatpak; then
-        local id
-        # FLATPAK_TUNEL_IDS junto: o Serein e um cliente de tunel sem asar; sem
-        # fecha-lo aqui, o `flatpak run` da reabertura so ativa a instancia velha
-        # (fora do namespace) e a confirmacao do PID nunca chega.
-        for id in $FLATPAK_IDS $FLATPAK_TUNEL_IDS; do
-            flatpak kill "$id" >/dev/null 2>&1 || true
-        done
-    fi
 
     local i
     for i in $(seq 1 40); do
@@ -2788,9 +2805,13 @@ stop_discord() {
         discord_running || return 0
     done
 
-    # SIGTERM nao resolveu em 10s. O Flatpak nao oferece sinal no `flatpak kill`, entao
-    # escalamos pelo child-pid associado ao application ID exato.
+    # SIGTERM nao resolveu em 10s. Reenvia o TERM pelo gerenciador de instancia antes
+    # de qualquer kill -9 (e o unico canal que alcanca o sandbox) e so entao escala
+    # pelo child-pid associado ao application ID exato.
     step "O Discord nao respondeu, forçando o fechamento"
+    for id in $(flatpak_ids_em_execucao); do
+        flatpak kill "$id" >/dev/null 2>&1 || true
+    done
     kill_flatpak_apps_forcefully
     pkill -9 -x Discord 2>/dev/null || true
     pkill -9 -x DiscordPTB 2>/dev/null || true
@@ -2802,7 +2823,14 @@ stop_discord() {
         sleep 0.25
         discord_running || return 0
     done
-    fail "O Discord nao fechou nem com SIGKILL. Feche na mao e rode de novo."
+    # A saida precisa dizer o que sobrou e qual comando roda: em Bazzite a sessao
+    # Flatpak sobrevivia a escalada por nome e o beco sem saida deixou a #327 sem
+    # caminho de recuperacao.
+    id="$(flatpak_ids_em_execucao | head -1)"
+    if [ -n "$id" ]; then
+        fail "O Discord nao fechou nem com SIGKILL: o Flatpak $id ainda consta no 'flatpak ps'. Rode 'flatpak kill $id' e ative de novo."
+    fi
+    fail "O Discord nao fechou nem com SIGKILL. Rode 'pkill -9 -x Discord' numa terminal e tente de novo."
 }
 
 install_patcher() {
@@ -3433,6 +3461,9 @@ start_discord() {
     local discord_log_dir="$INSTALL_DIR/logs"
     local discord_log="$discord_log_dir/discord-vpn-$(date +%Y%m%d-%H%M%S).log"
     mkdir -p "$discord_log_dir"
+    # Caminho global: a mensagem de falha da ativacao aponta o log certo e cola a
+    # ultima saida real do launcher (flatpak/bwrap), que e o que o usuario precisa ver.
+    START_DISCORD_LOG="$discord_log"
 
     # Nao inventar wayland-1: em muitas sessoes o socket e wayland-0, e um
     # valor falso faz o Electron cair silenciosamente em XWayland.
@@ -3500,6 +3531,7 @@ start_discord() {
         return 0
     fi
 
+    local lancamento_rc=0
     if [ -n "$id" ]; then
         # Flatpak depende do barramento e do portal da sessão gráfica do usuário.
         # Uma unidade transitória do systemd do sistema (o caminho anterior) inicia
@@ -3508,9 +3540,9 @@ start_discord() {
         # ambiente Wayland/DBus e ainda mantém o tráfego isolado no WireGuard.
         printf '[%s] launch=flatpak-direct app=%s\n' "$(date -Is)" "$id" >>"$discord_log"
         if have setsid; then
-            run_user_netns_command detached env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
+            run_user_netns_command detached env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
         else
-            run_user_netns_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
+            run_user_netns_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
         fi
     elif have systemd-run; then
         # O arquivo captura o stderr/stdout do cliente para diferenciar crash,
@@ -3529,11 +3561,17 @@ start_discord() {
             "DESKTOP_SESSION=${DESKTOP_SESSION:-}" "GDK_BACKEND=${GDK_BACKEND:-}" \
             "QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-}" "PIPEWIRE_REMOTE=${PIPEWIRE_REMOTE:-}" \
             "ELECTRON_OZONE_PLATFORM_HINT=${ELECTRON_OZONE_PLATFORM_HINT:-auto}" \
-            sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1
+            sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 || lancamento_rc=$?
     else
-        run_user_netns_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
+        run_user_netns_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
+    fi
+    if [ "$lancamento_rc" -ne 0 ]; then
+        # Registrado sem data entre colchetes no extrato final: a mensagem de falha
+        # da ativacao cola esta linha como a causa observada.
+        printf 'launch=falhou rc=%s alvo=%s\n' "$lancamento_rc" "$target_cmd" >>"$discord_log"
     fi
     printf '  Log do Discord: %s\n' "$discord_log" >&2
+    return "$lancamento_rc"
 }
 
 # O launcher confirma apenas que o processo foi solicitado; o Electron pode falhar
@@ -3544,15 +3582,67 @@ wait_discord_started() {
     resources="$(printf '%s' "$linha" | cut -d'|' -f1)"
     flav="$(printf '%s' "$linha" | cut -d'|' -f2)"
     flatpak_id="$(printf '%s' "$linha" | cut -d'|' -f4)"
+    # Motivo observado da espera: a mensagem de falha da ativacao usa isto para
+    # distinguir "o launcher nao abriu nada" de "uma instancia ficou fora do
+    # namespace" e dizer o proximo passo em vez de entregar um beco sem saida (#327).
+    WAIT_DISCORD_MOTIVO="sem-processo"
     while [ "$tentativas" -gt 0 ]; do
+        WAIT_DISCORD_MOTIVO="sem-processo"
         pid="$(discord_pid_flav "$flav" "$flatpak_id" "$resources" 2>/dev/null || true)"
-        if [ -n "$pid" ] && discord_pid_in_netns_elevated "$pid"; then
-            return 0
+        if [ -n "$pid" ]; then
+            if discord_pid_in_netns_elevated "$pid"; then
+                WAIT_DISCORD_MOTIVO="confirmado"
+                return 0
+            fi
+            # O processo existe, mas fora do namespace: instancia antiga que ficou
+            # fora do tunel (o `flatpak run` so reativaria ela, nunca criaria outra).
+            WAIT_DISCORD_MOTIVO="fora-do-namespace"
         fi
         tentativas=$((tentativas - 1))
         [ "$tentativas" -gt 0 ] && sleep 0.5
     done
     return 1
+}
+
+# Mensagem acionavel da ativacao quando o cliente nao apareceu no namespace. A GUI
+# mostra so as ultimas linhas do stderr, entao motivo, ultima saida do launcher, log
+# e proximo passo precisam caber nesta linha unica: "nao iniciou" sem saida nao pode
+# se repetir (#327/#330).
+falha_lancamento_mensagem() {
+    local linha="${1:-}" motivo="${WAIT_DISCORD_MOTIVO:-sem-processo}" id="" log="${START_DISCORD_LOG:-}" erro="" acao=""
+    case "$linha" in
+        *'|'*) id="$(printf '%s' "$linha" | cut -d'|' -f4)" ;;
+    esac
+    if [ -n "$log" ] && [ -f "$log" ]; then
+        # As linhas proprias do script trazem data entre colchetes ou marcadores
+        # launch=/backend=; o que sobra e a saida real do launcher (flatpak/bwrap/
+        # Electron), que e a causa visivel. Sem saida nenhuma, o proprio marcador
+        # de falha (rc/motivo) vira a causa.
+        erro="$(tail -n 20 "$log" 2>/dev/null | sed -E 's/^\[[^]]*\] //' \
+            | grep -Ev '^(backend=|launch=|$)' \
+            | tail -1 | tr -d '\r' | cut -c1-200 || true)"
+        if [ -z "$erro" ]; then
+            erro="$(grep -E 'launch=falhou' "$log" 2>/dev/null | tail -1 | tr -d '\r' | cut -c1-200 || true)"
+        fi
+    fi
+    case "$motivo" in
+        fora-do-namespace)
+            if [ -n "$id" ]; then
+                acao="uma instancia do $id ficou fora do namespace; rode 'flatpak kill $id' e ative de novo"
+            else
+                acao="um processo antigo ficou fora do namespace; feche o Discord e ative de novo"
+            fi
+            ;;
+        *)
+            if [ -n "$id" ]; then
+                acao="rode 'flatpak run $id' fora do bypass para ver o erro do sandbox, ou use o Discord nativo"
+            else
+                acao="abra o Discord fora do bypass para ver o erro, ou use outro Discord instalado"
+            fi
+            ;;
+    esac
+    printf 'Discord nao iniciou dentro do namespace WireGuard: %s; saida do launcher: %s; log: %s.' \
+        "$acao" "${erro:-nenhuma}" "${log:-nao gerado}"
 }
 
 printf '\n  %sGoLiveBypass standalone%s\n' "$C_CYAN" "$C_OFF" >&2
@@ -3957,7 +4047,14 @@ log_wireguard_readiness
 
 # Modo portatil: reabre o Discord ja com o bypass ativo (mesmo comportamento do app do Windows).
 # head -1 em vez de pipe para o while: nohup num subshell morreria junto com ele.
-start_discord "$(printf '%s\n' "${ACTIVATION_ROLLBACK_TARGET:-$FOUND}" | head -1)"
+# O launcher pode recusar o comando antes de existir qualquer processo (sem binario,
+# flatpak sem ID); falhar aqui evita esgotar a espera de 20s e entrega a mesma causa.
+if ! start_discord "$(printf '%s\n' "${ACTIVATION_ROLLBACK_TARGET:-$FOUND}" | head -1)"; then
+    warn "O WireGuard ficou pronto, mas o launcher do Discord recusou o comando."
+    stop_discord || true
+    teardown_wireguard_netns
+    fail "$(falha_lancamento_mensagem "$(printf '%s\n' "${ACTIVATION_ROLLBACK_TARGET:-$FOUND}" | head -1)")"
+fi
 if ! wait_discord_started "$(printf '%s\n' "${ACTIVATION_ROLLBACK_TARGET:-$FOUND}" | head -1)"; then
     warn "O WireGuard ficou pronto, mas o processo do Discord nao iniciou."
     # Se o launcher chegou a criar um sandbox, mas o reconhecimento expirou, feche-o
@@ -3965,7 +4062,7 @@ if ! wait_discord_started "$(printf '%s\n' "${ACTIVATION_ROLLBACK_TARGET:-$FOUND
     # interface WireGuard sem o nome discord-vpn.
     stop_discord || true
     teardown_wireguard_netns
-    fail "Discord nao iniciou dentro do namespace WireGuard. Verifique o log em $INSTALL_DIR/logs."
+    fail "$(falha_lancamento_mensagem "$(printf '%s\n' "${ACTIVATION_ROLLBACK_TARGET:-$FOUND}" | head -1)")"
 fi
 # A sessao ja esta confirmada dentro do namespace; a partir daqui o trap deve
 # apenas limpar segredos/temporarios e nunca reabrir o cliente fora do tunel.

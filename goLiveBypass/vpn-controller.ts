@@ -202,7 +202,9 @@ function isUnknownWireSockInspection(inspection: windows.WireSockInspection): bo
 
 function unknownWireSockMessage(inspection: windows.WireSockInspection): string {
     const reason = safeDiagnosticDetail(inspection.reason || "Não foi possível confirmar o estado do WireSock; estado desconhecido.", 300);
-    return `${reason} Tente Restaurar rede novamente; nenhuma VPN será interrompida sem prova de ownership.`;
+    // Restaurar rede é a ação manual do usuário e executa a limpeza mesmo sem
+    // ownership comprovado (#306); as ações automáticas continuam fail-closed.
+    return `${reason} Use Restaurar rede: a limpeza manual segue mesmo sem ownership comprovado; nenhuma ação automática interrompe uma VPN sem prova de ownership.`;
 }
 
 function processAlive(pid: number): boolean {
@@ -497,6 +499,29 @@ export class PluginVpnController {
                 if (!cleanup.success) this.initialized = false;
                 return;
             }
+            if (!owner) {
+                // Sem owner.lock nenhuma sessão do plugin é esperada neste boot: um
+                // serviço próprio que sobreviveu a quit forçado/reboot é órfão (#281).
+                // A parada usa a configuração própria já comprovada na inspeção; com
+                // owner.lock a sessão é re-adoptada e gerida logo abaixo.
+                this.options.log("warn", "boot encontrou WireSock próprio sem owner.lock; parando serviço órfão", {
+                    services: inspection.services,
+                    processIds: inspection.processIds,
+                });
+                const orphan = await windows.stopOwnedWireSock(this.serviceConfigPath, this.options.log, inspection);
+                if (!orphan.stopped) {
+                    this.initialized = false;
+                    this.state = "recovery_required";
+                    this.externalReason = null;
+                    this.setDiagnostic("ownership", false, orphan.error || "não foi possível parar o serviço órfão WireSock no boot");
+                    this.options.log("warn", "boot não conseguiu parar o serviço órfão WireSock; ação manual necessária", { mode: "diagnostic-only" });
+                    return;
+                }
+                await this.removeProbe({ sweep: true });
+                this.state = "inactive";
+                this.discordPid = null;
+                return;
+            }
             this.generation = Math.max(this.generation, owner?.generation ?? 0);
             const adopted = await this.claimActiveOwnership(owner, inspection);
             if (adopted.probePath) await this.cleanupStaleProbes([adopted.probePath]);
@@ -718,7 +743,10 @@ export class PluginVpnController {
                 ? unknownWireSockMessage(inspection)
                 : this.statusMessage();
             return {
-                state: this.state,
+                // Uma sessão que a inspeção não confirma não pode ser exibida como
+                // ligada (#309): a UI vê `recovery_required`, mostra o motivo e oferece
+                // Restaurar rede. Ações automáticas continuam sem destruir por aqui.
+                state: this.state === "active" ? "recovery_required" : this.state,
                 platform: "windows",
                 architecture: process.arch,
                 owned: false,
@@ -831,7 +859,10 @@ export class PluginVpnController {
         this.optimization?.controller.abort();
         this.cancelProtonRouteDiscovery();
         this.cancelProtonRouteSelection();
-        return this.serial(() => this.stopInternal(isLinux()));
+        // Ação explícita do usuário (#306): a restauração manual executa a limpeza
+        // mesmo sem ownership comprovado. Boot, watchdog e desativação em segundo
+        // plano continuam sem destruir recursos sem prova de ownership.
+        return this.serial(() => this.stopInternal(isLinux(), { manual: true }));
     }
 
     public restartDiscord(): Promise<VpnOperationResult> {
@@ -2043,16 +2074,21 @@ export class PluginVpnController {
         }
     }
 
-    private async stopInternal(relaunch: boolean): Promise<VpnOperationResult> {
+    private async stopInternal(relaunch: boolean, options: { manual?: boolean } = {}): Promise<VpnOperationResult> {
         if (isLinux()) return this.stopLinuxInternal(relaunch);
         if (!isSupportedWindowsArchitecture(process.platform, process.arch)) return { success: false, state: "blocked_external", error: "A VPN do plugin nesta versão exige Windows x64." };
         this.stopWatchdog();
         this.diagnosticGeneration++;
+        // Restaurar rede é a única entrada manual deste caminho (#306): com o sinal
+        // manual a limpeza segue mesmo sem ownership comprovado. Sem ele (quit,
+        // otimização, rota, boot) nada muda — leitura desconhecida continua adiando
+        // a parada em modo diagnóstico.
+        const manual = options.manual === true;
         let inspection = this.inspectWindows();
         const owner = this.readOwner();
         if (isUnknownWireSockInspection(inspection)) {
             const ownershipProven = Boolean(owner && owner.configPath === this.serviceConfigPath && !this.isLiveForeignOwner(owner));
-            if (!ownershipProven) {
+            if (!manual && !ownershipProven) {
                 this.state = "recovery_required";
                 this.externalReason = null;
                 const error = unknownWireSockMessage(inspection);
@@ -2061,7 +2097,7 @@ export class PluginVpnController {
                 return { success: false, state: this.state, error };
             }
             inspection = await windows.inspectWireSockUntilReliableAsync(this.serviceConfigPath, this.guiConfigPath);
-            if (isUnknownWireSockInspection(inspection)) {
+            if (isUnknownWireSockInspection(inspection) && !manual) {
                 this.state = "recovery_required";
                 this.externalReason = null;
                 const error = unknownWireSockMessage(inspection);
@@ -2070,7 +2106,7 @@ export class PluginVpnController {
                 return { success: false, state: this.state, error };
             }
         }
-        if (inspection.active && inspection.owned && (!owner || owner.configPath !== this.serviceConfigPath || this.isLiveForeignOwner(owner))) {
+        if (!manual && inspection.active && inspection.owned && (!owner || owner.configPath !== this.serviceConfigPath || this.isLiveForeignOwner(owner))) {
             this.state = "recovery_required";
             const error = "WireSock próprio detectado sem owner/configuração confirmados; ação manual necessária.";
             this.setDiagnostic("ownership", false, error);
@@ -2078,6 +2114,7 @@ export class PluginVpnController {
             return { success: false, state: this.state, error };
         }
         const needsInactiveCleanup = Boolean(owner)
+            || (manual && isUnknownWireSockInspection(inspection))
             || this.state === "preparing"
             || this.state === "starting"
             || this.state === "stopping"
@@ -2106,7 +2143,7 @@ export class PluginVpnController {
             return { success: false, state: this.state, error: this.externalReason || undefined };
         }
         this.state = "stopping";
-        const cleanup = await windows.stopOwnedWireSock(this.serviceConfigPath, this.options.log, inspection);
+        const cleanup = await windows.stopOwnedWireSock(this.serviceConfigPath, this.options.log, inspection, { manual });
         if (!cleanup.stopped) {
             await this.removeProbe({ sweep: false });
             this.state = "recovery_required";
@@ -2459,6 +2496,40 @@ export class PluginVpnController {
                     return;
                 }
                 if (!confirmation.active) {
+                    // A sessão é do plugin (owner.lock próprio) e a leitura vazia pode
+                    // ser transitória logo após a ativação (#331): re-adopta quando uma
+                    // inspeção fresca confirmar o túnel de novo, em vez de derrubar o
+                    // estado. Sem owner.lock não há sessão a re-adoptar e a ausência
+                    // confirmada segue como antes, sem tocar em recurso algum.
+                    const sessionOwner = this.readOwner();
+                    if (sessionOwner && sessionOwner.configPath === this.serviceConfigPath && !this.isLiveForeignOwner(sessionOwner)) {
+                        const recheck = await windows.inspectWireSockUntilReliableAsync(this.serviceConfigPath, this.guiConfigPath);
+                        if (!isCurrent()) return;
+                        if (!recheck.reliable) {
+                            this.setDiagnostic("wireguard", false, recheck.reason || "Estado do WireSock desconhecido.");
+                            this.options.log("warn", "watchdog não re-adoptou a sessão própria porque a leitura continuou desconhecida", { mode: "diagnostic-only" });
+                            return;
+                        }
+                        if (recheck.active && recheck.owned) {
+                            try {
+                                const readopted = await this.claimActiveOwnership(sessionOwner, recheck);
+                                this.generation = Math.max(this.generation, readopted.generation);
+                                this.options.log("warn", "watchdog re-adoptou a sessão WireSock própria", {
+                                    mode: "diagnostic-only",
+                                    services: recheck.services,
+                                    processIds: recheck.processIds,
+                                });
+                                this.startDiagnostics("watchdog");
+                                return;
+                            } catch (error) {
+                                // Lock mudou de dono durante a re-adoção: mantém o estado
+                                // atual e deixa o próximo ciclo decidir; nada foi parado.
+                                if (isCurrent()) this.setDiagnostic("wireguard", false, errorMessage(error));
+                                this.options.log("warn", "watchdog não re-adoptou a sessão própria", { mode: "diagnostic-only", erro: errorMessage(error) });
+                                return;
+                            }
+                        }
+                    }
                     this.diagnosticGeneration++;
                     this.state = "inactive";
                     this.discordPid = null;

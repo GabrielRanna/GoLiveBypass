@@ -561,11 +561,11 @@ Sua proxy personalizada (`socks5://usuario:senha@host:porta`) é tratada como se
 
 - **L1 — padrões conhecidos:** credenciais embutidas em URL (`usuario:***@host`), cabeçalhos `authorization`, tokens do Discord (`mfa.*`) e query string do gateway.
 - **L2 — segredos literais:** qualquer ocorrência exata de usuário, senha, `host:porta` e da URL inteira configurada em `settings.json` vira `<proxy-pessoal>` — mesmo fora de um padrão.
-- **L3 — varredura final:** se algum segredo sobreviveu, **nada é enviado** e o app avisa “proxy apareceu nos logs”. O token da API (`api.skyplaceia.com`) também sai por L2 e trava em L3 se ficar.
+- **L3 — varredura final:** se algum segredo sobreviveu, **nada é enviado** e o app avisa “proxy apareceu nos logs”. O token da API (`bugs.golivebypass.dev`) também sai por L2 e trava em L3 se ficar.
 
 Hosts do Discord (`gateway.discord.gg`) e do país de saída podem aparecer — são necessários para diagnosticar rota e latência. Senha e `host:porta` da sua proxy nunca.
 
-**Operação:** o botão chama `POST https://api.skyplaceia.com/bugs/v1/reports` com `Authorization: Bearer <token>` embutido no app (escopo: só criar issue, com rate limit). Rate limit: **1 issue/min por IP** — o 2º envio no mesmo minuto recebe `429` e bloqueia o IP por **300s** (`Retry-After` + `GET /v1/block-status` informam o tempo restante; a GUI mostra a mensagem de bloqueio com contagem regressiva). O corpo é limitado a 512 KB; o campo `log` é cortado em 256 KB. Logs locais nunca excedem 2 MB por arquivo nem 128 KB em memória.
+**Operação:** o botão chama `POST https://bugs.golivebypass.dev/bugs/v1/reports` com `Authorization: Bearer <token>` embutido no app (escopo: só criar issue, com rate limit). Rate limit: **1 issue/min por IP** — o 2º envio no mesmo minuto recebe `429` e bloqueia o IP por **300s** (`Retry-After` + `GET /v1/block-status` informam o tempo restante; a GUI mostra a mensagem de bloqueio com contagem regressiva). O corpo é limitado a 512 KB; o campo `log` é cortado em 256 KB. Logs locais nunca excedem 2 MB por arquivo nem 128 KB em memória.
 
 Sem GUI, compartilhe o arquivo de [O registro](#o-registro-o-que-o-plugin-anotou) manualmente numa issue.
 

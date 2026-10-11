@@ -773,33 +773,61 @@ export async function inspectWireSockUntilReliableAsync(configPath: string, guiC
 }
 
 
-export async function stopOwnedWireSock(configPath: string, log: WireSockLogger, confirmedInspection?: WireSockInspection): Promise<WireSockCleanupResult> {
+export async function stopOwnedWireSock(
+    configPath: string,
+    log: WireSockLogger,
+    confirmedInspection?: WireSockInspection,
+    options?: { manual?: boolean },
+): Promise<WireSockCleanupResult> {
     if (!isWindows()) return { stopped: true, servicesResidual: [], processResidual: [], networkLockReset: false, dnsCleared: false, dnsFlushed: false };
+    // `manual` marca a Restaurar rede do usuário (#306): é a única ação que segue
+    // com a leitura inconclusiva. Sem ele (watchdog, quit, boot, rollback de
+    // ativação) uma inspeção desconhecida continua recusando a parada.
+    const manual = options?.manual === true;
     const initial = confirmedInspection ?? inspectWireSock(configPath);
-    if (!initial.reliable) {
+    if (!initial.reliable && !manual) {
         const error = initial.reason || UNKNOWN_WIRESOCK_STATE;
         log("warn", "limpeza adiada porque o estado do WireSock é desconhecido", { motivo: error });
         return { stopped: false, servicesResidual: initial.services, processResidual: initial.processIds, networkLockReset: false, dnsCleared: false, dnsFlushed: false, error };
     }
+    // Preservação de recurso comprovadamente alheio vale também na ação manual:
+    // o caso que trava o usuário é a leitura desconhecida, não o externo provado.
     if (initial.active && !initial.owned) {
         const error = initial.reason || "WireSock externo detectado";
         log("warn", "limpeza recusada para preservar WireSock externo", { motivo: error });
         return { stopped: false, servicesResidual: initial.services, processResidual: initial.processIds, networkLockReset: false, dnsCleared: false, dnsFlushed: false, error };
     }
+    if (!initial.reliable && manual)
+        log("warn", "restauração manual segue sem ownership comprovado", { motivo: initial.reason || UNKNOWN_WIRESOCK_STATE, servicos: initial.services, pids: initial.processIds });
 
     for (const name of initial.services) {
-        if (containsConfig(serviceCommand(name), configPath)) {
+        // Serviços listados são os que a leitura confirmou em execução; na ação
+        // manual a parada segue mesmo sem o argumento de configuração legível.
+        if (manual || containsConfig(serviceCommand(name), configPath)) {
             if (!runAsAdministrator("sc.exe", ["stop", name], log))
-                log("warn", "não consegui solicitar parada do serviço WireSock próprio", { servico: name });
+                log("warn", "não consegui solicitar parada do serviço WireSock", { servico: name, modo: manual ? "manual" : "proprio" });
         }
     }
+    if (manual && initial.processIds.length) killProcesses(initial.processIds, "da restauração manual", log);
     for (let attempt = 0; attempt < 2; attempt++) {
         await wait(500);
         const current = await inspectWireSockUntilReliable(configPath);
         if (!current.reliable) {
-            const error = current.reason || UNKNOWN_WIRESOCK_STATE;
-            log("error", "limpeza interrompida porque o estado do WireSock ficou desconhecido", { motivo: error });
-            return { stopped: false, servicesResidual: current.services, processResidual: current.processIds, networkLockReset: false, dnsCleared: false, dnsFlushed: false, error };
+            if (!manual) {
+                const error = current.reason || UNKNOWN_WIRESOCK_STATE;
+                log("error", "limpeza interrompida porque o estado do WireSock ficou desconhecido", { motivo: error });
+                return { stopped: false, servicesResidual: current.services, processResidual: current.processIds, networkLockReset: false, dnsCleared: false, dnsFlushed: false, error };
+            }
+            // Leitura ainda inconclusiva na ação manual: encerra os processos e
+            // serviços WireSock listados e tenta de novo; o veredito final abaixo
+            // só afirma parada com leitura confiável.
+            log("warn", "restauração manual com leitura inconclusiva; nova tentativa", { motivo: current.reason || UNKNOWN_WIRESOCK_STATE, servicos: current.services, pids: current.processIds });
+            for (const name of current.services) {
+                if (!runAsAdministrator("sc.exe", ["stop", name], log))
+                    log("warn", "não consegui solicitar parada do serviço WireSock", { servico: name, modo: "manual" });
+            }
+            if (current.processIds.length) killProcesses(current.processIds, "da restauração manual", log);
+            continue;
         }
         if (!current.active) break;
         if (!current.owned) {

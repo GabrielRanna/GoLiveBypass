@@ -351,16 +351,50 @@ describe("recuperação segura para inspeção WireSock desconhecida", () => {
         }
     });
 
-    it("não chama limpeza quando a inspeção desconhecida não prova owner/config próprios", async () => {
+    it("restauração manual limpa mesmo sem ownership comprovado (#306)", async () => {
+        const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "golive-recovery-manual-"));
+        try {
+            vi.spyOn(windows, "inspectWireSock").mockReturnValue(unknown());
+            vi.spyOn(windows, "inspectWireSockUntilReliableAsync").mockResolvedValue(unknown());
+            const cleanup = vi.spyOn(windows, "stopOwnedWireSock").mockResolvedValue({
+                stopped: true,
+                servicesResidual: [],
+                processResidual: [],
+                networkLockReset: false,
+                dnsCleared: false,
+                dnsFlushed: false,
+            });
+            const instance = controller(dataDir);
+            const result = await instance.restoreNetwork();
+
+            expect(cleanup).toHaveBeenCalledWith(
+                instance.paths.serviceConfigPath,
+                expect.any(Function),
+                expect.objectContaining({ reliable: false }),
+                { manual: true },
+            );
+            expect(result).toMatchObject({ success: true, state: "inactive" });
+        } finally {
+            fs.rmSync(dataDir, { recursive: true, force: true });
+        }
+    });
+
+    it("ações automáticas continuam sem chamar limpeza com inspeção desconhecida (#306)", async () => {
         const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "golive-recovery-external-"));
         try {
             vi.spyOn(windows, "inspectWireSock").mockReturnValue(unknown());
             vi.spyOn(windows, "inspectWireSockUntilReliableAsync").mockResolvedValue(unknown());
             const cleanup = vi.spyOn(windows, "stopOwnedWireSock");
-            const result = await controller(dataDir).restoreNetwork();
 
+            // Quit/parada em segundo plano: sem o sinal manual nada é destruído.
+            const result = await controller(dataDir).shutdown(false);
             expect(cleanup).not.toHaveBeenCalled();
             expect(result).toMatchObject({ success: false, state: "recovery_required" });
+
+            // Boot também continua não-destrutivo: leitura desconhecida adia o
+            // cleanup em modo diagnóstico, sem tocar em serviço ou processo.
+            await controller(dataDir).initialize();
+            expect(cleanup).not.toHaveBeenCalled();
         } finally {
             fs.rmSync(dataDir, { recursive: true, force: true });
         }

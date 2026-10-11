@@ -11,12 +11,17 @@ const state = vi.hoisted(() => ({
   createOutput: true,
   spawnFailure: false,
   stderr: [] as string[],
+  // Resposta por invocação: a sonda de diagnóstico roda um segundo helper depois
+  // da otimização falhar, e cada chamada devolve um resultado diferente.
+  calls: [] as string[][],
+  jsonFor: undefined as ((args: string[]) => Record<string, unknown> | undefined) | undefined,
 }));
 
 vi.mock("child_process", () => ({
   execFileSync: vi.fn(() => ""),
   spawn: vi.fn((exe: string, args: string[]) => {
     state.args = args;
+    state.calls.push(args);
     const child = Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
@@ -36,7 +41,8 @@ vi.mock("child_process", () => ({
       if (state.createOutput && outputAt >= 0 && args[outputAt + 1]) {
         fs.writeFileSync(args[outputAt + 1], PROFILE_CONTENT);
       }
-      if (state.json !== undefined) child.stdout.emit("data", Buffer.from(JSON.stringify(state.json)));
+      const json = state.jsonFor ? state.jsonFor(args) : state.json;
+      if (json !== undefined) child.stdout.emit("data", Buffer.from(JSON.stringify(json)));
       for (const chunk of state.stderr) child.stderr.emit("data", Buffer.from(chunk));
       child.emit("close", state.code);
     });
@@ -101,6 +107,8 @@ beforeEach(() => {
   state.createOutput = true;
   state.spawnFailure = false;
   state.stderr = [];
+  state.calls = [];
+  state.jsonFor = undefined;
   process.env.GOLIVE_PLUGIN_PROTON_CONFGEN = helperExecutable();
   globalScope.__GOLIVE_SAFE_STORAGE__ = {
     isEncryptionAvailable: () => true,
@@ -262,6 +270,69 @@ describe("otimização do plugin", () => {
     } finally {
       Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
     }
+  });
+
+  it("quando a verificação rápida descarta todas, roda a sonda estendida e expõe a etapa", async () => {
+    const dir = dataDirWithSession();
+    const output = path.join(dir, "wireguard.conf");
+    fs.writeFileSync(output, PREVIOUS_PROFILE);
+    state.code = 1;
+    state.jsonFor = args => args.includes("-manual-probe")
+      ? { success: false, error: "manual route preflight failed: dial tcp4 192.0.2.8:443: i/o timeout" }
+      : { success: false, error: "nenhum candidato respondeu pelo túnel na verificação rápida" };
+    state.stderr = [
+      'GOLIVE_PROGRESS {"phase":"preparing","total":12,"tested":1,"succeeded":0,"server":"US-FREE#56","status":"failed"}\n',
+    ];
+
+    const result = await generateOptimalProtonConfig(dir, { username: "conta", speedTest: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("nenhum candidato respondeu pelo túnel");
+    // O erro agregado sozinho descartava as doze rotas sem dizer onde falhou.
+    expect(result.error).toContain("sonda estendida (15 s) em US-FREE#56");
+    expect(result.error).toContain("manual route preflight failed");
+    expect(state.calls).toHaveLength(2);
+    expect(state.calls[1]).toEqual(expect.arrayContaining(["-manual-probe", "-server", "US-FREE#56", "-ipv6"]));
+    expect(state.calls[1]).not.toContain("-speed-test");
+    // A sonda nunca promove perfil: o perfil anterior fica intacto e sem staging.
+    expect(fs.readFileSync(output, "utf8")).toBe(PREVIOUS_PROFILE);
+    expect(fs.readdirSync(dir).filter(name => name.startsWith(".wireguard.conf."))).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("token-de-teste");
+  });
+
+  it("sonda estendida aprovada aponta para a seleção manual em vez de culpar a rota", async () => {
+    const dir = dataDirWithSession();
+    state.code = 0;
+    state.jsonFor = args => args.includes("-manual-probe")
+      ? { success: true, manual: true, server: "US-FREE#56", pingMs: 128, preflight: "success" }
+      : { success: false, error: "nenhum candidato respondeu pelo túnel na verificação rápida" };
+    state.stderr = [
+      'GOLIVE_PROGRESS {"phase":"preparing","total":12,"tested":12,"succeeded":0,"server":"US-FREE#56","status":"failed"}\n',
+    ];
+
+    const result = await generateOptimalProtonConfig(dir, { username: "conta", speedTest: true });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("nenhum candidato respondeu pelo túnel");
+    // Com o túnel provado na sonda estendida, o descarte veio do limite de 6 s:
+    // a saída do usuário é a lista manual, não a desistência.
+    expect(result.error).toContain("a rota respondeu pelo túnel");
+    expect(result.error).toContain("seleção manual");
+    expect(state.calls).toHaveLength(2);
+    expect(state.calls[1]).toEqual(expect.arrayContaining(["-manual-probe", "-server", "US-FREE#56"]));
+    expect(fs.readdirSync(dir).filter(name => name.startsWith(".wireguard.conf."))).toEqual([]);
+  });
+
+  it("não dispara a sonda estendida quando a falha não é do preflight pelo túnel", async () => {
+    const dir = dataDirWithSession();
+    state.code = 1;
+    state.json = { success: false, error: "authentication failed: Proton session verification returned an invalid HTTP status (200)" };
+
+    const result = await generateOptimalProtonConfig(dir, { username: "conta", speedTest: true });
+
+    expect(result.success).toBe(false);
+    expect(state.calls).toHaveLength(1);
+    expect(result.error).not.toContain("sonda estendida");
   });
 });
 

@@ -353,7 +353,7 @@ describe("preflight Linux", () => {
     const rollbackFunction = rollbackStart >= 0 && rollbackTrap > rollbackStart
       ? source.slice(rollbackStart, rollbackTrap).trim()
       : null;
-    const startIndex = source.indexOf('start_discord "$(printf');
+    const startIndex = source.indexOf('if ! start_discord "$(printf');
     const completionEnd = source.indexOf("\nprintf '\\n  %sDiscord aberto", startIndex);
     expect(rollbackFunction).not.toBeNull();
     expect(startIndex).toBeGreaterThanOrEqual(0);
@@ -816,6 +816,7 @@ describe("preflight Linux", () => {
     expect(failureStart).toBeGreaterThanOrEqual(0);
     expect(failureEnd).toBeGreaterThan(failureStart);
     const failureBlock = source.slice(failureStart, failureEnd);
+    const falhaFunction = extract("falha_lancamento_mensagem");
     const rollbackRoot = fs.mkdtempSync(path.join(os.tmpdir(), "golive-wait-rollback-"));
     tempRoots.push(rollbackRoot);
     const rollbackHarness = path.join(rollbackRoot, "rollback.sh");
@@ -826,9 +827,10 @@ describe("preflight Linux", () => {
       "teardown_wireguard_netns() { printf 'teardown\\n' >> \"$TRACE\"; }",
       "warn() { :; }",
       "fail() { printf '%s\\n' \"$1\" >&2; exit 1; }",
-      "ACTIVATION_ROLLBACK_TARGET=target",
+      "ACTIVATION_ROLLBACK_TARGET=\"${RTARGET:-target}\"",
       "FOUND=target",
       "INSTALL_DIR=/tmp/golive-test",
+      falhaFunction,
       failureBlock,
     ].join("\n"));
     fs.chmodSync(rollbackHarness, 0o755);
@@ -840,6 +842,34 @@ describe("preflight Linux", () => {
     expect(rollbackRun.status).toBe(1);
     expect(fs.readFileSync(rollbackTrace, "utf8")).toBe("stop\nteardown\n");
     expect(rollbackRun.stderr).toContain("Discord nao iniciou dentro do namespace WireGuard");
+
+    // #327: a falha precisa entregar saida acionavel — instancia fora do namespace,
+    // ultima saida real do launcher e o caminho do log — numa linha so, porque e o
+    // que a UI mostra depois do tail.
+    const launcherLog = path.join(rollbackRoot, "discord-vpn.log");
+    fs.writeFileSync(launcherLog, [
+      "[2026-10-08T21:41:42-03:00] backend=wayland wayland=wayland-0",
+      "[2026-10-08T21:41:42-03:00] launch=flatpak-direct app=com.discordapp.Discord",
+      "error: bwrap: montagem de /proc negada pela politica do sistema",
+      "",
+    ].join("\n"));
+    const flatpakTarget = "/var/lib/flatpak/app/com.discordapp.Discord/current/active/files/discord/resources|discord|flatpak|com.discordapp.Discord";
+    const actionableRun = spawnSync("/bin/sh", [rollbackHarness], {
+      env: {
+        ...process.env,
+        TRACE: rollbackTrace,
+        RTARGET: flatpakTarget,
+        WAIT_DISCORD_MOTIVO: "fora-do-namespace",
+        START_DISCORD_LOG: launcherLog,
+      },
+      encoding: "utf8",
+    });
+    expect(actionableRun.status).toBe(1);
+    expect(actionableRun.stderr).toContain("uma instancia do com.discordapp.Discord ficou fora do namespace");
+    expect(actionableRun.stderr).toContain("flatpak kill com.discordapp.Discord");
+    expect(actionableRun.stderr).toContain("error: bwrap: montagem de /proc negada pela politica do sistema");
+    expect(actionableRun.stderr).toContain(launcherLog);
+    expect(actionableRun.stderr).not.toContain("backend=wayland");
   });
 
   it("mantem no-op apenas para ACTIVE e libera reparo quando status fica INACTIVE", async () => {

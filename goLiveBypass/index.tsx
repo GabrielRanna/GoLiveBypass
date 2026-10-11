@@ -1028,8 +1028,10 @@ function OnboardingSteps({ page, customMode }: { page: OnboardingPage; customMod
 }
 
 function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderModalProps; onClosed: () => void }) {
-    const customMode = settings.store.vpnMode === "custom";
-    const { protonCountry, protonFreeOnly, protonAutoPing } = settings.use(["protonCountry", "protonFreeOnly", "protonAutoPing"]);
+    const { protonCountry, protonFreeOnly, protonAutoPing, vpnMode } = settings.use(["vpnMode", "protonCountry", "protonFreeOnly", "protonAutoPing"]);
+    // Inscrito em `vpnMode`: trocar de modo no meio do assistente re-renderiza a
+    // página de conta com o fluxo escolhido, sem fechar nem perder o progresso.
+    const customMode = vpnMode === "custom";
     const requiredOnOpen = Boolean(Native && settings.store.onboardingCompleted !== true);
     const [page, setPage] = useState<OnboardingPage>("account");
     const [username, setUsername] = useState("");
@@ -1131,7 +1133,11 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
 
     const closeModal = () => {
         if (closedRef.current) return;
-        if (requiredOnOpen && settings.store.onboardingCompleted !== true && page !== "ready") return;
+        // Fechar sem concluir é um skip explícito e persistente: o assistente não
+        // reabre sozinho (o X não trava mais o usuário — #334), o painel e o
+        // updater continuam acessíveis e dá para configurar depois pela toolbox.
+        // Sem ponte nativa não há estado a gravar.
+        if (requiredOnOpen && settings.store.onboardingCompleted !== true) settings.store.onboardingSkipped = true;
         closedRef.current = true;
         if (page === "account" && busy) cancelActiveLogin();
         if (page === "route" && busy) cancelActiveOptimization();
@@ -1144,6 +1150,7 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
 
     const complete = () => {
         settings.store.onboardingCompleted = true;
+        settings.store.onboardingSkipped = false;
         closeModal();
         if (typeof Native?.enable !== "function") return;
         // Concluir a configuração precisa deixar o Discord já roteado: o túnel
@@ -1309,6 +1316,12 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
         }
     };
 
+    const switchVpnMode = (mode: "proton" | "custom") => {
+        if (busy) return;
+        settings.store.vpnMode = mode;
+        setPage("account");
+        setError(null);
+    };
 
     const continueToRoute = async () => {
         if (!Native || busy || sessionLoading || (!customMode && !username.trim())) return;
@@ -1528,6 +1541,9 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
     const actions = page === "account" ? [
         { text: busy ? (customMode ? "Validando…" : "Entrando…") : customMode ? "Continuar para rota real" : "Continuar para rota real", variant: "primary" as const, onClick: () => void continueToRoute(), disabled: busy || sessionLoading || (!customMode && !username.trim()) },
         ...(busy && !customMode ? [{ text: loginCancelRequested ? "Cancelando…" : "Cancelar login", variant: "danger" as const, onClick: cancelActiveLogin, disabled: loginCancelRequested }] : []),
+        // Adiar é fechar e gravar o skip (closeModal); não conclui o onboarding
+        // nem libera ativação automática — só destrava o painel para configurar depois.
+        { text: "Configurar depois", variant: "secondary" as const, onClick: closeModal },
     ] : page === "route" ? (customMode ? [
         { text: "Voltar", variant: "secondary" as const, onClick: () => { if (!busy) setPage("account"); }, disabled: busy },
         busy
@@ -1582,6 +1598,9 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
                             <div style={onboardingBoxStyle} role="status" aria-live="polite" aria-busy={busy}>
                                 <Paragraph>{customConfigPath.trim() ? "Arquivo WireGuard importado para a pasta privada do plugin." : "Nenhum arquivo WireGuard personalizado foi configurado ainda."}</Paragraph>
                             </div>
+                            <Button onClick={() => switchVpnMode("proton")} disabled={busy}>
+                                Usar a VPN Proton do plugin
+                            </Button>
                             {error && <Paragraph role="alert" aria-live="assertive"><strong>{error}</strong></Paragraph>}
                         </>
                     ) : (
@@ -1627,6 +1646,10 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
                             {!sessionLoading && session && !session.valid && <Paragraph><strong>{protonSessionStatusTitle(session.code)}</strong>{session.error ? ` · ${session.error}` : ""}</Paragraph>}
                             {error && <Paragraph role="alert" aria-live="assertive"><strong>{error}</strong></Paragraph>}
                             {!!username.trim() && !sessionLoading && <Button onClick={() => void checkSession(username)} disabled={busy}>Verificar sessão novamente</Button>}
+                            <Button onClick={() => switchVpnMode("custom")} disabled={busy || sessionLoading}>
+                                Usar minha própria VPN (Mullvad ou outro WireGuard)
+                            </Button>
+                            <Paragraph>Tem Mullvad ou outra VPN com arquivo .conf? Troque o modo agora e importe o arquivo na próxima etapa, sem login Proton.</Paragraph>
                         </>
                     )}
                     </div>
@@ -2022,6 +2045,12 @@ const settings = definePluginSettings({
         default: false,
         hidden: true,
     },
+    onboardingSkipped: {
+        type: OptionType.BOOLEAN,
+        description: "Registra que o assistente inicial foi adiado pelo usuário; o painel pode configurar o VPN depois.",
+        default: false,
+        hidden: true,
+    },
     vpnMode: {
         type: OptionType.SELECT,
         description: "Rota WireGuard isolada para este Discord. O restante do computador continua usando a rede normal.",
@@ -2284,8 +2313,9 @@ function VpnPanel() {
             if (!mountedRef.current) return;
             if (!result.success) {
                 // A falha fica junto da ação automática; a lista manual continua
-                // disponível logo abaixo, sem esconder as rotas já medidas.
-                setOptimizationError(safeDiagnosticDetail(result.error || "Não foi possível otimizar a rota Proton.", 240));
+                // disponível logo abaixo, sem esconder as rotas já medidas. O
+                // orçamento cobre a sonda estendida anexada pelo helper.
+                setOptimizationError(safeDiagnosticDetail(result.error || "Não foi possível otimizar a rota Proton.", 500));
                 setOptimizationNotice("otimização falhou; escolha uma rota na lista");
                 routeSelection.measureCatalogIfEmpty();
                 return;
@@ -3062,10 +3092,14 @@ export default definePlugin({
         startStreamClaimWatch();
 
         const onboardingRequired = Native && settings.store.onboardingCompleted !== true;
-        if (onboardingTimer !== null) clearTimeout(onboardingTimer);
-        if (onboardingRequired) {
+        if (onboardingTimer !== null) {
+            clearTimeout(onboardingTimer);
+            onboardingTimer = null;
+        }
+        if (onboardingRequired && settings.store.onboardingSkipped !== true) {
             onboardingTimer = setTimeout(() => {
                 onboardingTimer = null;
+                if (settings.store.onboardingSkipped === true) return;
                 if (isLifecycleCurrent() && settings.store.onboardingCompleted !== true) openPluginOnboarding();
             }, 2_500);
         }

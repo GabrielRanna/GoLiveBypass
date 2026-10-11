@@ -73,6 +73,60 @@ function desktopExecPath(value: string): string {
   return `"${value.replace(/([\\"`$])/g, "\\$1")}"`;
 }
 
+// Entradas da Run key que iniciam ESTE app. O nome do valor mudou entre
+// versoes: o canonico e ENTRY_NAME, mas versoes antigas gravaram sob outros
+// nomes (o nome do app do Electron, o nome do exe portatil renomeado). O
+// toggle gerenciava so o valor canonico, entao desligar "deixava passar" as
+// entradas legadas e o app continuava subindo no boot com o checkbox
+// desligado. O criterio aqui e o ALVO do valor: qualquer registro cujo
+// comando aponte para o exe do GoLiveBypass pertence a este toggle. Valores
+// de terceiros e o GoLiveBypassTor do standalone (o alvo dele e o
+// wscript/tor, nao este app) ficam de fora.
+type RunEntry = { name: string; data: string };
+
+function launchesThisApp(data: string): boolean {
+  const quoted = data.match(/^"([^"]+)"/);
+  const target = quoted ? quoted[1] : data.trim().split(/\s+/)[0] ?? "";
+  const base = target.split(/[\\/]/).pop() ?? "";
+  return /^golivebypass.*\.exe$/i.test(base);
+}
+
+function listOwnRunEntries(): RunEntry[] {
+  let output: string;
+  try {
+    output = execFileSync("reg.exe", ["query", RUN_KEY], { encoding: "utf8" });
+  } catch {
+    // Chave Run ilegivel (sessao sem perfil, politica de grupo): nao ha
+    // entrada comprovada, e quem chama decide o que fazer com a lista vazia.
+    return [];
+  }
+  const entries: RunEntry[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^\s*(.+?)\s{2,}(REG_\w+)\s{2,}(.*)$/);
+    if (!match) continue;
+    const name = match[1].trim();
+    const data = match[3].trim();
+    if (name === ENTRY_NAME || launchesThisApp(data)) entries.push({ name, data });
+  }
+  return entries;
+}
+
+function deleteRunValue(name: string): void {
+  try {
+    execFileSync("reg.exe", [
+      "delete",
+      RUN_KEY,
+      "/v", name,
+      "/f",
+    ], { stdio: "ignore" });
+  } catch {
+    // Ignorar quando a entrada nao existe: o `reg delete` falha com nivel
+    // de erro 1 quando o valor nao esta presente, e o caller nao distingue
+    // isso de um erro real. O resultado final e conferido com uma nova
+    // listagem depois da exclusao -- nunca por sucesso presumido.
+  }
+}
+
 /**
  * Marca o app para iniciar com o login do usuario.
  * - Windows: HKCU\...\Run via reg.exe (funciona em portable)
@@ -112,20 +166,26 @@ export function setStartup(enabled: boolean): StartupResult {
         console.error("falha ao adicionar entrada de Run:", error);
         return { success: false, error: "O Windows recusou a criação da inicialização automática." };
       }
+      // Normaliza: com a entrada canonica no lugar, entrada legada do mesmo
+      // app sobrando iniciaria uma segunda copia no login.
+      for (const entry of listOwnRunEntries()) {
+        if (entry.name !== ENTRY_NAME) deleteRunValue(entry.name);
+      }
       if (!getStartup()) return { success: false, error: "A entrada foi criada, mas não pôde ser confirmada no registro do Windows." };
     } else {
-      try {
-        execFileSync("reg.exe", [
-          "delete",
-          RUN_KEY,
-          "/v", ENTRY_NAME,
-          "/f",
-        ], { stdio: "ignore" });
-      } catch {
-        // Ignorar quando a entrada nao existe: o `reg delete` falha com nivel
-        // de erro 1 quando a chave nao esta presente, e o caller nao distingue
-        // isso de um erro real. O retorno e mapeado em getStartup() de qualquer
-        // jeito.
+      // Desligar precisa limpar TODAS as entradas do app e provar que limpou:
+      // apagar so o valor canonico deixava as entradas legadas vivas, e o
+      // sucesso retornado sem verificacao fazia a UI mentir ("desligado")
+      // enquanto o app continuava subindo com o Windows.
+      for (const entry of listOwnRunEntries()) deleteRunValue(entry.name);
+      const remaining = listOwnRunEntries();
+      if (remaining.length > 0) {
+        return {
+          success: false,
+          error: "O Windows manteve a inicialização automática (" +
+            remaining.map((entry) => entry.name).join(", ") +
+            "). Remova a entrada manualmente em Inicializar (msconfig) e reporte o resultado do diagnostico.ps1.",
+        };
       }
     }
     return { success: true };
@@ -195,18 +255,9 @@ export function getStartup(): boolean {
     return fs.existsSync(file);
   }
   if (IS_WINDOWS) {
-    try {
-      const output = execFileSync("reg.exe", [
-        "query",
-        RUN_KEY,
-        "/v", ENTRY_NAME,
-      ], { encoding: "utf8" });
-      // /v so imprime a chave pedida; se ela existir, aparece "GoLiveBypass" no stdout.
-      // Se nao existir, reg.exe sai com codigo 1 e escreve no stderr.
-      return output.includes(ENTRY_NAME);
-    } catch {
-      return false;
-    }
+    // Qualquer entrada do app vale: valor legado sob outro nome tambem
+    // inicia o app, e o checkbox precisa refletir o que o Windows vai fazer.
+    return listOwnRunEntries().length > 0;
   }
   return app.getLoginItemSettings().openAtLogin;
 }

@@ -508,6 +508,28 @@ export function findWireSockInKnownRoots(env: NodeJS.ProcessEnv = process.env): 
   return null;
 }
 
+export type WindowsRouteUiStatus = "ACTIVE" | "INACTIVE" | "RECOVERY_REQUIRED";
+
+/**
+ * Estado honesto da rota Windows para a UI (#309). `readinessVerified` vem do
+ * veredito de `waitForWindowsWgReady`: `null` enquanto ele não terminou (sem
+ * veredito ainda não há o que mostrar) e `false` quando não há handshake nem
+ * trânsito provado pelo túnel. Com a rota iniciada e a prontidão refutada, a UI
+ * deixa de exibir "ligado" e mostra a recuperação com a Restaurar internet.
+ * Isto é só apresentação: nenhuma leitura de diagnóstico para ou destrói o
+ * túnel aqui.
+ */
+export function windowsRouteStatus(input: {
+  started: boolean;
+  wireSockActive: boolean;
+  discordRunning: boolean;
+  readinessVerified: boolean | null;
+}): WindowsRouteUiStatus {
+  if (!input.started || !input.wireSockActive || !input.discordRunning) return "INACTIVE";
+  if (input.readinessVerified === false) return "RECOVERY_REQUIRED";
+  return "ACTIVE";
+}
+
 export function getWireSockConnectionStatus(): WireSockConnectionStatus {
   if (process.platform !== "win32") return { state: "unknown", verified: false, source: "none" };
   const cli = findWireSockCli();

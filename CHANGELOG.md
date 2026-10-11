@@ -6,6 +6,16 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Windows: "Iniciar com o Windows" desliga de verdade
+
+- Desligar o toggle apagava só a entrada canônica `GoLiveBypass` da Run key e ainda reportava sucesso sem conferir: entradas legadas do mesmo app sob outros nomes (versões antigas gravavam o nome do app do Electron ou do exe portátil renomeado) sobreviviam e o app continuava subindo no login com o checkbox desligado. Agora o toggle gerencia **todas** as entradas cujo alvo é o exe do GoLiveBypass, apaga todas ao desligar, confere o registro depois e devolve erro honesto (com os nomes das entradas remanescentes) quando o Windows não obedece. Ao ligar, normaliza para uma única entrada canônica. Valores de terceiros e o `GoLiveBypassTor` do standalone não são tocados.
+- O checkbox passa a refletir qualquer entrada do app (inclusive legadas), não só a canônica; a limpeza também acontece ao abrir o app com o autostart ativo (sync da entrada).
+- Testes: `golive-gui/tests/startup-registry.test.ts` — 5 cenários de registro contra `reg.exe` falso, incluindo o de regressão "desligar reporta falha quando o Windows mantém a entrada".
+
+### Documentação: report de bugs aponta para o endpoint atual
+
+- O README ainda citava o domínio antigo da API em "Reportar um bug"; passa a `https://bugs.golivebypass.dev/bugs/v1/reports` — a migração dos clientes já tinha sido feita na 2.0.10-beta-2 e este é o rescaldo documental (issue #336).
+
 ## [2.0.10-beta-3] - 2026-09-29
 
 ### Validação e consistência da beta

@@ -6,6 +6,8 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [2.0.10-beta-4] - 2026-10-11
+
 ### Windows: "Iniciar com o Windows" desliga de verdade
 
 - Desligar o toggle apagava só a entrada canônica `GoLiveBypass` da Run key e ainda reportava sucesso sem conferir: entradas legadas do mesmo app sob outros nomes (versões antigas gravavam o nome do app do Electron ou do exe portátil renomeado) sobreviviam e o app continuava subindo no login com o checkbox desligado. Agora o toggle gerencia **todas** as entradas cujo alvo é o exe do GoLiveBypass, apaga todas ao desligar, confere o registro depois e devolve erro honesto (com os nomes das entradas remanescentes) quando o Windows não obedece. Ao ligar, normaliza para uma única entrada canônica. Valores de terceiros e o `GoLiveBypassTor` do standalone não são tocados.
@@ -15,6 +17,33 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 ### Documentação: report de bugs aponta para o endpoint atual
 
 - O README ainda citava o domínio antigo da API em "Reportar um bug"; passa a `https://bugs.golivebypass.dev/bugs/v1/reports` — a migração dos clientes já tinha sido feita na 2.0.10-beta-2 e este é o rescaldo documental (issue #336).
+
+### Windows: UI honesta da rota, restauração manual e órfãos de boot no WireSock
+
+- A UI deixava de exibir "ligado" quando a inspeção não confirmava a sessão: com a rota iniciada e a prontidão refutada o estado vai para `recovery_required`, com o motivo e a ação Restaurar rede (`windowsRouteStatus`). Só apresentação — nenhuma leitura de diagnóstico para ou destrói o túnel (#309). Cobertura: `golive-gui/tests/wiresock-ui-status.test.ts`.
+- "Restaurar rede" passou a executar a limpeza mesmo sem ownership comprovado, porque é ação manual explícita do usuário; boot, watchdog, otimização, troca de rota e desativação em segundo plano continuam fail-closed e não interrompem VPN sem prova de ownership (#306). Cobertura: `golive-gui/tests/plugin-vpn-manual-recovery.test.ts`.
+- No boot, um serviço WireSock próprio sobrevivente sem `owner.lock` (sintoma de quit forçado/reboot) é reconhecido como órfão e parado usando a configuração própria já comprovada na inspeção; falha nessa parada devolve `recovery_required` em modo diagnóstico-only; com `owner.lock` a sessão é re-adotada e gerida normalmente (#281).
+- Leitura vazia transitória logo após a ativação de sessão própria com `owner.lock` passou a ser re-adotada por inspeção fresca, em vez de derrubar o estado do plugin (#331).
+
+### Plugin: onboarding com skip explícito e escolha de modo no assistente
+
+- Fechar o assistente sem concluir grava `onboardingSkipped` de forma explícita e persistente: o onboarding não reabre sozinho, e o painel e o updater continuam acessíveis para configurar depois pela toolbox (#334).
+- Trocar de modo (`proton`/`custom`) no meio do assistente re-renderiza a página de conta com o fluxo escolhido, sem fechar nem perder progresso; a ação "Configurar depois" adia sem concluir onboarding nem liberar ativação automática. Cobertura: `tests/test-plugin-onboarding.mjs` (18 casos) e `tests/test-plugin-owner-concurrency.mjs`.
+
+### Plugin: diagnóstico da verificação rápida separa as etapas da falha
+
+- Quando a verificação rápida descartava as doze finalistas, o helper só devolvia o erro agregado ("nenhum candidato respondeu pelo túnel") — igual para falha de handshake, DNS, TLS ou HTTP. Agora a primeira finalista sondada recebe uma sonda estendida e a etapa que falhou é anexada à mensagem, em vez de virar um descarte silencioso de todas as rotas (#331). Cobertura: `golive-gui/tests/plugin-proton-runtime.test.ts` e `plugin-v2-regression.test.ts`.
+
+### Linux: fechamento Flatpak pelo ID antes do kill -9 e falha acionável
+
+- `stop_discord` passou a encerrar primeiro os Flatpaks em execução (`flatpak kill` pelo application ID exato, incluindo clientes de túnel sem asar como o Serein): a sessão fica registrada no `flatpak ps` e `pkill` por nome no host não a derruba — sem isso a reabertura reativava a instância velha fora do namespace (#327).
+- A escalada final reenvia o TERM pelo gerenciador de instância antes de qualquer `kill -9`, e a falha definitiva nomeia o ID que sobrou com o comando exato (`flatpak kill $id`) em vez de uma mensagem genérica; o log do launcher da última abertura (`START_DISCORD_LOG`) passa a ser citado pela falha da ativação.
+- Cobertura: `tests/test-linux-flatpak-close.sh` (sessão imortal termina em falha acionável, sobrevivente nativo leva `pkill` concreto, nenhum `flatpak kill` quando não há sessão Flatpak) e `golive-gui/tests/linux-preflight.test.ts`. Limite: a escalada sinaliza apenas o PID principal; se processos auxiliares mantiverem a sessão ativa, a confirmação reprova e o rollback segue, sem sinais amplos. Não substitui reprodução nativa em Bazzite/Flatpak.
+
+### Publicação e reconstrução da árvore
+
+- `v2.0.10-beta-4` publicada em `bezumiya/GoLiveBypass` como prerelease (canal beta), 12 assets, canal estável em `v2.0.9`; CI (run 38161289217) verde em windows, linux, release-assets e proton-runtime-assets.
+- Os commits locais originais desta branch foram perdidos do object store; a árvore foi reconstruída dos arquivos do worktree de 2026-10-08 e o reflog preservou o histórico. As notas das correções sem changelog foram registradas após a publicação, com base nos diffs da tag.
 
 ## [2.0.10-beta-3] - 2026-09-29
 

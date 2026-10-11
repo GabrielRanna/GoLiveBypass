@@ -13,6 +13,7 @@ describe('electron-builder.yml', () => {
 
 import * as crypto from 'crypto';
 import * as path from 'path';
+import { execSync } from 'node:child_process';
 
 describe('binários empacotados', () => {
   it('resources/bin confere com SHA256SUMS', () => {
@@ -45,8 +46,11 @@ describe('binários empacotados', () => {
       const pcDir = path.join(appOutDir, 'GoLiveBypass.app', 'Contents', 'Resources', 'extra', 'proton-confgen');
       fs.mkdirSync(pcDir, { recursive: true });
       const bin = path.join(pcDir, 'proton-confgen');
-      // Mach-O universal real, já assinado, no lugar do binário do build.
+      // Os binários de resources/bin vêm dos bottles do Homebrew, sem assinatura:
+      // o app os assina no afterPack. extra/ não: quem entra lá já tem que estar
+      // assinado pelo próprio script de build, como faz build-proton.mjs.
       fs.copyFileSync('resources/bin/wg', bin);
+      execSync(`codesign --force --sign - ${JSON.stringify(bin)}`, { stdio: 'ignore' });
       const before = crypto.createHash('sha256').update(fs.readFileSync(bin)).digest('hex');
       await hook({ appOutDir, packager: { platform: { name: 'mac' }, appInfo: { productFilename: 'GoLiveBypass' } } });
       expect(crypto.createHash('sha256').update(fs.readFileSync(bin)).digest('hex')).toBe(before);

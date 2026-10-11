@@ -19,9 +19,38 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 - O split é por IP, não por processo: outros sites servidos pelos ranges da Cloudflare também passam pelo túnel.
 - Sem notarização (assinatura ad-hoc): Gatekeeper avisa no primeiro uso e a permissão de Gerenciamento de Apps pode pedir renovação a cada versão.
-- Toda release macOS precisa de `make_latest: false` (e assets com o nome esperado) para não virar `/releases/latest` do repositório — o guard automatizado ainda não existe e é gate de release.
-- A injeção de Vencord/FakeNitro hoje acontece automaticamente na ativação: precisa virar opt-in explícito e nunca sobrescrever uma preferência que o usuário desligou.
-- Fila de manutenção: ícone do tray (hoje invisível), SHA-256 na verificação do DMG baixado, remoção da cópia não usada de `golivebypass.js`, proveniência/manifesto do binário `proton-confgen`, timeout e `error` handler no `ProtonFetcher`, e CI para os testes do app.
+- Cobertura de ranges: a voz do Discord também usa `66.22.192.0/18` e IPs do GCP, e as listas comunitárias citam `162.158.0.0/15` e `172.64.0.0/13`. Hoje só `162.159.0.0/16` e `104.16.0.0/12` passam pelo túnel; ampliar exige medir se a voz/Go Live precisa disso e aceitar mais tráfego de outros sites no túnel.
+- `scripts/fetch-wg-binaries.sh` regenera os binários WireGuard a partir de bottles do Homebrew, que hoje só existem para `sonoma` x86_64; para regenerar o universal é preciso compilar `wireguard-go`/`wireguard-tools` da fonte fixada. O script confere o resultado contra `resources/bin/SHA256SUMS` e falha se divergir; para subir uma versão nova é preciso atualizar o pin à mão.
+
+## [macos-0.6.0] - 2026-10-08
+
+Primeira release do cliente macOS no repositório oficial (tag `macos-v0.6.0`).
+
+### Alterado
+
+- **Vencord/FakeNitro é opt-in:** a injeção só acontece com a opção **Extras › Instalar o Vencord com o plugin FakeNitro** ligada (desligada por padrão). O FakeNitro só é ligado se o usuário nunca escolheu nada para ele no Vencord, e o app do Discord só é tocado depois de a permissão de Gerenciamento de Apps estar confirmada (com o Vencord já injetado, o único ajuste é o FakeNitro, que fica num arquivo do próprio usuário).
+- **Releases não viram latest:** `golive-gui-mac/scripts/release-mac.mjs` (usado pelo workflow `release-macos.yml`) cria a release `macos-v<versão>` com `make_latest: false`, confere antes de publicar o DMG (versão, repositório de atualização e `proton-confgen` contra o manifesto) e, depois, os assets, o digest e que `/releases/latest` não mudou — se algo falhar, volta a release para draft, devolve a latest anterior e falha. Drafts são publicados com `acao=publicar-rascunho`, nunca pelo botão do GitHub (que marca latest por padrão).
+- **Atualização conferida:** o updater só oferece release com SHA-256 publicado (digest do GitHub ou sidecar `.sha256`), confere o DMG baixado antes de abrir e baixa só a release que o próprio app encontrou. Tags `macos-vX.Y.Z` são escolhidas pela maior versão, sem depender da ordem da API.
+- **`proton-confgen` da fonte:** compilado de `tools/proton-confgen` para darwin x64/arm64 com as flags determinísticas da GUI, juntado em universal e descrito em `proton-confgen-manifest.json` (commit da fonte, versão do Go e SHA-256). O app recusa rodar um binário que não confere com o manifesto; o binário deixou de ser commitado.
+- **Conf sem keepalive:** perfis sem `PersistentKeepalive` recebem `25`, para o handshake não depender de o Discord estar aberto.
+
+### Corrigido
+
+- Ícone da barra de menu (antes invisível) e ícone próprio do app e do DMG.
+- `ProtonFetcher` não fica mais preso em `busy`: falha ao iniciar o processo resolve na hora e cada etapa tem limite de 3 minutos.
+- Rotas IPv6 de rejeição que sobram de um crash são removidas ao abrir o app sem túnel ativo.
+- Reiniciar o Discord não deixa promessa pendente quando o `spawn` falha.
+- **Abertura não pode mais travar o botão Ativar:** a limpeza de rotas IPv6 do arranque roda dentro da operação do túnel e segura o estado `busy` sem emitir evento; um renderer que carregasse nessa janela ficava com o botão desabilitado até reiniciar o app. A limpeza agora devolve o estado ao terminar.
+- **Guarda de release falha fechada:** erro de API ao ler `/releases/latest` interrompe antes de publicar (antes era lido como "repositório sem latest" e deixava passar), digest ausente na resposta é erro em vez de conferência pulada, e a reversão para draft reporta a própria falha em vez de morrer no meio.
+- **Atualização a partir de build beta:** a comparação de versões do updater quebrava com sufixo de prerelease e nunca oferecia a versão estável seguinte.
+
+### Removido
+
+- Cópia não usada de `golivebypass.js` em `golive-gui-mac/resources/extra/bypass/`.
+
+### Infra
+
+- Workflow `macos-tests.yml`: typecheck, testes e build do `proton-confgen` em PRs e pushes que tocam o cliente macOS.
 
 ## [2.0.6] - 2026-09-18
 

@@ -78,8 +78,10 @@ const fakeNitroMsg = (changed: boolean) =>
 
 /**
  * Injeta o Vencord (se ainda não estiver) e liga o FakeNitro se o usuário
- * nunca mexeu nele. Só é chamado com o opt-in ligado; nada é escrito antes
- * de a permissão estar confirmada.
+ * nunca mexeu nele. Só é chamado com o opt-in ligado; o app do Discord só é
+ * tocado depois de a permissão de Gerenciamento de Apps estar confirmada.
+ * Com o Vencord já injetado não há o que instalar: o único ajuste é o
+ * FakeNitro, que fica num arquivo do próprio usuário.
  */
 export async function injectVencord(opts: {
   home: string; discordApp: string; cacheDir: string; log: (m: string) => void;

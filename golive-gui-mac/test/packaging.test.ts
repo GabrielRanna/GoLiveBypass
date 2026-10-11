@@ -32,4 +32,26 @@ describe('binários empacotados', () => {
   it('não empacota a cópia antiga do golivebypass.js', () => {
     expect(fs.existsSync('resources/extra/bypass')).toBe(false);
   });
+  it('o afterPack preserva o SHA-256 de extra/, que o manifesto trava', async () => {
+    // A regressão do primeiro DMG: o afterPack re-assinava
+    // extra/proton-confgen/proton-confgen, o hash não batia com o manifesto e a
+    // guarda bloqueava a release. Roda só no runner macOS (codesign).
+    if (process.platform !== 'darwin') return;
+    const os = require('node:os');
+    const hook = (await import('../scripts/adhoc-sign.js')).default;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'glb-pack-'));
+    try {
+      const appOutDir = path.join(tmp, 'mac-universal');
+      const pcDir = path.join(appOutDir, 'GoLiveBypass.app', 'Contents', 'Resources', 'extra', 'proton-confgen');
+      fs.mkdirSync(pcDir, { recursive: true });
+      const bin = path.join(pcDir, 'proton-confgen');
+      // Mach-O universal real, já assinado, no lugar do binário do build.
+      fs.copyFileSync('resources/bin/wg', bin);
+      const before = crypto.createHash('sha256').update(fs.readFileSync(bin)).digest('hex');
+      await hook({ appOutDir, packager: { platform: { name: 'mac' }, appInfo: { productFilename: 'GoLiveBypass' } } });
+      expect(crypto.createHash('sha256').update(fs.readFileSync(bin)).digest('hex')).toBe(before);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });

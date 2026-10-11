@@ -461,8 +461,14 @@ app.whenReady().then(async () => {
   if (!reconnect) {
     // Dentro do exclusive: um Ativar no meio receberia 'busy' em vez de ter o túnel novo derrubado
     void exclusive(async () => {
-      if (deriveStateFromRoute(await readDefaultRoute()) === 'active') return;
-      if (await cleanupStaleV6Rejects(binDir)) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
+      try {
+        if (deriveStateFromRoute(await readDefaultRoute()) === 'active') return;
+        if (await cleanupStaleV6Rejects(binDir)) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
+      } finally {
+        // O renderer que carregou no meio da limpeza recebeu busy=true e não tem
+        // como sair: só um tunnel:state devolve o botão Ativar.
+        pushState();
+      }
     }).catch(() => {});
   }
   if (reconnect) {

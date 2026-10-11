@@ -61,5 +61,6 @@ WGQ=$(find "$WORK/wireguard-tools-${CODENAME}" -type f -path "*/bin/wg-quick" | 
 [ -n "$WGQ" ] || { echo "Não achei wg-quick." >&2; exit 1; }
 cp "$WGQ" "$DEST/wg-quick"; chmod +x "$DEST/wg-quick"
 
-(cd "$DEST" && shasum -a 256 wg wg-quick wireguard-go > SHA256SUMS)
-echo "Binários universais em $DEST (SHA256SUMS atualizado)"
+# O pin é o arquivo commitado: o script confere e nunca reescreve sozinho.
+(cd "$DEST" && shasum -a 256 -c SHA256SUMS)
+echo "Binários universais em $DEST (conferidos contra SHA256SUMS commitado)"

@@ -76,13 +76,23 @@ export async function downloadFile(url: string, dest: string): Promise<void> {
   });
 }
 
+/** Maior versão acima da atual. Sem prerelease no `current`: um build beta
+ *  instalaria versões de patch menores que a sua. Com: a linha estável passa. */
 function semverGt(a: string, b: string): boolean {
-  const parse = (v: string) => v.replace(/^v/, '').split('.').map(Number);
-  const [am, an, ap] = parse(a);
-  const [bm, bn, bp] = parse(b);
+  const parse = (v: string): [number, number, number, string | null] => {
+    const [core, pre] = v.replace(/^v/, '').split('-', 2);
+    const [maj = 0, min = 0, pat = 0] = core.split('.').map(Number);
+    return [maj, min, pat, pre ?? null];
+  };
+  const [am, an, ap, aPre] = parse(a);
+  const [bm, bn, bp, bPre] = parse(b);
   if (am !== bm) return am > bm;
   if (an !== bn) return an > bn;
-  return ap > bp;
+  if (ap !== bp) return ap > bp;
+  if (aPre === bPre) return false;
+  if (aPre === null) return true;
+  if (bPre === null) return false;
+  return aPre > bPre;
 }
 
 // Só o DMG deste app; o GoLiveBypass.dmg das releases upstream é outro produto

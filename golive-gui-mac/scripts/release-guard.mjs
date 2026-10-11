@@ -68,6 +68,21 @@ export function postflightErrors({ version, release, latestTagBefore, latestTagA
   }
   const dmg = (release.assets ?? []).find(a => a.name === dmgName(version));
   const digest = /^sha256:([0-9a-f]{64})$/i.exec(dmg?.digest ?? '')?.[1]?.toLowerCase();
-  if (digest && digest !== dmgSha256) errors.push('o digest do DMG publicado não confere com o arquivo local');
+  if (!digest) errors.push('a API não devolveu o digest sha256 do DMG publicado; não dá para conferir');
+  else if (digest !== dmgSha256) errors.push('o digest do DMG publicado não confere com o arquivo local');
   return errors;
+}
+
+/**
+ * Tag de /releases/latest, ou null quando o repositório não tem nenhuma.
+ * Qualquer outro erro da API não é ausência: um rate limit lido como "nenhuma"
+ * deixaria a release macOS passar sem a conferência que este arquivo existe
+ * para fazer.
+ */
+export function readLatestTag(run, repo) {
+  const r = run(['api', `repos/${repo}/releases/latest`, '--jq', '.tag_name']);
+  if (r?.status === 0) return String(r.stdout ?? '').trim() || null;
+  const stderr = String(r?.stderr ?? '');
+  if (/HTTP 404|Not Found/i.test(stderr)) return null;
+  throw new Error(`não consegui ler /releases/latest de ${repo}: ${stderr.trim() || `gh saiu ${r?.status}`}`);
 }

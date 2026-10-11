@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'fs';
 // @ts-expect-error módulo .mjs sem tipos
-import { createPayload, publishPayload, preflightErrors, postflightErrors, releaseTag, expectedAssets } from '../scripts/release-guard.mjs';
+import { createPayload, publishPayload, preflightErrors, postflightErrors, readLatestTag, releaseTag, expectedAssets } from '../scripts/release-guard.mjs';
 
 const ok = { version: '0.6.0', updateRepo: undefined, protonSha: 'a'.repeat(64), protonManifestSha: 'a'.repeat(64) };
 const files = Object.fromEntries(expectedAssets('0.6.0').map((n: string) => [n, `/x/${n}`]));
@@ -17,11 +17,23 @@ describe('release macOS nunca vira latest', () => {
     expect(releaseTag('0.6.0')).toBe('macos-v0.6.0');
   });
 
+  const sha = 'a'.repeat(64);
+  const releaseOk = {
+    tag_name: 'macos-v0.6.0',
+    prerelease: false,
+    assets: expectedAssets('0.6.0').map((name: string) => (name.endsWith('.dmg') ? { name, digest: `sha256:${sha}` } : { name })),
+  };
+
   it('falha se a release virou latest ou mudou a latest', () => {
-    const release = { tag_name: 'macos-v0.6.0', prerelease: false, assets: expectedAssets('0.6.0').map((name: string) => ({ name })) };
-    expect(postflightErrors({ version: '0.6.0', release, latestTagBefore: 'v2.0.9', latestTagAfter: 'v2.0.9', dmgSha256: 'x' })).toEqual([]);
-    expect(postflightErrors({ version: '0.6.0', release, latestTagBefore: 'v2.0.9', latestTagAfter: 'macos-v0.6.0', dmgSha256: 'x' }))
+    expect(postflightErrors({ version: '0.6.0', release: releaseOk, latestTagBefore: 'v2.0.9', latestTagAfter: 'v2.0.9', dmgSha256: sha })).toEqual([]);
+    expect(postflightErrors({ version: '0.6.0', release: releaseOk, latestTagBefore: 'v2.0.9', latestTagAfter: 'macos-v0.6.0', dmgSha256: sha }))
       .toContain('macos-v0.6.0 virou /releases/latest');
+  });
+
+  it('digest ausente é erro: sem hash não há como conferir o DMG publicado', () => {
+    const semDigest = { tag_name: 'macos-v0.6.0', prerelease: false, assets: expectedAssets('0.6.0').map((name: string) => ({ name })) };
+    expect(postflightErrors({ version: '0.6.0', release: semDigest, latestTagBefore: 'v2.0.9', latestTagAfter: 'v2.0.9', dmgSha256: sha }))
+      .toContain('a API não devolveu o digest sha256 do DMG publicado; não dá para conferir');
   });
 
   it('falha com asset faltando, sobrando ou digest diferente', () => {
@@ -33,6 +45,15 @@ describe('release macOS nunca vira latest', () => {
       { name: 'GoLiveBypass-macos-0.6.0-universal.dmg.sha256' },
     ] };
     expect(postflightErrors({ ...base, release: wrong })).toContain('o digest do DMG publicado não confere com o arquivo local');
+  });
+
+  it('latest ilegível por erro de API não pode virar "nenhuma"', () => {
+    const repo = 'alguem/GoLiveBypass';
+    const gh = (r: object) => () => r;
+    expect(readLatestTag(gh({ status: 0, stdout: 'v2.0.9\n', stderr: '' }), repo)).toBe('v2.0.9');
+    expect(readLatestTag(gh({ status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }), repo)).toBeNull();
+    expect(() => readLatestTag(gh({ status: 1, stdout: '', stderr: 'API rate limit exceeded for user' }), repo))
+      .toThrow(/não consegui ler \/releases\/latest/);
   });
 });
 

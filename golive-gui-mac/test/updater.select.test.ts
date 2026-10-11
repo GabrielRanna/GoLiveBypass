@@ -18,6 +18,10 @@ describe('pickRelease', () => {
   it('nada quando já está na última', () => {
     expect(pickRelease(releases, '0.7.0', 'arm64')).toBeNull();
   });
+  it('build beta recebe a versão estável seguinte', () => {
+    expect(pickRelease(releases, '0.7.0-beta.1', 'arm64')?.version).toBe('0.7.0');
+    expect(pickRelease(releases, '0.6.9-beta.1', 'arm64')?.version).toBe('0.7.0');
+  });
   it('aceita tags vX.Y.Z de forks', () => {
     expect(pickRelease([{ tag_name: 'v0.6.0', assets: [dmg('0.6.0')] }], '0.5.1')?.version).toBe('0.6.0');
   });

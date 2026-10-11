@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  createPayload, dmgName, postflightErrors, preflightErrors, publishPayload, releaseTag,
+  createPayload, dmgName, postflightErrors, preflightErrors, publishPayload, readLatestTag, releaseTag,
 } from './release-guard.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -59,11 +59,6 @@ function inspectDmg(dmg) {
   }
 }
 
-async function latestTag(repo) {
-  const r = spawnSync('gh', ['api', `repos/${repo}/releases/latest`, '--jq', '.tag_name'], { encoding: 'utf8' });
-  return r.status === 0 ? r.stdout.trim() || null : null;
-}
-
 /** Release com a tag, drafts incluídos (GET /releases/tags/{tag} não devolve drafts). */
 function findRelease(repo, tag) {
   const ids = gh(['api', '--paginate', `repos/${repo}/releases?per_page=100`, '--jq', `.[] | select(.tag_name == "${tag}") | .id`]);
@@ -76,18 +71,30 @@ const patch = (repo, id, body) => gh(['api', '-X', 'PATCH', `repos/${repo}/relea
 
 /** Publica o draft e confere tudo; se algo falhar, volta para draft e devolve a latest. */
 async function publishAndVerify(repo, version, draft, dmgSha) {
-  const latestBefore = await latestTag(repo);
+  const ghJson = args => spawnSync('gh', args, { encoding: 'utf8' });
+  // Antes de publicar: sem conseguir ler a latest não há como provar o invariante, então nem publica.
+  const latestBefore = readLatestTag(ghJson, repo);
   patch(repo, draft.id, publishPayload());
   const release = JSON.parse(gh(['api', `repos/${repo}/releases/${draft.id}`]));
-  const latestAfter = await latestTag(repo);
-  const post = postflightErrors({ version, release, latestTagBefore: latestBefore, latestTagAfter: latestAfter, dmgSha256: dmgSha });
+  const post = [];
+  let latestAfter = null;
+  try {
+    latestAfter = readLatestTag(ghJson, repo);
+    post.push(...postflightErrors({ version, release, latestTagBefore: latestBefore, latestTagAfter: latestAfter, dmgSha256: dmgSha }));
+  } catch (error) {
+    post.push(String(error?.message ?? error));
+  }
   if (!post.length) return { release, latestAfter };
-  patch(repo, draft.id, { draft: true, make_latest: 'false' });
-  post.push(`${releaseTag(version)} voltou para draft`);
-  if (latestBefore && latestAfter !== latestBefore) {
-    const prev = JSON.parse(gh(['api', `repos/${repo}/releases/tags/${latestBefore}`]));
-    patch(repo, prev.id, { make_latest: 'true' });
-    post.push(`latest devolvida para ${latestBefore}`);
+  try {
+    patch(repo, draft.id, { draft: true, make_latest: 'false' });
+    post.push(`${releaseTag(version)} voltou para draft`);
+    if (latestBefore && latestAfter !== latestBefore) {
+      const prev = JSON.parse(gh(['api', `repos/${repo}/releases/tags/${latestBefore}`]));
+      patch(repo, prev.id, { make_latest: 'true' });
+      post.push(`latest devolvida para ${latestBefore}`);
+    }
+  } catch (error) {
+    post.push(`FALHA ao reverter a publicação: ${String(error?.message ?? error)}. Confira o estado da ${releaseTag(version)} no repositório.`);
   }
   fail(post);
 }

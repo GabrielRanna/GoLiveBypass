@@ -743,6 +743,10 @@ SUDO_ASKPASS_RESULT_FILE=""
 SUDO_AUTH_READY=0
 SUDO_USE_CACHED_PASS=0
 SUDO_PROMPT_FALLBACK_PKEXEC=0
+# Tentativas de senha incorreta antes de desistir. A politica padrao do sudo
+# tambem insiste tres vezes; aqui o limite vale para a janela da GUI.
+GOLIVE_SUDO_PASSWORD_ATTEMPTS="${GOLIVE_SUDO_PASSWORD_ATTEMPTS:-3}"
+case "${GOLIVE_SUDO_PASSWORD_ATTEMPTS:-}" in ''|*[!0-9]*|0) GOLIVE_SUDO_PASSWORD_ATTEMPTS=3 ;; esac
 SUDO_PROMPT_OUTCOME="not_attempted"
 ELEVATION_PROVIDER="none"
 ELEVATION_RESULT="not_attempted"
@@ -796,7 +800,7 @@ elevation_event() {
     shift || true
     for detail in "$@"; do
         case "$detail" in
-            phase=dialog|phase=polkit|phase=password|phase=tty|phase=pre_activation|reason=provider_missing|reason=temporary_file|code=0|code=1|code=2|code=126|code=127|code=other|stderr=present|stderr=empty)
+            phase=dialog|phase=polkit|phase=password|phase=tty|phase=pre_activation|reason=provider_missing|reason=temporary_file|reason=incorrect_password|reason=not_in_sudoers|reason=tty_required|reason=account_blocked|reason=pam_error|reason=other|code=0|code=1|code=2|code=126|code=127|code=other|stderr=present|stderr=empty)
                 printf ' %s' "$detail" >&2
                 ;;
         esac
@@ -816,10 +820,13 @@ elevation_code_detail() {
 cleanup_sudo_pass() {
     cleanup_wireguard_temp
     rollback_activation
-    if [ -n "$SUDO_PASS_FILE" ] && [ -f "$SUDO_PASS_FILE" ]; then
-        rm -f "$SUDO_PASS_FILE" 2>/dev/null || true
+    # `${VAR:-}` em vez de `$VAR`: o askpass faz `unset` dessas variaveis e esta
+    # limpeza roda no trap de saida; sob `set -eu` a referencia direta quebraria
+    # o script no exato momento de encerrar.
+    if [ -n "${SUDO_PASS_FILE:-}" ] && [ -f "${SUDO_PASS_FILE:-}" ]; then
+        rm -f "${SUDO_PASS_FILE:-}" 2>/dev/null || true
     fi
-    for askpass_file in "$SUDO_ASKPASS_HELPER" "$SUDO_ASKPASS_EVENT_FILE" "$SUDO_ASKPASS_RESULT_FILE"; do
+    for askpass_file in "${SUDO_ASKPASS_HELPER:-}" "${SUDO_ASKPASS_EVENT_FILE:-}" "${SUDO_ASKPASS_RESULT_FILE:-}"; do
         if [ -n "$askpass_file" ] && [ -f "$askpass_file" ]; then
             rm -f "$askpass_file" 2>/dev/null || true
         fi
@@ -1019,7 +1026,7 @@ sudo_pass_get() {
 # O askpass do sudo e executavel somente pelo usuario (0700: owner-only, pois
 # o sudo precisa executar o helper). A senha continua no arquivo separado 0600.
 sudo_authenticate_askpass() {
-    local askpass_status askpass_stderr askpass_result line
+    local askpass_status askpass_stderr askpass_result askpass_reason line
     local askpass_event_file askpass_result_file
     ELEVATION_PROVIDER="askpass"
     ELEVATION_RESULT="requested"
@@ -1168,13 +1175,23 @@ ASKPASS_HELPER
         elevation_event "prompt.failed" "reason=temporary_file"
         return 1
     }
+    # `askpass_status` precisa de valor inicial: sob `set -eu`, a atribuicao
+    # `askpass_status=$?` depois de um subshell que falha derrubaria o shell.
+    askpass_status=0
     (
         unset LD_LIBRARY_PATH LD_PRELOAD
         SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" sudo -A -k -v >/dev/null 2>"$askpass_stderr"
-    )
-    askpass_status=$?
+    ) || askpass_status=$?
+    # A primeira linha do stderr do sudo so serve para classificar a causa; ela
+    # nunca volta para o log nem para a interface.
+    askpass_reason="other"
+    if [ -f "$askpass_stderr" ] && [ -s "$askpass_stderr" ]; then
+        IFS= read -r askpass_reason < "$askpass_stderr" || true
+        askpass_reason="$(sudo_classify_failure "$askpass_reason")"
+    fi
     unset SUDO_ASKPASS_PASS_FILE SUDO_ASKPASS_EVENT_FILE SUDO_ASKPASS_RESULT_FILE SUDO_ASKPASS_HELPER
     rm -f "$askpass_stderr"
+    askpass_stderr=""
     if [ -f "$askpass_event_file" ]; then
         while IFS= read -r line || [ -n "$line" ]; do
             printf '%s\n' "$line" >&2
@@ -1200,8 +1217,78 @@ ASKPASS_HELPER
         *) ELEVATION_RESULT="failed"; ELEVATION_INPUT_STATE="not_applicable" ;;
     esac
     cleanup_sudo_pass
+    # O motivo identificado no askpass segue a mesma whitelist do caminho -S: sem
+    # isso a falha de PAM apareceria como "senha recusada" e o usuario redigitaria
+    # a senha correta sem sucesso (relato no NixOS). O askpass e o ultimo recurso
+    # da cadeia (sem pkexec e sem janela do zenity/kdialog): classificar e informar
+    # o motivo basta, repetir o prompt aqui so alongaria uma sessao ja degradada.
+    # Dialogo cancelado, vazio ou com falha tecnica nao tem motivo de sudo para
+    # classificar: a linha e a mensagem anteriores se mantêm.
+    if [ "$askpass_result" = "nonempty" ]; then
+        elevation_event "sudo.validation" "$(elevation_code_detail "$askpass_status")" "phase=password" "reason=$askpass_reason"
+        case "$askpass_reason" in
+            incorrect_password)
+                printf '%s\n' "Falha: a senha do sudo foi recusada. A ativacao foi cancelada sem repetir o pedido." >&2
+                ;;
+            not_in_sudoers)
+                printf '%s\n' "Falha: o usuario $(id -un) nao tem permissao de sudo nesta maquina. Adicione o usuario ao grupo wheel (ou ao sudoers) e tente de novo; a ativacao foi cancelada." >&2
+                ;;
+            tty_required)
+                printf '%s\n' 'Falha: a politica de sudo desta maquina exige um terminal (Defaults requiretty), que a interface grafica nao tem. Remova o requiretty do sudoers ou execute a ativacao por um terminal; a ativacao foi cancelada.' >&2
+                ;;
+            account_blocked)
+                printf '%s\n' 'Falha: o sudo recusou a autenticacao desta conta (senha expirada, conta bloqueada ou troca de senha obrigatoria). Resolva o acesso com sudo -v em um terminal e tente de novo; a ativacao foi cancelada.' >&2
+                ;;
+            pam_error)
+                printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuracao de PAM ausente — comum em instalacoes NixOS/enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
+                ;;
+            *)
+                printf '%s\n' 'Falha: o sudo recusou a autorizacao por um motivo nao identificado. A ativacao foi cancelada sem repetir o pedido; rode "sudo -v" em um terminal para ver o motivo real exibido pelo sudo.' >&2
+                ;;
+        esac
+        return 1
+    fi
     elevation_event "sudo.validation" "$(elevation_code_detail "$askpass_status")" "phase=password"
     return 1
+}
+
+
+# A mensagem do sudo e lida somente para classificar a causa da recusa; ela nunca
+# volta para o log nem para a interface. O retorno e sempre um motivo conhecido da
+# whitelist abaixo. Os padroes reproduzem as saidas reais do sudo 1.9, conferidas
+# em container (pt_BR e en, porque o texto segue o locale da maquina):
+#   sem permissao .... "Sorry, user X may not run sudo on HOST." /
+#                       "X is not in the sudoers file." /
+#                       "Sinto muito, usuário X não pode executar sudo em HOST." /
+#                       "X não está no arquivo sudoers."
+#   falta de tty ..... "sorry, you must have a tty to run sudo" / "no tty present" /
+#                       "sinto mesmo, você deve ter um tty" / "nenhum tty"
+#   conta/senha ...... "Account or password is expired, reset your password" /
+#                       "your account has expired" / "Conta ou senha expirou"
+#   senha incorreta .. "Sorry, try again." / "N incorrect password attempt(s)" /
+#                       "Authentication failure" / "Sinto mesmo, tente novamente." /
+#                       "N tentativa de senha incorreta" / "falha de autenticação"
+#   PAM .............. "PAM account management error", "a password is required",
+#                       "no password was provided" (e equivalentes em pt) — e o
+#                       que sobra quando /etc/pam.d/sudo nao consegue autenticar,
+#                       como no NixOS enxuto; a senha digitada nunca chega a ser testada.
+# A ordem importa: "PAM: Authentication failure" e senha incorreta, nao falha de
+# configuracao do PAM. Os padroes evitam os caracteres acentuados das mensagens
+# (cada idioma/localidade acentua de um jeito) e prendem o nucleo ASCII da frase.
+sudo_classify_failure() {
+    case "${1:-}" in
+        *"may not run sudo"*|*"executar sudo"*|*"is not in the sudoers file"*|*"not in the sudoers file"*|*"no arquivo sudoers"*|*sudoers*)
+            printf '%s\n' 'not_in_sudoers' ;;
+        *"you must have a tty"*|*"deve ter um tty"*|*"no tty present"*|*"no tty"*|*"terminal is required"*)
+            printf '%s\n' 'tty_required' ;;
+        *expir*|*"redefina sua senha"*|*"reset your password"*|*"altera"*"senha"*|*"troca de senha"*)
+            printf '%s\n' 'account_blocked' ;;
+        *"try again"*|*"tente novamente"*|*incorrect*|*incorret*|*"Authentication failure"*|*"falha de autentica"*)
+            printf '%s\n' 'incorrect_password' ;;
+        *"PAM account"*|*"gerenciamento de conta PAM"*|*"a password is required"*|*"uma senha"*"necess"*|*"no password was provided"*|*"nenhuma senha foi fornecida"*|*"unable to read password"*|*"nao foi possivel ler a senha"*|*"cannot retrieve authentication info"*|*"recuperar as informacoes de autenticacao"*|*"recuperar as informa"*)
+            printf '%s\n' 'pam_error' ;;
+        *) printf '%s\n' 'other' ;;
+    esac
 }
 
 # Valida a senha uma unica vez na janela grafica. Algumas politicas de sudo usam
@@ -1209,7 +1296,7 @@ ASKPASS_HELPER
 # `sudo -n comando` ainda a exige. Nesses casos o elevate reenvia a mesma senha
 # temporaria para cada comando, sem abrir uma nova janela.
 sudo_authenticate_once() {
-    local sudo_status
+    local sudo_status sudo_reason sudo_stderr password_attempt
     [ "$(id -u)" -eq 0 ] && return 0
     [ "$SUDO_AUTH_READY" -eq 1 ] && return 0
 
@@ -1230,30 +1317,82 @@ sudo_authenticate_once() {
     fi
 
     if have sudo && [ "${GOLIVE_GUI:-0}" = "1" ]; then
-        if ! sudo_pass_get; then
-            # Quando o provedor grafico falhou, elevate ainda pode tentar
-            # pkexec. Nao anuncie cancelamento antes desse segundo caminho;
-            # para cancelamento, senha vazia ou falha sem fallback, preserve a
-            # mensagem sanitizada deste fluxo.
-            if [ "${SUDO_PROMPT_FALLBACK_PKEXEC:-0}" -ne 1 ]; then
-                printf '%s\n' "Falha: nao foi possivel autorizar o sudo (resultado ${ELEVATION_RESULT}). A ativacao foi cancelada sem alterar o sistema." >&2
+        # Senha incorreta merece nova tentativa (erro de digitacao e a causa mais
+        # comum); falta de permissao, conta bloqueada ou politica de tty nao mudam
+        # com outra tentativa e param na primeira recusa.
+        password_attempt=0
+        while :; do
+            if ! sudo_pass_get; then
+                # Quando o provedor grafico falhou, elevate ainda pode tentar
+                # pkexec. Nao anuncie cancelamento antes desse segundo caminho;
+                # para cancelamento, senha vazia ou falha sem fallback, preserve a
+                # mensagem sanitizada deste fluxo.
+                if [ "${SUDO_PROMPT_FALLBACK_PKEXEC:-0}" -ne 1 ]; then
+                    printf '%s\n' "Falha: nao foi possivel autorizar o sudo (resultado ${ELEVATION_RESULT}). A ativacao foi cancelada sem alterar o sistema." >&2
+                fi
+                return 1
             fi
-            return 1
-        fi
-        if sudo -S -k -v < "$SUDO_PASS_FILE" >/dev/null 2>&1; then
-            ELEVATION_RESULT="accepted"
-            elevation_event "sudo.validation" "$(elevation_code_detail 0)" "phase=password"
-            SUDO_AUTH_READY=1
-            SUDO_USE_CACHED_PASS=1
-            return 0
-        else
+            sudo_stderr="$(sudo -S -k -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)"
             sudo_status=$?
-        fi
-        cleanup_sudo_pass
-        ELEVATION_RESULT="rejected"
-        elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password"
-        printf '%s\n' 'Falha: a senha do sudo foi recusada. A ativacao foi cancelada sem repetir o pedido.' >&2
-        return 1
+            if [ "$sudo_status" -eq 0 ]; then
+                sudo_stderr=""
+                ELEVATION_RESULT="accepted"
+                elevation_event "sudo.validation" "$(elevation_code_detail 0)" "phase=password"
+                SUDO_AUTH_READY=1
+                SUDO_USE_CACHED_PASS=1
+                return 0
+            fi
+            sudo_reason="$(sudo_classify_failure "$sudo_stderr")"
+            sudo_stderr=""
+            cleanup_sudo_pass
+            case "$sudo_reason" in
+                incorrect_password)
+                    ELEVATION_RESULT="rejected"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=incorrect_password"
+                    password_attempt=$((password_attempt + 1))
+                    if [ "$password_attempt" -lt "$GOLIVE_SUDO_PASSWORD_ATTEMPTS" ]; then
+                        printf '%s\n' "Falha: senha do sudo incorreta. Informe a senha novamente (tentativa ${password_attempt} de ${GOLIVE_SUDO_PASSWORD_ATTEMPTS})." >&2
+                        continue
+                    fi
+                    printf '%s\n' "Falha: a senha do sudo foi recusada em ${GOLIVE_SUDO_PASSWORD_ATTEMPTS} tentativas. A ativacao foi cancelada sem repetir o pedido." >&2
+                    return 1
+                    ;;
+                not_in_sudoers)
+                    ELEVATION_RESULT="unavailable"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=not_in_sudoers"
+                    printf '%s\n' "Falha: o usuario $(id -un) nao tem permissao de sudo nesta maquina. Adicione o usuario ao grupo wheel (ou ao sudoers) e tente de novo; a ativacao foi cancelada." >&2
+                    return 1
+                    ;;
+                tty_required)
+                    ELEVATION_RESULT="unavailable"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=tty_required"
+                    printf '%s\n' 'Falha: a politica de sudo desta maquina exige um terminal (Defaults requiretty), que a interface grafica nao tem. Remova o requiretty do sudoers ou execute a ativacao por um terminal; a ativacao foi cancelada.' >&2
+                    return 1
+                    ;;
+                account_blocked)
+                    ELEVATION_RESULT="unavailable"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=account_blocked"
+                    printf '%s\n' 'Falha: o sudo recusou a autenticacao desta conta (senha expirada, conta bloqueada ou troca de senha obrigatoria). Resolva o acesso com sudo -v em um terminal e tente de novo; a ativacao foi cancelada.' >&2
+                    return 1
+                    ;;
+                pam_error)
+                    # Caminho comum em NixOS enxuto: o PAM do sistema nao resolve a
+                    # conta (modulo/servico incompleto) e o sudo recusa antes de
+                    # comparar a senha. A mensagem precisa dizer que a senha nao
+                    # estava em questao, senao o usuario a redigita sem sucesso.
+                    ELEVATION_RESULT="unavailable"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=pam_error"
+                    printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuracao de PAM ausente — comum em instalacoes NixOS/enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
+                    return 1
+                    ;;
+                *)
+                    ELEVATION_RESULT="rejected"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=other"
+                    printf '%s\n' 'Falha: o sudo recusou a autorizacao por um motivo nao identificado. A ativacao foi cancelada sem repetir o pedido; rode "sudo -v" em um terminal para ver o motivo real exibido pelo sudo.' >&2
+                    return 1
+                    ;;
+            esac
+        done
     fi
 
     if have sudo && [ -t 0 ]; then

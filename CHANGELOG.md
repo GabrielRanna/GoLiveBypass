@@ -6,6 +6,12 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [2.0.10-beta-6] - 2026-10-12
+
+### Linux: senha do sudo recusada re-pergunta e explica a causa (#345)
+
+## [2.0.10-beta-5] - 2026-10-11
+
 ### Linux: Discord do nixpkgs (NixOS/nix) e dos modos paralelos passam a ser descobertos
 
 - O scan Linux delega a detecção ao `discord_dirs` do standalone, que só conhecia o bootstrap em `~/.config`, caminhos nativos (`/usr/share`, `/opt`, `~/.local/share`), snap e flatpak. O pacote do nixpkgs não copia nada nesses lugares: o app vive no `/nix/store` e só aparece pelos perfis do Nix. Com Discord instalado por `environment.systemPackages`, `nix profile` ou home-manager, a GUI reportava "Discord não encontrado".
@@ -17,6 +23,7 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Paralelos provados no mesmo container com pacotes reais (`vesktop`, `equibop`, `legcord` do cache, Electron 43 do store): `--status --json` listou os três instalados e, com os três rodando ao mesmo tempo sob Xvfb, reportou `running` e `pid` corretos para cada um, `discord_running` positivo e `select_launch_target` preservando o cliente já em execução. `kill_parallel_by_path` com apenas o vesktop no `FOUND` encerrou o vesktop e deixou equibop e legcord intactos — a identidade pelo path do store não cruza clientes. Cada cliente exigiu FontConfig no container; sem fontes, vesktop e equibop morrem por `SkFontMgr_FontConfigInterface Not implemented`, o que é ambiente, não do produto.
 - Requisito de runtime observado no container: a identidade de processo usa `awk` (captura em `/proc` e conferência do cmdline). Container do Nix mínimo sem `gawk` reportava `running:"nao"` com o Discord rodando — a descoberta acertava, o status degradava em silêncio. Em NixOS enxuto, instale `gawk`; o preflight não declara `awk` e por isso a falta não vira mensagem acionável.
 - Ciclo completo (netns `discord-vpn`, WireGuard, relançamento do Discord dentro do namespace e encerramento pelo path do store) **não** foi exercitado no container: a elevação `sudo`/`pkexec` e `CAP_SYS_ADMIN` efetiva para uid não-root não se traduzem sem hacks (PAM ausente na imagem; caps ambient não sobrevivem ao `execve`). Evidência recolhida até o alvo de lançamento: `target_can_launch` com o `resources` do nix encontrou o binário em `<pkg>/opt/Discord` e `select_launch_target` preferiu a instalação nix; o subsistema de namespace tem E2E próprio no host.
+- **Elevação Linux (GUI):** a senha do sudo recusada voltava a cancelar a ativação sem nova tentativa e sem distinguir a causa. Agora a mensagem do `sudo` é lida apenas para classificar (`sudo_classify_failure`) e nunca é registrada: senha incorreta re-pergunta até 3 vezes; usuário sem sudoers, política `requiretty`, conta expirada/bloqueada e falha de PAM param na primeira recusa com mensagem própria e acionável. O caminho `sudo -A` (askpass, último recurso sem zenity/kdialog/pkexec) classifica o mesmo motivo e informa, sem re-perguntar. `cleanup_sudo_pass` passou a usar `${VAR:-}` porque o askpass faz `unset` dessas variáveis e a limpeza roda no trap de saída sob `set -eu`. O motivo entra no evento `sudo.validation` (`reason=incorrect_password|not_in_sudoers|tty_required|account_blocked|pam_error|other`), campo final opcional na whitelist do parser da GUI. Relacionado à issue #345.
 
 ## [2.0.10-beta-4] - 2026-10-11
 

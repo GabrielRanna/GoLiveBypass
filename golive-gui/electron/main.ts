@@ -2691,7 +2691,7 @@ type LinuxElevationResult = "not_attempted" | "requested" | "accepted" | "reject
 type LinuxElevationDetails = {
   input?: "nonempty" | "empty" | "unknown" | "not_applicable";
   code?: "0" | "1" | "2" | "126" | "127" | "other";
-  reason?: "provider_missing" | "temporary_file";
+  reason?: "provider_missing" | "temporary_file" | "incorrect_password" | "not_in_sudoers" | "tty_required" | "account_blocked" | "pam_error" | "other";
   phase?: "dialog" | "polkit" | "password" | "tty" | "pre_activation";
   stderr?: "present" | "empty";
 };
@@ -2730,7 +2730,7 @@ const LINUX_ELEVATION_DETAIL_RULES: Record<LinuxElevationEventName, readonly (ke
   "prompt.unavailable": ["input", "reason"],
   "prompt.failed": ["input", "reason"],
   "sudo.cached": ["phase"],
-  "sudo.validation": ["code", "phase"],
+  "sudo.validation": ["code", "phase", "reason"],
   "sudo.credential_store": ["reason", "phase"],
   "pkexec.invoked": ["phase"],
   "pkexec.result": ["code", "phase"],
@@ -2742,7 +2742,7 @@ const LINUX_ELEVATION_DETAIL_VALUES: {
 } = {
   input: ["nonempty", "empty", "unknown", "not_applicable"],
   code: ["0", "1", "2", "126", "127", "other"],
-  reason: ["provider_missing", "temporary_file"],
+  reason: ["provider_missing", "temporary_file", "incorrect_password", "not_in_sudoers", "tty_required", "account_blocked", "pam_error", "other"],
   phase: ["dialog", "polkit", "password", "tty", "pre_activation"],
   stderr: ["present", "empty"],
 };
@@ -2778,7 +2778,13 @@ function parseLinuxElevationLine(line: string): LinuxElevationRecord | null {
   }
 
   const expected = LINUX_ELEVATION_DETAIL_RULES[event];
-  if (detailKeys.length !== expected.length || expected.some((key, index) => details[key] === undefined || detailKeys[index] !== key)) return null;
+  // `reason` e opcional somente como ultimo campo de sudo.validation: as
+  // linhas antigas (askpass/tty, sem motivo) continuam validas e a ordem dos
+  // demais campos segue estrita.
+  const reasonOptional = event === "sudo.validation" && expected[expected.length - 1] === "reason";
+  if (detailKeys.length !== expected.length
+    && !(reasonOptional && detailKeys.length === expected.length - 1)) return null;
+  if (detailKeys.some((key, index) => key !== expected[index])) return null;
   return { event, provider, result, details };
 }
 

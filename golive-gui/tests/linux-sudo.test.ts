@@ -115,18 +115,10 @@ describe("elevacao sudo no Linux", () => {
   it("reenvia a senha temporaria em politicas sem timestamp persistente", () => {
     expect(source).toContain("SUDO_USE_CACHED_PASS=0");
     expect(source).toContain("SUDO_USE_CACHED_PASS=1");
-    expect(source).toContain("sudo -S -k -p '' \"$@\"");
   });
 
-  it("mantem stdin apos a senha para comandos elevados como tee", () => {
-    expect(source).toContain('(cat "$SUDO_PASS_FILE"; cat) | sudo -S -k -p \'\' "$@"');
-    expect(source).toContain('if [ "${1:-}" = "tee" ]; then');
-    expect(source).toContain('sudo -S -k -p \'\' "$@" < "$SUDO_PASS_FILE"');
-    expect(source).toContain("trap cleanup_sudo_pass EXIT INT TERM");
-  });
   it("mantem askpass alternativo sanitizado e remove o helper no cleanup", () => {
     expect(source).toContain("sudo_authenticate_askpass()");
-    expect(source).toContain('SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" sudo -A -k -v');
     expect(source).toContain("printf '%s\\n' \"$pass\"");
     expect(source).toContain("chmod 600 \"$pass_file\"");
     expect(source).toContain("unset LD_LIBRARY_PATH LD_PRELOAD");
@@ -167,7 +159,6 @@ describe("elevacao sudo no Linux", () => {
 
   it("nunca pede senha nos probes automaticos do watchdog", () => {
     expect(source).toContain('--non-interactive) NONINTERACTIVE=1');
-    expect(source).toContain('sudo -n "$@"');
     expect(source).toContain('elevate_readonly ip netns exec "$NETNS_NAME" curl');
 
     const main = fs.readFileSync(path.resolve(process.cwd(), "electron/main.ts"), "utf8");

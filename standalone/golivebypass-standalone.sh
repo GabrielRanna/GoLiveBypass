@@ -730,9 +730,60 @@ resolve_binary() {
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# O sudo exige um passo que os outros binarios nao exigem. No NixOS o pacote entra no
+# environment.systemPackages (/run/current-system/sw/bin/sudo, alcancado tambem por
+# /usr/bin/sudo) SEM o bit setuid, e quem eleva de verdade e o wrapper de
+# /run/wrappers/bin/sudo (security.wrappers). Somente o init do shell poem
+# /run/wrappers/bin na frente do PATH: uma GUI aberta por .desktop ou AppImage nao passa
+# por esse init, resolve o sudo sem setuid e toda operacao elevada morre com
+# "must be owned by uid 0 and have the setuid bit set" antes de ler a senha. O teste
+# `-u` e o do bit setuid; enquanto o PATH oferecer um sudo que eleva, o resultado e o
+# mesmo de antes.
+sudo_bin_resolve() {
+    local _glb_sudo="" _glb_dir="" _glb_ifs_saved=""
+    _glb_sudo="$(command -v sudo 2>/dev/null || true)"
+    if [ -n "$_glb_sudo" ] && [ -u "$_glb_sudo" ]; then
+        printf '%s
+' "$_glb_sudo"
+        return 0
+    fi
+    # PATH sem setuid: o resto do PATH antes ...
+    _glb_ifs_saved="$IFS"
+    IFS=":"
+    for _glb_dir in ${PATH:-}; do
+        IFS="$_glb_ifs_saved"
+        [ -n "$_glb_dir" ] || continue
+        [ -x "$_glb_dir/sudo" ] || continue
+        [ -u "$_glb_dir/sudo" ] || continue
+        printf '%s
+' "$_glb_dir/sudo"
+        return 0
+    done
+    IFS="$_glb_ifs_saved"
+    # ... e depois o wrapper do NixOS, que nao esta no PATH da GUI.
+    for _glb_dir in /run/wrappers/bin; do
+        [ -x "$_glb_dir/sudo" ] || continue
+        [ -u "$_glb_dir/sudo" ] || continue
+        printf '%s
+' "$_glb_dir/sudo"
+        return 0
+    done
+    # Nada com setuid: devolve o que o PATH resolveu (ou o nome, se nao houver) para
+    # o fluxo e a mensagem de falha tratarem o caso.
+    if [ -n "$_glb_sudo" ]; then
+        printf '%s
+' "$_glb_sudo"
+    else
+        printf '%s
+' sudo
+    fi
+    return 0
+}
+
 IP_BINARY="$(resolve_binary ip || true)"
 MODPROBE_BINARY="$(resolve_binary modprobe || true)"
 MODINFO_BINARY="$(resolve_binary modinfo || true)"
+SUDO_BIN="$(sudo_bin_resolve)"
 
 # Senha digitada numa janela (zenity/kdialog) para o sudo -S. Cacheada em arquivo
 # temporario para nao repetir a pergunta a cada operacao da injecao (mv, mkdir, cp).
@@ -800,7 +851,7 @@ elevation_event() {
     shift || true
     for detail in "$@"; do
         case "$detail" in
-            phase=dialog|phase=polkit|phase=password|phase=tty|phase=pre_activation|reason=provider_missing|reason=temporary_file|reason=incorrect_password|reason=not_in_sudoers|reason=tty_required|reason=account_blocked|reason=pam_error|reason=other|code=0|code=1|code=2|code=126|code=127|code=other|stderr=present|stderr=empty)
+            phase=dialog|phase=polkit|phase=password|phase=tty|phase=pre_activation|reason=provider_missing|reason=temporary_file|reason=incorrect_password|reason=not_in_sudoers|reason=tty_required|reason=account_blocked|reason=pam_error|reason=suid_missing|reason=other|code=0|code=1|code=2|code=126|code=127|code=other|stderr=present|stderr=empty)
                 printf ' %s' "$detail" >&2
                 ;;
         esac
@@ -1180,7 +1231,7 @@ ASKPASS_HELPER
     askpass_status=0
     (
         unset LD_LIBRARY_PATH LD_PRELOAD
-        SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" sudo -A -k -v >/dev/null 2>"$askpass_stderr"
+        SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" "$SUDO_BIN" -A -k -v >/dev/null 2>"$askpass_stderr"
     ) || askpass_status=$?
     # A primeira linha do stderr do sudo so serve para classificar a causa; ela
     # nunca volta para o log nem para a interface.
@@ -1239,6 +1290,9 @@ ASKPASS_HELPER
             account_blocked)
                 printf '%s\n' 'Falha: o sudo recusou a autenticacao desta conta (senha expirada, conta bloqueada ou troca de senha obrigatoria). Resolva o acesso com sudo -v em um terminal e tente de novo; a ativacao foi cancelada.' >&2
                 ;;
+            suid_missing)
+                printf '%s\n' "Falha: o sudo encontrado (${SUDO_BIN}) nao tem o bit setuid e nao consegue elevar. No NixOS o sudo que funciona e o wrapper /run/wrappers/bin/sudo: o binario do systemPackages (/run/current-system/sw/bin/sudo, tambem alcancado por /usr/bin/sudo) nao tem setuid e recusa antes de ler a senha. Deixe /run/wrappers/bin na frente do PATH ou reinstale o sudo; a ativacao foi cancelada." >&2
+                ;;
             pam_error)
                 printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuracao de PAM ausente — comum em instalacoes NixOS/enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
                 ;;
@@ -1272,16 +1326,23 @@ ASKPASS_HELPER
 #                       "no password was provided" (e equivalentes em pt) — e o
 #                       que sobra quando /etc/pam.d/sudo nao consegue autenticar,
 #                       como no NixOS enxuto; a senha digitada nunca chega a ser testada.
+#   sem setuid ........ "sudo: /run/current-system/sw/bin/sudo must be owned by uid 0
+#                       and have the setuid bit set" — NixOS: o binario do
+#                       systemPackages nao tem o bit; o utilizavel e o wrapper de
+#                       /run/wrappers/bin/sudo. A recusa vem antes de qualquer senha.
+#   conta travada ..... "sudo: account validation failure, is your account locked?"
 # A ordem importa: "PAM: Authentication failure" e senha incorreta, nao falha de
 # configuracao do PAM. Os padroes evitam os caracteres acentuados das mensagens
 # (cada idioma/localidade acentua de um jeito) e prendem o nucleo ASCII da frase.
 sudo_classify_failure() {
     case "${1:-}" in
+        *"setuid"*|*"owned by uid 0"*|*"not setuid"*)
+            printf '%s\n' 'suid_missing' ;;
         *"may not run sudo"*|*"executar sudo"*|*"is not in the sudoers file"*|*"not in the sudoers file"*|*"no arquivo sudoers"*|*sudoers*)
             printf '%s\n' 'not_in_sudoers' ;;
         *"you must have a tty"*|*"deve ter um tty"*|*"no tty present"*|*"no tty"*|*"terminal is required"*)
             printf '%s\n' 'tty_required' ;;
-        *expir*|*"redefina sua senha"*|*"reset your password"*|*"altera"*"senha"*|*"troca de senha"*)
+        *expir*|*"redefina sua senha"*|*"reset your password"*|*"altera"*"senha"*|*"troca de senha"*|*locked*|*bloquead*)
             printf '%s\n' 'account_blocked' ;;
         *"try again"*|*"tente novamente"*|*incorrect*|*incorret*|*"Authentication failure"*|*"falha de autentica"*)
             printf '%s\n' 'incorrect_password' ;;
@@ -1300,7 +1361,7 @@ sudo_authenticate_once() {
     [ "$(id -u)" -eq 0 ] && return 0
     [ "$SUDO_AUTH_READY" -eq 1 ] && return 0
 
-    if have sudo && sudo -n true 2>/dev/null; then
+    if have sudo && "$SUDO_BIN" -n true 2>/dev/null; then
         ELEVATION_PROVIDER="sudo"
         ELEVATION_RESULT="cached"
         elevation_event "sudo.cached" "phase=password"
@@ -1332,7 +1393,7 @@ sudo_authenticate_once() {
                 fi
                 return 1
             fi
-            sudo_stderr="$(sudo -S -k -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)"
+            sudo_stderr="$("$SUDO_BIN" -S -k -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)"
             sudo_status=$?
             if [ "$sudo_status" -eq 0 ]; then
                 sudo_stderr=""
@@ -1375,6 +1436,14 @@ sudo_authenticate_once() {
                     printf '%s\n' 'Falha: o sudo recusou a autenticacao desta conta (senha expirada, conta bloqueada ou troca de senha obrigatoria). Resolva o acesso com sudo -v em um terminal e tente de novo; a ativacao foi cancelada.' >&2
                     return 1
                     ;;
+                suid_missing)
+                    # NixOS: o sudo do PATH e o binario do systemPackages, sem o bit
+                    # setuid; quem eleva e /run/wrappers/bin/sudo, fora do PATH da GUI.
+                    ELEVATION_RESULT="unavailable"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=suid_missing"
+                    printf '%s\n' "Falha: o sudo encontrado (${SUDO_BIN}) nao tem o bit setuid e nao consegue elevar. No NixOS o sudo que funciona e o wrapper /run/wrappers/bin/sudo: o binario do systemPackages (/run/current-system/sw/bin/sudo, tambem alcancado por /usr/bin/sudo) nao tem setuid e recusa antes de ler a senha. Deixe /run/wrappers/bin na frente do PATH ou reinstale o sudo; a ativacao foi cancelada." >&2
+                    return 1
+                    ;;
                 pam_error)
                     # Caminho comum em NixOS enxuto: o PAM do sistema nao resolve a
                     # conta (modulo/servico incompleto) e o sudo recusa antes de
@@ -1399,7 +1468,7 @@ sudo_authenticate_once() {
         ELEVATION_PROVIDER="tty"
         ELEVATION_RESULT="requested"
         elevation_event "prompt.requested" "phase=tty"
-        if sudo -v; then
+        if "$SUDO_BIN" -v; then
             ELEVATION_RESULT="accepted"
             elevation_event "sudo.validation" "$(elevation_code_detail 0)" "phase=tty"
             SUDO_AUTH_READY=1
@@ -1434,9 +1503,9 @@ sudo_has_gui_prompt() {
 # original depois da senha, para o resolv.conf chegar intacto ao comando elevado.
 sudo_with_cached_password() {
     if [ "${1:-}" = "tee" ]; then
-        (cat "$SUDO_PASS_FILE"; cat) | sudo -S -k -p '' "$@"
+        (cat "$SUDO_PASS_FILE"; cat) | "$SUDO_BIN" -S -k -p '' "$@"
     else
-        sudo -S -k -p '' "$@" < "$SUDO_PASS_FILE"
+        "$SUDO_BIN" -S -k -p '' "$@" < "$SUDO_PASS_FILE"
     fi
 }
 
@@ -1496,7 +1565,7 @@ elevate() {
             sudo_with_cached_password "$@"
             return $?
         fi
-        sudo -n "$@"
+        "$SUDO_BIN" -n "$@"
     elif have pkexec && [ "${GOLIVE_GUI:-0}" = "1" ] && [ "${NONINTERACTIVE:-0}" -ne 1 ]; then
         pkexec_interactive "$@"
         return $?
@@ -1564,9 +1633,9 @@ run_user_netns_command() {
     case "$RUN_USER_METHOD" in
         sudo)
             case "$launch_mode" in
-                detached) elevate setsid -f ip netns exec "$NETNS_NAME" sudo -u "$RUN_USER_NAME" -- "$@" ;;
-                background) elevate ip netns exec "$NETNS_NAME" sudo -u "$RUN_USER_NAME" -- "$@" & return 0 ;;
-                foreground) elevate ip netns exec "$NETNS_NAME" sudo -u "$RUN_USER_NAME" -- "$@" ;;
+                detached) elevate setsid -f ip netns exec "$NETNS_NAME" "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$@" ;;
+                background) elevate ip netns exec "$NETNS_NAME" "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$@" & return 0 ;;
+                foreground) elevate ip netns exec "$NETNS_NAME" "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$@" ;;
             esac
             ;;
         runuser)
@@ -1604,7 +1673,7 @@ run_user_systemd_command() {
 
     case "$RUN_USER_METHOD" in
         sudo)
-            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" sudo -u "$RUN_USER_NAME" -- env "$@"
+            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" "$SUDO_BIN" -u "$RUN_USER_NAME" -- env "$@"
             # A unidade permanece em foreground; o chamador captura sua saida:
             # sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1
             ;;
@@ -1649,9 +1718,9 @@ run_user_host_command() {
     case "$RUN_USER_METHOD" in
         sudo)
             case "$launch_mode" in
-                detached) setsid -f sudo -u "$RUN_USER_NAME" -- "$@" ;;
-                background) sudo -u "$RUN_USER_NAME" -- "$@" & return 0 ;;
-                foreground) sudo -u "$RUN_USER_NAME" -- "$@" ;;
+                detached) setsid -f "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$@" ;;
+                background) "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$@" & return 0 ;;
+                foreground) "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$@" ;;
             esac
             ;;
         runuser)
@@ -1715,7 +1784,7 @@ elevate_readonly() {
         "$@"
     elif [ "$NONINTERACTIVE" -eq 1 ]; then
         have sudo || return 1
-        sudo -n "$@"
+        "$SUDO_BIN" -n "$@"
     else
         elevate "$@"
     fi
@@ -2847,8 +2916,8 @@ wg_stats_json() {
     # --status continua sem pedir senha nem alterar o sistema.
     elif [ "$SUDO_AUTH_READY" -eq 1 ]; then
         dump="$(elevate ip netns exec "$NETNS_NAME" wg show "$WG_IF" dump 2>/dev/null)"
-    elif have sudo && sudo -n true 2>/dev/null; then
-        dump="$(sudo -n ip netns exec "$NETNS_NAME" wg show "$WG_IF" dump 2>/dev/null)"
+    elif have sudo && "$SUDO_BIN" -n true 2>/dev/null; then
+        dump="$("$SUDO_BIN" -n ip netns exec "$NETNS_NAME" wg show "$WG_IF" dump 2>/dev/null)"
     else
         printf '{"ok":false,"error":"sem privilegio para ler (precisa root ou sudo sem senha)"}'
         return 0
@@ -3438,7 +3507,7 @@ EOF
     elif command -v systemctl >/dev/null 2>&1; then
         local real_user="${SUDO_USER:-$USER}"
         step "Registrando o Tor como servico do sistema (via sudo)"
-        sudo tee "/etc/systemd/system/$TOR_SERVICE" >/dev/null <<EOF
+        "$SUDO_BIN" tee "/etc/systemd/system/$TOR_SERVICE" >/dev/null <<EOF
 [Unit]
 Description=GoLiveBypass Tor (SOCKS 127.0.0.1:$TOR_PORT)
 After=network.target
@@ -3453,8 +3522,8 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-        sudo systemctl daemon-reload
-        sudo systemctl enable --now "$TOR_SERVICE" 2>/dev/null || {
+        "$SUDO_BIN" systemctl daemon-reload
+        "$SUDO_BIN" systemctl enable --now "$TOR_SERVICE" 2>/dev/null || {
             warn "Nao consegui ativar o servico do sistema. Tentando nohup."
             LD_LIBRARY_PATH="$TOR_LIBDIR" nohup "$TOR_EXE" -f "$TOR_TORRC" > "$TOR_BASE/tor.log" 2>&1 &
         }
@@ -3489,9 +3558,9 @@ remove_tor() {
         rm -f "$HOME/.config/systemd/user/$TOR_SERVICE"
         systemctl --user daemon-reload 2>/dev/null || true
         if [ -f "/etc/systemd/system/$TOR_SERVICE" ]; then
-            sudo systemctl disable --now "$TOR_SERVICE" 2>/dev/null || true
-            sudo rm -f "/etc/systemd/system/$TOR_SERVICE"
-            sudo systemctl daemon-reload 2>/dev/null || true
+            "$SUDO_BIN" systemctl disable --now "$TOR_SERVICE" 2>/dev/null || true
+            "$SUDO_BIN" rm -f "/etc/systemd/system/$TOR_SERVICE"
+            "$SUDO_BIN" systemctl daemon-reload 2>/dev/null || true
         fi
     fi
     rm -f "$HOME/.config/systemd/user/$TOR_SERVICE"
@@ -4354,9 +4423,9 @@ if [ "$MODE" = "status" ]; then
     printf '  [Tunel WireGuard do Discord]\n' >&2
     if netns_exists; then
         printf '  [✓] Namespace "%s" ATIVO.\n' "$NETNS_NAME" >&2
-        if [ "$(id -u)" -eq 0 ] || (have sudo && sudo -n true 2>/dev/null); then
-            vpn_ip="$(sudo ip netns exec "$NETNS_NAME" curl -s -m 4 https://api.ipify.org 2>/dev/null || echo "N/A")"
-            vpn_loc="$(sudo ip netns exec "$NETNS_NAME" curl -s -m 4 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^loc=' | cut -d= -f2 || echo "N/A")"
+        if [ "$(id -u)" -eq 0 ] || (have sudo && "$SUDO_BIN" -n true 2>/dev/null); then
+            vpn_ip="$("$SUDO_BIN" ip netns exec "$NETNS_NAME" curl -s -m 4 https://api.ipify.org 2>/dev/null || echo "N/A")"
+            vpn_loc="$("$SUDO_BIN" ip netns exec "$NETNS_NAME" curl -s -m 4 https://cloudflare.com/cdn-cgi/trace 2>/dev/null | grep -E '^loc=' | cut -d= -f2 || echo "N/A")"
             printf '    IP no Discord: %s\n' "$vpn_ip" >&2
             printf '    Pais         : %s\n' "$vpn_loc" >&2
         fi

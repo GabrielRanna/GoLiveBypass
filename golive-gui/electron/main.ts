@@ -2719,7 +2719,7 @@ type LinuxElevationResult = "not_attempted" | "requested" | "accepted" | "reject
 type LinuxElevationDetails = {
   input?: "nonempty" | "empty" | "unknown" | "not_applicable";
   code?: "0" | "1" | "2" | "126" | "127" | "other";
-  reason?: "provider_missing" | "temporary_file" | "incorrect_password" | "not_in_sudoers" | "tty_required" | "account_blocked" | "pam_error" | "other";
+  reason?: "provider_missing" | "temporary_file" | "incorrect_password" | "not_in_sudoers" | "tty_required" | "account_blocked" | "pam_error" | "suid_missing" | "other";
   phase?: "dialog" | "polkit" | "password" | "tty" | "pre_activation";
   stderr?: "present" | "empty";
 };
@@ -2770,7 +2770,7 @@ const LINUX_ELEVATION_DETAIL_VALUES: {
 } = {
   input: ["nonempty", "empty", "unknown", "not_applicable"],
   code: ["0", "1", "2", "126", "127", "other"],
-  reason: ["provider_missing", "temporary_file", "incorrect_password", "not_in_sudoers", "tty_required", "account_blocked", "pam_error", "other"],
+  reason: ["provider_missing", "temporary_file", "incorrect_password", "not_in_sudoers", "tty_required", "account_blocked", "pam_error", "suid_missing", "other"],
   phase: ["dialog", "polkit", "password", "tty", "pre_activation"],
   stderr: ["present", "empty"],
 };

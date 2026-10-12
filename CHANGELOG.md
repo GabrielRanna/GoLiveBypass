@@ -6,6 +6,16 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [2.0.10-beta-8] - 2026-10-12
+
+### Linux: no NixOS a elevação usa o `sudo` setuid em vez do binário do `systemPackages`
+
+- O relato seguinte no NixOS (mesmo host da #345) fechou em "o sudo recusou a autorizacao por um motivo nao identificado": a senha estava certa, o prompt do `zenity` funcionava e a recusa nao era da credencial. No NixOS o pacote entra no `environment.systemPackages` (`modules/security/sudo.nix`: `environment.systemPackages = [ cfg.package ]`) **sem** o bit setuid, e quem eleva de verdade e o wrapper `security.wrappers.sudo`, em `/run/wrappers/bin/sudo`. O `environment.extraInit` poem `/run/wrappers/bin` na frente do PATH apenas para o init do shell — uma GUI aberta por `.desktop`/`appimage-run` nao passa por esse init, resolve `/run/current-system/sw/bin/sudo` (alcancado tambem por `/usr/bin/sudo`) e toda operacao elevada morre com `must be owned by uid 0 and have the setuid bit set`, antes de qualquer senha. Esse texto caia no balde "outro" do classificador: daí a mensagem sem causa.
+- `sudo_bin_resolve()` escolhe, uma vez, o binario de elevacao: o `sudo` do PATH quando tem o bit setuid (nenhuma mudanca em outra distro), senao o primeiro com setuid no resto do PATH e por fim `/run/wrappers/bin/sudo`. Todas as chamadas de elevacao passaram a usar `"$SUDO_BIN"`: `-S -k -v` da senha, `-A` do askpass, `-S -k -p ''` do reenvio por comando (inclusive o `tee`), `-n` do `elevate`/`elevate_readonly`, os probes `-n true` (telemetria do `wg` e `--status`), a troca de usuario do Discord (`sudo -u`) e o caminho legado do Tor. Sem setuid em lugar nenhum, o fluxo segue como antes e a mensagem explica.
+- O classificador ganhou `suid_missing` ("must be owned by uid 0 and have the setuid bit set" / "setuid") com mensagem propria que nomeia o wrapper e o binario do `systemPackages`, e `account_blocked` passou a reconhecer conta travada ("account validation failure, is your account locked?"). Whitelist de motivos atualizada no script e no parser da GUI.
+- Cobertura: dois casos em `linux-elevation.test.ts` — preferencia pelo wrapper setuid (bit `4755` no fixture, PATH com o sudo sem setuid na frente) e classificacao `suid_missing` sem re-perguntar a senha. Os quatro pins de texto-fonte de `linux-sudo.test.ts` que fixavam o comando literal do `sudo` foram removidos, nao repinados; a invariante do `tee` (stdin preservado depois da senha reenviada) virou teste comportamental no harness. `tests/test-linux-sudo-resolver.sh` cobre o resolvedor no shell, como `test-linux-system-binary.sh` faz para o `resolve_binary`.
+- Evidencia fora da suíte: com o `sudo` do PATH sem setuid e um wrapper setuid disponivel, o fluxo real `authorize_install_elevation` extraido do script autoriza pelo wrapper (`wrapper-sudo -S -k -v`, `result=authorized`); sem nenhum setuid, sai `reason=suid_missing` com o caminho encontrado e uma unica tentativa. Prova no NixOS real continua pendente — a maquina de build e CachyOS.
+
 ## [2.0.10-beta-7] - 2026-10-12
 
 ### Linux: fallback de alvo manual quando a varredura não reconhece a instalação

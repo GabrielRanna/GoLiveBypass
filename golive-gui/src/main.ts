@@ -1200,10 +1200,14 @@ const routePromptAuto = document.getElementById('routePromptAuto') as HTMLButton
 const routePromptManual = document.getElementById('routePromptManual') as HTMLButtonElement | null;
 const routePromptLater = document.getElementById('routePromptLater') as HTMLButtonElement | null;
 let routePromptShown = false;
+// Enquanto a pergunta esta aberta, a otimizacao automatica de abertura fica em espera: o padrao
+// sem preferencia e "auto", e ela ja teria medido a rede antes de o usuario escolher "Manual".
+let routePromptPending = false;
 
 function openProtonRoutePrompt(): void {
   if (!routePromptDialog || routePromptShown) return;
   routePromptShown = true;
+  routePromptPending = true;
   routePromptDialog.hidden = false;
   routePromptAuto?.focus();
 }
@@ -1211,6 +1215,7 @@ function openProtonRoutePrompt(): void {
 async function answerProtonRoutePrompt(choice: ProtonRoutePreference | null): Promise<void> {
   if (!routePromptDialog || routePromptDialog.hidden) return;
   routePromptDialog.hidden = true;
+  routePromptPending = false;
   try {
     if (choice === null) {
       await window.api.setProtonSettings({ routePreferencePrompted: true });
@@ -1222,6 +1227,11 @@ async function answerProtonRoutePrompt(choice: ProtonRoutePreference | null): Pr
     }
   } catch (err) {
     console.error('Falha ao salvar a resposta da pergunta de rota:', err);
+  }
+  // Retoma o que a abertura adiou. Em "Manual" o handler acima ja descobre as rotas; em
+  // "Automatica" e "Decidir depois" (que fica no padrao automatico) a otimizacao comeca agora.
+  if (choice !== 'manual' && currentVpnMode === 'proton' && isProtonAuthenticated && shouldOptimizeProtonAutomatically()) {
+    void optimizeProtonRoute(true);
   }
 }
 
@@ -1814,7 +1824,9 @@ async function initVpnSection() {
     }
     await refreshProtonState();
     await atualizarStatusWgConf();
-    if (currentVpnMode === 'proton' && isProtonAuthenticated && shouldOptimizeProtonAutomatically()) {
+    if (routePromptPending) {
+      // Aguarda a resposta da pergunta de rota; answerProtonRoutePrompt retoma a abertura.
+    } else if (currentVpnMode === 'proton' && isProtonAuthenticated && shouldOptimizeProtonAutomatically()) {
       void optimizeProtonRoute(true);
     } else if (currentVpnMode === 'proton' && isProtonAuthenticated) {
       void discoverProtonRoutesInBackground(shouldMeasurePingForCurrentProtonRoutes());

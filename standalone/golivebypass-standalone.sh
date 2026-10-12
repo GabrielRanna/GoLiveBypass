@@ -1944,6 +1944,118 @@ discord_dirs() {
     return 0
 }
 
+# Fallback de alvo manual: quando a varredura nao reconhece a instalacao do cliente, a GUI
+# grava em manual-target.conf o programa que o usuario escolheu entre os que estao abertos.
+# O arquivo e gravavel pelo usuario, entao TODO argumento de lancamento e revalidado aqui
+# antes de virar linha de alvo: nada dele chega ao shell como comando.
+MANUAL_TARGET_FILE="${MANUAL_TARGET_FILE:-${INSTALL_DIR}/manual-target.conf}"
+
+# Le o registro para MANUAL_SCHEMA/KIND/KEY/LABEL/RESOURCES e para os argumentos numerados
+# (MANUAL_ARGCOUNT/ARG1..ARG4). Nao valida — quem valida e manual_target_validate, para que o
+# preflight possa distinguir "nao existe" de "existe e nao serve".
+manual_target_read() {
+    MANUAL_PRESENT=0
+    MANUAL_SCHEMA=""; MANUAL_KIND=""; MANUAL_KEY=""; MANUAL_LABEL=""; MANUAL_RESOURCES=""
+    MANUAL_ARGCOUNT=0; MANUAL_ARG1=""; MANUAL_ARG2=""; MANUAL_ARG3=""; MANUAL_ARG4=""
+    [ -f "$MANUAL_TARGET_FILE" ] || return 0
+    MANUAL_PRESENT=1
+    local linha
+    while IFS= read -r linha || [ -n "$linha" ]; do
+        case "$linha" in
+            schema=*) MANUAL_SCHEMA="${linha#schema=}" ;;
+            kind=*) MANUAL_KIND="${linha#kind=}" ;;
+            key=*) MANUAL_KEY="${linha#key=}" ;;
+            label=*) MANUAL_LABEL="${linha#label=}" ;;
+            resources=*) MANUAL_RESOURCES="${linha#resources=}" ;;
+            arg=*)
+                MANUAL_ARGCOUNT=$((MANUAL_ARGCOUNT + 1))
+                case "$MANUAL_ARGCOUNT" in
+                    1) MANUAL_ARG1="${linha#arg=}" ;;
+                    2) MANUAL_ARG2="${linha#arg=}" ;;
+                    3) MANUAL_ARG3="${linha#arg=}" ;;
+                    4) MANUAL_ARG4="${linha#arg=}" ;;
+                esac
+                ;;
+        esac
+    done < "$MANUAL_TARGET_FILE"
+    return 0
+}
+
+# Valida o registro lido. Cada kind tem uma forma de lancamento permitida e qualquer outra e
+# recusada em silencio (o preflight reporta valid=false e a ativacao segue sem o alvo).
+manual_target_validate() {
+    [ "$MANUAL_SCHEMA" = "1" ] || return 1
+    local tab campo
+    tab="$(printf '\t')"
+    for campo in "$MANUAL_KEY" "$MANUAL_LABEL" "$MANUAL_RESOURCES"; do
+        case "$campo" in *"$tab"*) return 1 ;; esac
+    done
+    case "$MANUAL_RESOURCES" in ""|/*) ;; *) return 1 ;; esac
+    case "$MANUAL_KIND" in
+        flatpak)
+            [ "$MANUAL_ARGCOUNT" = 3 ] || return 1
+            [ "$MANUAL_ARG1" = "flatpak" ] || return 1
+            [ "$MANUAL_ARG2" = "run" ] || return 1
+            [ "$MANUAL_ARG3" = "$MANUAL_KEY" ] || return 1
+            case "$MANUAL_KEY" in
+                ""|*[!A-Za-z0-9_.-]*) return 1 ;;
+            esac
+            ;;
+        snap)
+            [ "$MANUAL_ARGCOUNT" = 3 ] || return 1
+            [ "$MANUAL_ARG1" = "snap" ] || return 1
+            [ "$MANUAL_ARG2" = "run" ] || return 1
+            [ "$MANUAL_ARG3" = "$MANUAL_KEY" ] || return 1
+            case "$MANUAL_KEY" in
+                ""|*[!A-Za-z0-9-]*) return 1 ;;
+            esac
+            ;;
+        appimage|exec)
+            [ "$MANUAL_ARGCOUNT" = 1 ] || return 1
+            [ "$MANUAL_ARG1" = "$MANUAL_KEY" ] || return 1
+            case "$MANUAL_KEY" in /*) ;; *) return 1 ;; esac
+            [ -f "$MANUAL_KEY" ] || return 1
+            [ -x "$MANUAL_KEY" ] || return 1
+            ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+# Linha de alvo no formato que o resto do script ja consome:
+# resources|flav|detect[|flatpak_id]. Sai vazia quando nao ha registro valido.
+manual_target_line() {
+    manual_target_read
+    [ "$MANUAL_PRESENT" = 1 ] || return 0
+    if ! manual_target_validate; then
+        warn "O programa escolhido como alvo manual nao esta mais disponivel; escolha de novo na GUI."
+        return 0
+    fi
+    # O alvo manual nao passa por discord_emit_dir: ela exige app.asar (ou um diretorio de
+    # resources) e recusaria justamente o caso deste fallback. A dedupe continua valendo
+    # quando existe um caminho para comparar.
+    if [ -n "$MANUAL_RESOURCES" ]; then
+        local chave
+        chave="|$(stat -Lc '%d:%i' "$MANUAL_RESOURCES" 2>/dev/null || printf 'sem-alvo')|"
+        case "${DISCORD_SEEN_TARGETS:-}" in *"$chave"*) return 0 ;; esac
+    fi
+    local app_id=""
+    [ "$MANUAL_KIND" = "flatpak" ] && app_id="$MANUAL_KEY"
+    printf '%s|manual|manual|%s\n' "$MANUAL_RESOURCES" "$app_id"
+    return 0
+}
+
+# Fragmento do preflight: "present" e o arquivo existir, "valid" e ele poder ser lancado
+# agora. A GUI nunca inventa validade — ela le esta resposta.
+manual_target_manual_json() {
+    manual_target_read
+    local valid=false
+    if [ "$MANUAL_PRESENT" = 1 ] && manual_target_validate; then valid=true; fi
+    local present=false
+    [ "$MANUAL_PRESENT" = 1 ] && present=true
+    printf ',"manual":{"present":%s,"valid":%s}' "$present" "$valid"
+}
+
 # Preflight somente leitura para a GUI. Ele existe para que uma dependencia ausente
 # (em especial wireguard-tools no Arch) vire uma mensagem acionavel, em vez de um
 # loop de tentativas de ativacao. Nao instala pacotes nem pede senha.
@@ -2006,11 +2118,11 @@ linux_preflight_json() {
     [ "$elevated" = true ] || ok=false
     [ "$netns_ok" = true ] || ok=false
     [ "$found_count" -gt 0 ] || ok=false
-    printf '{"ok":%s,"platform":"linux","distro":"%s","archLike":%s,"dependencies":{"missing":[%s],"required":["wg","ip","curl"]},"elevation":{"available":%s,"method":"%s"},"netns":{"available":%s},"kernel":{"wireguard":"%s"},"discord":{"found":%s,"count":%s,"firstPath":"%s"},"errors":[%s],"installCommand":"%s"}\n' \
+    printf '{"ok":%s,"platform":"linux","distro":"%s","archLike":%s,"dependencies":{"missing":[%s],"required":["wg","ip","curl"]},"elevation":{"available":%s,"method":"%s"},"netns":{"available":%s},"kernel":{"wireguard":"%s"},"discord":{"found":%s,"count":%s,"firstPath":"%s"%s},"errors":[%s],"installCommand":"%s"}\n' \
         "$ok" "$(json_escape "${distro:-Linux}")" \
         "$(case "$distro $id_like" in *arch*) printf true ;; *) printf false ;; esac)" \
         "$missing_json" "$elevated" "$(if [ "$(id -u)" -eq 0 ]; then printf root; elif have sudo; then printf sudo; elif have pkexec; then printf pkexec; else printf none; fi)" \
-        "$netns_ok" "$kernel" "$( [ "$found_count" -gt 0 ] && printf true || printf false )" "$found_count" "$(json_escape "$first_path")" "$error_json" "$(json_escape "$install")"
+        "$netns_ok" "$kernel" "$( [ "$found_count" -gt 0 ] && printf true || printf false )" "$found_count" "$(json_escape "$first_path")" "$(manual_target_manual_json)" "$error_json" "$(json_escape "$install")"
 }
 
 # Instala somente os comandos indispensaveis que faltam para o tunel WireGuard.
@@ -2402,6 +2514,12 @@ discord_running() {
         rodando="$(flatpak ps --columns=application 2>/dev/null || true)"
         case "$rodando" in *com.discordapp.*|*dev.vencord.*|*app.legcord.*|*org.equicord.*) return 0 ;; esac
     fi
+    # Alvo manual (fallback): nao usa nenhum dos nomes acima nem vem da varredura — a
+    # identidade esta no registro, e sem isso o cliente ficaria aberto dentro de um
+    # namespace prestes a ser destruido.
+    if [ -n "$(manual_pid_for_target 2>/dev/null || true)" ]; then
+        return 0
+    fi
     return 1
 }
 
@@ -2450,10 +2568,41 @@ running_flav() {
     esac
 }
 
+# PID do processo do alvo manual, ou vazio. A identidade nao pode vir de um nome conhecido:
+# e o proprio registro que diz o que procurar (escopo do cgroup, variavel do ambiente ou o
+# executavel resolvido em /proc/<pid>/exe).
+manual_pid_for_target() {
+    manual_target_read
+    manual_target_validate || return 1
+    local pid exe
+    for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+        case "$MANUAL_KIND" in
+            flatpak)
+                grep -qs -- "app-flatpak-${MANUAL_KEY}-" "/proc/$pid/cgroup" 2>/dev/null && { printf '%s\n' "$pid"; return 0; }
+                ;;
+            snap)
+                grep -qszF -x "SNAP_INSTANCE_NAME=${MANUAL_KEY}" "/proc/$pid/environ" 2>/dev/null && { printf '%s\n' "$pid"; return 0; }
+                grep -qszF -x "SNAP_NAME=${MANUAL_KEY}" "/proc/$pid/environ" 2>/dev/null && { printf '%s\n' "$pid"; return 0; }
+                ;;
+            appimage)
+                grep -qszF -x "APPIMAGE=${MANUAL_KEY}" "/proc/$pid/environ" 2>/dev/null && { printf '%s\n' "$pid"; return 0; }
+                ;;
+            *)
+                exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+                [ -n "$exe" ] && [ "$exe" = "$MANUAL_KEY" ] && { printf '%s\n' "$pid"; return 0; }
+                ;;
+        esac
+    done
+    return 1
+}
 # Retorna o PID do cliente deste flavour. Usado pelo status para nao confundir um
 # Discord normal (fora do namespace) com a sessao protegida pelo WireGuard.
 discord_pid_flav() {
     local flav="$1" flatpak_id="${2:-}" resources="${3:-}" pid pattern
+    if [ "$flav" = "manual" ]; then
+        manual_pid_for_target
+        return $?
+    fi
     if [ -n "$flatpak_id" ] && pid="$(flatpak_pid_for_id "$flatpak_id" 2>/dev/null || true)"; then
         [ -n "$pid" ] && { printf '%s\n' "$pid"; return 0; }
     fi
@@ -2565,6 +2714,13 @@ stop_discord() {
     rm -f "$_USER_HOME/.config/discordptb/Singleton"* 2>/dev/null || true
     rm -f "$_USER_HOME/.config/discordcanary/Singleton"* 2>/dev/null || true
     kill_parallel_by_path
+    # Alvo manual (fallback): encerra pelo PID confirmado, que pode nao casar com nenhum dos
+    # nomes conhecidos. Sem isto o cliente ficaria aberto dentro do namespace que vai sumir.
+    local manual_pid
+    manual_pid="$(manual_pid_for_target 2>/dev/null || true)"
+    if [ -n "$manual_pid" ]; then
+        kill "$manual_pid" 2>/dev/null || true
+    fi
     if have flatpak; then
         local id
         for id in $FLATPAK_IDS; do
@@ -2587,6 +2743,10 @@ stop_discord() {
     pkill -9 -x discord-canary 2>/dev/null || true
     pkill -9 -x discordptb 2>/dev/null || true
     kill_parallel_by_path -9
+    manual_pid="$(manual_pid_for_target 2>/dev/null || true)"
+    if [ -n "$manual_pid" ]; then
+        kill -9 "$manual_pid" 2>/dev/null || true
+    fi
     for i in $(seq 1 20); do
         sleep 0.25
         discord_running || return 0
@@ -3145,6 +3305,16 @@ target_can_launch() {
 select_launch_target() {
     local found="${1:-}" resources flav detect id escolhido=""
     [ -n "$found" ] || return 0
+    # Alvo manual (fallback): a escolha explicita do usuario vence a heuristica, inclusive
+    # quando ela nao tem resources para comparar (flatpak, snap e AppImage ficam sem esse
+    # caminho). A linha continua no FOUND para o status e a parada a cobrirem.
+    local manual
+    manual="$(printf '%s\n' "$found" | grep -m1 '|manual|' || true)"
+    if [ -n "$manual" ]; then
+        printf '%s\n' "$manual" | head -1
+        return 0
+    fi
+
 
     while IFS='|' read -r resources flav detect id; do
         [ -n "$resources" ] || continue
@@ -3201,6 +3371,32 @@ start_discord() {
     rm -f "$_USER_HOME/.config/discordcanary/Singleton"* 2>/dev/null || true
 
     local target_cmd=""
+    # Fallback de alvo manual: o comando veio validado da GUI e e refeito aqui como parametros
+    # posicionais — um caminho com espaco nao pode virar duas palavras.
+    if [ "$(printf '%s' "$linha" | cut -d'|' -f3)" = "manual" ]; then
+        manual_target_read
+        if ! manual_target_validate; then
+            printf '[%s] launch=falhou motivo=alvo_manual_invalido\n' "$(date -Is)" >>"$discord_log"
+            warn "O alvo manual nao esta mais disponivel. Escolha o programa de novo na GUI."
+            return 1
+        fi
+        case "$MANUAL_KIND" in
+            flatpak) set -- flatpak run "$MANUAL_KEY" ;;
+            snap) set -- snap run "$MANUAL_KEY" ;;
+            *) set -- "$MANUAL_KEY" ;;
+        esac
+        printf '[%s] launch=manual kind=%s key=%s\n' "$(date -Is)" "$MANUAL_KIND" "$MANUAL_KEY" >>"$discord_log"
+        if [ "${START_DISCORD_HOST_ONLY:-0}" -eq 1 ]; then
+            printf '[%s] launch=host-fallback\n' "$(date -Is)" >>"$discord_log"
+            run_user_host_command detached env $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
+        elif have setsid; then
+            run_user_netns_command detached env $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
+        else
+            run_user_netns_command background env $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
+        fi
+        printf '  Log do Discord: %s\n' "$discord_log" >&2
+        return 0
+    fi
     id="$(printf '%s' "$linha" | cut -d'|' -f4)"
     if [ -z "$id" ] && [ -n "$resources" ] && have flatpak; then
         id="$(flatpak_app_id "$resources" 2>/dev/null || true)"
@@ -3465,7 +3661,7 @@ EOF
     linux_ensure_dependencies
     exit 0
 }
-FOUND="$(discord_dirs)"
+FOUND="$(discord_dirs; manual_target_line)"
 [ "$MODE" = "preflight" ] && {
     if [ "$JSON" -eq 1 ]; then
         linux_preflight_json

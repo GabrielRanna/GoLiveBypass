@@ -1,4 +1,10 @@
 import { gsap } from 'gsap';
+import {
+  manualTargetHeadline,
+  manualTargetKindLabel,
+  shouldOfferManualTarget,
+  type ManualTargetKind,
+} from './manual-target-selection';
 import { protonMeasurementText } from './proton-measurement';
 import { renderProtonCountryFlag } from './proton-flags';
 import { ProtonRouteSelect, type ProtonRouteOption } from './proton-route-select';
@@ -50,10 +56,26 @@ declare global {
         repairable?: boolean;
         elevation: { available: boolean; method: string };
         netns: { available: boolean };
-        discord: { found: boolean; count: number; firstPath: string };
+        discord: {
+          found: boolean;
+          count: number;
+          firstPath: string;
+          manual?: { present: boolean; valid: boolean };
+        };
+        // Fallback de alvo manual (Linux): sem instalacao reconhecida a UI oferece a escolha.
+        discordMissing?: boolean;
+        manualTarget?: { name: string; kind: ManualTargetKind; valid: boolean } | null;
         errors: string[];
         installCommand: string;
       } | null>;
+      listLinuxRunningApps: () => Promise<{
+        ok: boolean;
+        apps: Array<{ key: string; name: string; icon?: string; kind: string; pid: number }>;
+        truncated: boolean;
+        error?: string;
+      }>;
+      setLinuxManualTarget: (key: string) => Promise<{ ok: boolean; error?: string }>;
+      clearLinuxManualTarget: () => Promise<{ ok: boolean; error?: string }>;
       getVersion: () => Promise<string>;
       getPlatform: () => Promise<string>;
       getStartup: () => Promise<boolean>;
@@ -274,6 +296,104 @@ let currentState = 'INACTIVE';
 let linuxPreflight: Awaited<ReturnType<Window['api']['getLinuxPreflight']>> = null;
 
 // ---------------------------------------------------------------------------
+// Fallback de alvo manual (Linux): quando a varredura nao reconhece a instalacao,
+// o cartao de status troca a mensagem de "Discord nao encontrado" por um botao que
+// lista os programas abertos. A escolha so registra o alvo — quem aplica o tunel
+// continua sendo o botao de ativacao.
+// ---------------------------------------------------------------------------
+const manualTargetButton = document.getElementById('manualTargetButton') as HTMLButtonElement | null;
+const manualTargetRow = document.getElementById('manualTargetRow') as HTMLElement | null;
+const manualTargetName = document.getElementById('manualTargetName') as HTMLElement | null;
+const manualTargetChange = document.getElementById('manualTargetChange') as HTMLButtonElement | null;
+const manualTargetRemove = document.getElementById('manualTargetRemove') as HTMLButtonElement | null;
+const manualTargetDialog = document.getElementById('manualTargetDialog') as HTMLDialogElement | null;
+const manualTargetList = document.getElementById('manualTargetList') as HTMLElement | null;
+const manualTargetFeedback = document.getElementById('manualTargetFeedback') as HTMLElement | null;
+
+function syncManualTargetUi() {
+  const state = {
+    isLinux,
+    discordMissing: linuxPreflight?.discordMissing === true,
+    manualTarget: linuxPreflight?.manualTarget ?? null,
+  };
+  const oferece = shouldOfferManualTarget(state);
+  const headline = manualTargetHeadline(state);
+
+  if (manualTargetButton) {
+    manualTargetButton.hidden = !oferece;
+    // O botao ocupa o lugar da mensagem de Discord nao encontrado.
+    if (oferece) statusText.innerText = '';
+  }
+  if (manualTargetRow) manualTargetRow.hidden = headline === null;
+  if (manualTargetName) manualTargetName.innerText = headline ?? '';
+}
+
+function showManualTargetFeedback(message: string) {
+  if (!manualTargetFeedback) return;
+  manualTargetFeedback.innerText = message;
+  manualTargetFeedback.hidden = !message;
+}
+
+async function openManualTargetDialog() {
+  showManualTargetFeedback('');
+  if (manualTargetList) manualTargetList.replaceChildren();
+  manualTargetDialog?.showModal();
+  const resultado = await window.api.listLinuxRunningApps();
+  if (!manualTargetList) return;
+  if (!resultado.ok) {
+    showManualTargetFeedback(resultado.error || 'Não foi possível listar os programas abertos.');
+    return;
+  }
+  const apps = resultado.apps.filter((app) => app.name.trim().length > 0);
+  if (apps.length === 0) {
+    showManualTargetFeedback('Nenhum programa aberto foi encontrado. Abra o Discord e tente de novo.');
+    return;
+  }
+  manualTargetList.replaceChildren(
+    ...apps.map((app) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'manual-target-dialog__item';
+      item.setAttribute('role', 'option');
+      item.dataset.targetKey = app.key;
+      const nome = document.createElement('span');
+      nome.className = 'manual-target-dialog__item-name';
+      nome.innerText = app.name;
+      const detalhe = document.createElement('span');
+      detalhe.className = 'manual-target-dialog__item-kind';
+      detalhe.innerText = manualTargetKindLabel(app.kind);
+      item.replaceChildren(nome, detalhe);
+      item.addEventListener('click', () => {
+        void chooseManualTarget(app.key);
+      });
+      return item;
+    }),
+  );
+  if (resultado.truncated) {
+    showManualTargetFeedback('A lista foi limitada aos primeiros programas; se o seu não aparecer, feche outros apps.');
+  }
+}
+
+async function chooseManualTarget(key: string) {
+  const resultado = await window.api.setLinuxManualTarget(key);
+  if (!resultado.ok) {
+    showManualTargetFeedback(resultado.error || 'Não foi possível registrar o programa escolhido.');
+    return;
+  }
+  manualTargetDialog?.close();
+  await updateStatus();
+}
+
+async function removeManualTarget() {
+  const resultado = await window.api.clearLinuxManualTarget();
+  if (!resultado.ok) {
+    showManualTargetFeedback(resultado.error || 'Não foi possível remover o alvo registrado.');
+    return;
+  }
+  await updateStatus();
+}
+
+// ---------------------------------------------------------------------------
 // Configurações: o botão de canto abre o dialog com tema + notificações de
 // update. O tema continua aplicando na hora (e avisando o main pro
 // titleBarOverlay); o toggle de update reusa o mesmo handler de sempre.
@@ -427,9 +547,24 @@ async function updateStatus() {
     restoreInternetBtn.hidden = window.api.platform !== 'win32' || currentState === 'ACTIVE';
   }
   if (protonOptimizationInFlight || protonManualSelectionInFlight) toggleBtn.disabled = true;
+  // O botao de alvo manual ocupa o lugar da mensagem de "Discord nao encontrado" no Linux.
+  syncManualTargetUi();
   // Depois de mudar o estado, ajusta a janela ao novo tamanho do conteudo.
   fitWindowToContent();
 }
+
+manualTargetButton?.addEventListener('click', () => {
+  void openManualTargetDialog();
+});
+manualTargetChange?.addEventListener('click', () => {
+  void openManualTargetDialog();
+});
+manualTargetRemove?.addEventListener('click', () => {
+  void removeManualTarget();
+});
+document.getElementById('manualTargetClose')?.addEventListener('click', () => {
+  manualTargetDialog?.close();
+});
 
 toggleBtn.addEventListener('click', async () => {
   if (protonOptimizationInFlight || protonManualSelectionInFlight) return;

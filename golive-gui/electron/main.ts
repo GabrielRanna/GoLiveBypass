@@ -40,6 +40,10 @@ import { collectWindowsDiscoveryPowerShell, collectWindowsDiscoverySnapshot, cre
 import { waitForProcessRunning, waitForProcessStopped, type ProcessProbeState } from "./wait-condition";
 import { TUNNEL_STARTUP_SETTLE_MS, waitForTunnelStartupSettle } from "./tunnel-startup";
 import { linuxPreflightRepairable, parseLinuxPreflight, linuxPreflightMessage, type LinuxPreflight } from "./linux-preflight";
+import { createProcSeams } from "./linux-proc-seams";
+import { clearSelectedTarget, listRunningApps, selectManualTarget, type ManualTargetServiceDeps } from "./linux-manual-target-service";
+import { readManualTarget } from "./linux-manual-target";
+import { sessionMarkerPaths } from "./linux-session-marker";
 import { classifyLinuxHealth } from "./linux-health";
 import { PROTON_CAPTCHA_IPC_CHANNEL, isAllowedProtonCaptchaNavigation, parseProtonCaptchaChallenge, validateProtonCaptchaResponse } from "./proton-captcha";
 import { observeRouteDiagnostic } from "./route-diagnostics";
@@ -2434,7 +2438,7 @@ function linuxPreflight(force = false): Promise<LinuxPreflight> {
         ok: false, platform: "linux", distro: "Linux", archLike: false,
         dependencies: { missing: [], required: ["wg", "ip", "curl"] },
         elevation: { available: false, method: "none" }, netns: { available: false },
-        kernel: { wireguard: "unknown" }, discord: { found: false, count: 0, firstPath: "" },
+        kernel: { wireguard: "unknown" }, discord: { found: false, count: 0, firstPath: "", manual: { present: false, valid: false } },
         errors: [message], installCommand: "",
       } satisfies LinuxPreflight;
     })
@@ -2452,6 +2456,29 @@ function linuxPreflight(force = false): Promise<LinuxPreflight> {
     .finally(() => { if (linuxPreflightInFlight === operation) linuxPreflightInFlight = null; });
   linuxPreflightInFlight = operation;
   return operation;
+}
+
+// O fallback de alvo manual roda no processo principal, sem elevacao: a leitura de /proc, a
+// gravacao do registro e a resolucao da chave escolhida ficam fora do renderer. `force` no
+// preflight e o que invalida o cache de 5s depois de mudar o registro.
+function manualTargetDeps(): ManualTargetServiceDeps {
+  return {
+    settingsDir,
+    procSeams: createProcSeams,
+    preflight: (force = false) => linuxPreflight(force),
+  };
+}
+
+// Rotulo do alvo registrado para a UI. A validade e do script (`discord.manual.valid`); quando
+// o script nao reporta o bloco (versao antiga) a GUI nao inventa "invalido" sem evidencia.
+function manualTargetView(preflight: LinuxPreflight): { name: string; kind: string; valid: boolean } | null {
+  const record = readManualTarget(settingsDir());
+  if (!record) return null;
+  return {
+    name: record.label || record.key,
+    kind: record.kind,
+    valid: preflight.discord.manual.present ? preflight.discord.manual.valid : true,
+  };
 }
 
 // As ultimas linhas do stderr do script viram a mensagem de erro na UI. O ruido imutavel de
@@ -2790,12 +2817,9 @@ async function linuxActivate(onChunk: (c: string) => void) {
   try {
     const estado = await runScript(["--status", "--json", "--non-interactive"]);
     const data = JSON.parse(estado.stdout || "{}");
-    const nossos = Array.isArray(data?.discords)
-      ? data.discords
-          .filter((d: { state?: string }) => d?.state === "nosso")
-          .map((d: { path?: string }) => d?.path)
-          .filter((p: unknown): p is string => typeof p === "string")
-      : [];
+    // O alvo manual (fallback) pode nao ter `resources` no host: o filtro de caminho nao-vazio
+    // evita gravar um marcador apontando para lugar nenhum.
+    const nossos = sessionMarkerPaths(data?.discords);
     if (nossos.length > 0) {
       writeSessionMarker(
         nossos.map((resources) => ({
@@ -2915,7 +2939,31 @@ ipcMain.handle("get-status", async () => {
 ipcMain.handle("get-linux-preflight", async () => {
   if (!IS_LINUX) return null;
   const preflight = await linuxPreflight();
-  return { ...preflight, repairable: linuxPreflightRepairable(preflight) };
+  return {
+    ...preflight,
+    repairable: linuxPreflightRepairable(preflight),
+    // Fallback de alvo manual: sem instalacao reconhecida, a UI oferece a escolha.
+    discordMissing: preflight.discord.count === 0,
+    manualTarget: manualTargetView(preflight),
+  };
+});
+ipcMain.handle("list-linux-running-apps", () => {
+  if (!IS_LINUX) return { ok: false, apps: [], truncated: false, error: "Somente no Linux." };
+  return listRunningApps(manualTargetDeps());
+});
+ipcMain.handle("set-linux-manual-target", async (_event, payload: unknown) => {
+  if (!IS_LINUX) return { ok: false, error: "Somente no Linux." };
+  const result = await selectManualTarget(manualTargetDeps(), payload);
+  // O status do Linux tem cache de 1s e conta as linhas do --status --json: sem limpar, a UI
+  // poderia seguir mostrando "Discord nao encontrado" logo depois de registrar o alvo.
+  if (result.ok) linuxStatusCache = null;
+  return result;
+});
+ipcMain.handle("clear-linux-manual-target", async () => {
+  if (!IS_LINUX) return { ok: false, error: "Somente no Linux." };
+  const result = await clearSelectedTarget(manualTargetDeps());
+  if (result.ok) linuxStatusCache = null;
+  return result;
 });
 ipcMain.handle("get-startup", () => getStartup());
 ipcMain.handle("set-startup", (_event, enabled: unknown) => {

@@ -8,6 +8,10 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ### Corrigido
 
+- **Elevação Linux (GUI):** a senha do sudo recusada voltava a cancelar a ativação sem nova tentativa e sem distinguir a causa. Agora a mensagem do `sudo` é lida apenas para classificar (`sudo_classify_failure`) e nunca é registrada: senha incorreta re-pergunta até 3 vezes; usuário sem sudoers, política `requiretty`, conta expirada/bloqueada e falha de PAM param na primeira recusa com mensagem própria e acionável. O caminho `sudo -A` (askpass, último recurso sem zenity/kdialog/pkexec) classifica o mesmo motivo e informa, sem re-perguntar. `cleanup_sudo_pass` passou a usar `${VAR:-}` porque o askpass faz `unset` dessas variáveis e a limpeza roda no trap de saída sob `set -eu`. O motivo entra no evento `sudo.validation` (`reason=incorrect_password|not_in_sudoers|tty_required|account_blocked|pam_error|other`), campo final opcional na whitelist do parser da GUI. Relacionado à issue #345.
+
+### Corrigido
+
 - **Plugin Vencord/Equicord:** o lock de atualização não fecha novamente um descritor já liberado, evitando fechar arquivos ou conexões que reutilizem esse número. A regressão cobre reutilização real do descritor, locks aninhados e preservação de outro owner.
 - **Relançamento Linux do plugin:** o helper separa nome e valor antes de chamar `setenv`, corrigindo `ambiente explícito inválido`; o ambiente permitido preserva `XAUTHORITY` para X11/XWayland. O helper embutido foi atualizado. A correção é exclusiva do plugin; GUI e standalone usam caminhos de ativação distintos. Recepção de transmissão validada em Fedora KDE/Wayland com Discord em XWayland e VPN isolada. Windows não foi testado ao vivo.
 

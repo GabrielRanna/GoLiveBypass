@@ -167,6 +167,31 @@ describe("persistencia dos eventos de elevacao Linux", () => {
     expect(JSON.stringify(sink.calls)).not.toContain("benign-provider-warning");
   });
 
+  it("persiste o motivo da recusa do sudo e segue descartando motivo desconhecido", () => {
+    const sink = makeSink();
+    const { consumeLinuxElevationEvents } = loadElevationConsumer(sink.logger);
+    const state = { pending: "" };
+    consumeLinuxElevationEvents([
+      "[elevation] sudo.validation provider=zenity result=rejected code=1 phase=password reason=incorrect_password",
+      "[elevation] sudo.validation provider=zenity result=unavailable code=1 phase=password reason=not_in_sudoers",
+      "[elevation] sudo.validation provider=zenity result=rejected code=1 phase=password reason=nao-whitelistado",
+      "[elevation] sudo.validation provider=zenity result=rejected code=1 phase=password reason=account_blocked reason=incorrect_password",
+      // O relato do NixOS (#345): a senha digitada e correta, mas o PAM do
+      // sistema nao resolve a conta e o sudo recusa. Precisa chegar ao log com
+      // um motivo proprio, senao o diagnostico acusa senha errada.
+      "[elevation] sudo.validation provider=zenity result=unavailable code=1 phase=password reason=pam_error",
+    ].join("\n") + "\n", state);
+    expect(sink.calls).toHaveLength(3);
+    expect(sink.calls[0]).toEqual([
+      "info",
+      "linux",
+      "elevation.sudo.validation",
+      { source: "standalone", provider: "zenity", result: "rejected", code: "1", phase: "password", reason: "incorrect_password" },
+    ]);
+    expect(sink.calls[1][3]).toMatchObject({ reason: "not_in_sudoers", result: "unavailable" });
+    expect(sink.calls[2][3]).toMatchObject({ reason: "pam_error", result: "unavailable" });
+  });
+
   it("liga o consumidor ao callback da ativacao sem mudar o canal publico", () => {
     const activationStart = mainSource.indexOf("async function linuxActivate");
     const activationEnd = mainSource.indexOf("async function linuxDeactivate", activationStart);

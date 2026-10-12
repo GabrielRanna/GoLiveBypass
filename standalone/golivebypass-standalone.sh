@@ -5,7 +5,8 @@
 # Instala direto no Discord, sem Equicord e sem Vencord. Nao precisa de Node, nem de pnpm,
 # nem de git: o bypass e um arquivo .js que o proprio Discord carrega.
 #
-# Funciona tambem com o Discord instalado por flatpak, do sistema ou do usuario.
+# Funciona tambem com o Discord instalado por flatpak, do sistema, do usuario ou
+# pelo Nix (nixpkgs, NixOS ou nix em qualquer distro).
 #
 # Uso:
 #   ./golivebypass-standalone.sh
@@ -1844,6 +1845,139 @@ discord_emit_dir() {
     return 0
 }
 
+# Raizes de pacote candidatas a partir de um link do perfil. A cadeia eh resolvida
+# elo a elo com readlink: cada etapa - e nao so o destino final - pode ser a que
+# revela o pacote. O Discord sem FHS aponta bin/<cliente> para opt/<cliente>/<cliente>
+# e o modo FHS aponta bin/<cliente> para um wrapper solto em /nix/store; achatar
+# tudo com readlink -f perderia esse <out> do meio, que eh quem guarda a saida
+# share. Dois pais por etapa cobrem os dois desenhos. Quando o destino final eh
+# script - wrapper do modo FHS ou makeWrapper dos modos - os caminhos absolutos do
+# texto tambem alimentam os candidatos (o makeWrapper embute o resources/app.asar).
+# ELF nao eh lido como texto: seria caro e as etapas ja resolvem esse caso.
+nix_package_roots() {
+    local alvo cur nxt parent avo base saida resolv primeira tok pai bisavo q s voltas
+    alvo="${1:-}"
+    [ -n "$alvo" ] && [ -e "$alvo" ] || return 0
+    cur="$alvo"
+    voltas=0
+    while [ "$voltas" -lt 8 ]; do
+        voltas=$((voltas + 1))
+        parent="$(dirname "$cur")"
+        # O proprio link dentro do perfil nao eh raiz de pacote: o perfil so
+        # reexporta paths de outros pacotes por symlinks e o seu path muda a cada
+        # instalacao. A primeira volta existe para entrar na cadeia.
+        if [ "$voltas" -ge 2 ]; then
+            printf '%s\n' "$cur"
+            avo="$(dirname "$parent")"
+            bisavo="$(dirname "$avo")"
+            printf '%s\n' "$parent"
+            printf '%s\n' "$avo"
+            printf '%s\n' "$bisavo"
+            # Saida secundaria: no modo FHS o pacote encadeia o app por um
+            # symlink de share (ln -s <unwrapped>/share $out/share). O wrapper
+            # atual do FHS roda bwrap com um container-init e nao menciona o app
+            # no texto, entao essa ponte pelo share do output eh o que alcanca o
+            # opt/<cliente> real. So symlink: um share mesclado de perfil eh
+            # diretorio comum e nao leva a pacote nenhum.
+            for base in "$parent" "$avo"; do
+                saida="$base/share"
+                [ -L "$saida" ] || continue
+                resolv="$(readlink -f "$saida" 2>/dev/null || printf '%s' '')"
+                if [ -n "$resolv" ] && [ "$resolv" != "$saida" ]; then
+                    printf '%s\n' "$resolv"
+                    printf '%s\n' "$(dirname "$resolv")"
+                fi
+            done
+        fi
+        nxt="$(readlink "$cur" 2>/dev/null)" || break
+        [ -n "$nxt" ] || break
+        case "$nxt" in
+            /*) cur="$nxt" ;;
+            *) cur="$parent/$nxt" ;;
+        esac
+    done
+    primeira=""
+    IFS= read -r primeira < "$cur" 2>/dev/null || true
+    [ -n "$primeira" ] || return 0
+    case "$primeira" in
+        "#!"*)
+            q='"'
+            s="'"
+            tr ' \t\r' '\n' < "$cur" 2>/dev/null | while IFS= read -r tok; do
+                tok="${tok%;}"
+                tok="${tok%$q}"
+                tok="${tok%$s}"
+                case "$tok" in
+                    $q/*) tok="${tok#$q}" ;;
+                    $s/*) tok="${tok#$s}" ;;
+                esac
+                case "$tok" in
+                    /*)
+                        printf '%s\n' "$tok"
+                        pai="${tok%/*}"
+                        printf '%s\n' "$pai"
+                        bisavo="${pai%/*}"
+                        printf '%s\n' "$bisavo"
+                        printf '%s\n' "${bisavo%/*}"
+                        ;;
+                esac
+            done || true
+            ;;
+    esac
+    return 0
+}
+
+# Nix/NixOS. O Discord e os modos paralelos do nixpkgs nao copiam nada para
+# /usr/share, /opt ou ~/.local/share: tudo mora no /nix/store e so aparece pelos
+# perfis do Nix, que linkam os outputs do pacote. ~/.nix-profile (nix profile ou
+# nix-env do usuario), /etc/profiles e /run/current-system/sw (system profile do
+# NixOS), os perfis do home-manager e o default do nix single-user. O Discord
+# oficial no modo FHS - o padrao do nixpkgs hoje - encadeia o app por um wrapper
+# para outro store path; os modos ficam em opt/<cliente> (vesktop, equibop) e
+# share/lib/legcord (legcord). O store eh somente-leitura e nao ha problema: a
+# injecao por pasta acabou, e o WireGuard por aplicativo envolve o processo sem
+# tocar no app.asar.
+discord_nix_dirs() {
+    local perfil cmd roots_file pkg_root layout sub flav
+    roots_file="$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/golive-nix-roots.$$")"
+    : > "$roots_file"
+    for perfil in \
+        "$HOME/.nix-profile" \
+        /etc/profiles \
+        /run/current-system/sw \
+        "/etc/profiles/per-user/$(id -un 2>/dev/null || printf '%s' "${USER:-user}")" \
+        "${XDG_STATE_HOME:-$HOME/.local/state}/nix/profiles/profile" \
+        /nix/var/nix/profiles/default
+    do
+        [ -d "$perfil" ] || continue
+        for cmd in Discord DiscordPTB DiscordCanary discord discordptb discord-canary vesktop equibop legcord; do
+            [ -e "$perfil/bin/$cmd" ] || continue
+            nix_package_roots "$perfil/bin/$cmd" >> "$roots_file" 2>/dev/null || true
+        done
+    done
+    sort -u "$roots_file" -o "$roots_file" 2>/dev/null || true
+    while IFS= read -r pkg_root; do
+        [ -n "$pkg_root" ] || continue
+        for layout in opt/Discord opt/DiscordPTB opt/DiscordCanary opt/Vesktop opt/Equibop share/lib/legcord; do
+            sub="$pkg_root/$layout/resources"
+            [ -e "$sub/app.asar" ] || [ -e "$sub/_app.asar" ] || continue
+            flav="discord"
+            case "$layout" in
+                *DiscordPTB*) flav="discordptb" ;;
+                *DiscordCanary*) flav="discordcanary" ;;
+                *Vesktop*) flav="vesktop" ;;
+                *Equibop*) flav="equibop" ;;
+                *legcord*) flav="legcord" ;;
+            esac
+            if discord_emit_dir "$sub" "$flav" "nix"; then
+                count=$(( ${count:-0} + 1 ))
+            fi
+        done
+    done < "$roots_file"
+    rm -f "$roots_file"
+    return 0
+}
+
 # Procura o app.asar de verdade em vez de confiar numa lista de caminhos.
 #
 # O ponto que quebra qualquer lista feita de memoria: desde a versao 1.0.136, de maio de 2026,
@@ -2014,7 +2148,9 @@ discord_dirs() {
         done
     done
 
-    warn "trace: varridas 6 blocos de raizes, achei $count Discord(s)"
+    discord_nix_dirs
+
+    warn "trace: varridas 7 blocos de raizes, achei $count Discord(s)"
     return 0
 }
 

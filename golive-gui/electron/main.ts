@@ -37,6 +37,7 @@ import { ProtonOptimizationCoordinator } from "./proton-optimization";
 import { restoreBypassOnStartup, type StartupOptimizationResult } from "./startup-restore";
 import { findWindowsDiscordInstall } from "./windows-discord-install";
 import { assembleWindowsDiscoverySnapshotFromRaw, collectWindowsDiscoveryPowerShell, collectWindowsDiscoveryPowerShellAsync, collectWindowsDiscoverySnapshot, createWindowsDiscoveryCache, failedWindowsDiscoveryRawFor, rootsForEnvironment, toPublicWindowsDiscoveryInstall, type WindowsDiscoveryEnvironment, type WindowsDiscoveryRaw, type WindowsDiscoverySnapshot, type WindowsDiscoverySnapshotCollectors } from "./windows-discord-discovery";
+import { shouldAskRoutePreference } from "./route-preference-prompt";
 import { waitForProcessRunning, waitForProcessStopped, type ProcessProbeState } from "./wait-condition";
 import { TUNNEL_STARTUP_SETTLE_MS, waitForTunnelStartupSettle } from "./tunnel-startup";
 import { linuxPreflightRepairable, parseLinuxPreflight, linuxPreflightMessage, type LinuxPreflight } from "./linux-preflight";
@@ -3872,6 +3873,7 @@ ipcMain.handle("get-proton-settings", async () => {
       ? "manual"
       : s.protonRoutePreference === "auto" ? "auto" : s.protonLastServer?.manual === true ? "manual" : "auto",
     lastServer: s.protonLastServer,
+    routePreferencePrompt: shouldAskRoutePreference(s),
   };
 });
 
@@ -3902,7 +3904,11 @@ ipcMain.handle("set-proton-settings", async (_event, settings: any) => {
     if (typeof settings?.autoFailover === "boolean") patch.protonAutoFailover = settings.autoFailover;
     if (settings?.routePreference === "auto" || settings?.routePreference === "manual") {
       patch.protonRoutePreference = settings.routePreference;
+      // Quem escolheu (aqui ou em Configuracoes) nao precisa mais da pergunta inicial.
+      patch.protonRoutePreferencePrompted = true;
     }
+    // Pergunta inicial dispensada sem escolher: nao volta a aparecer.
+    if (settings?.routePreferencePrompted === true) patch.protonRoutePreferencePrompted = true;
     return updateSharedSettings(patch);
   });
   if (!filterChanged && settings?.autoFailover === true) startProtonFailoverMonitor();

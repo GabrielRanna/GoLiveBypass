@@ -8,6 +8,12 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [2.0.10-beta-7] - 2026-10-12
 
+### GUI (modo Proton): pergunta única de rota automática ou manual na primeira abertura
+
+- **GUI (modo Proton):** na primeira abertura, quem ainda não escolheu como lidar com a rota vê uma pergunta única — "Automática (recomendado)" ou "Manual" — com "Decidir depois" e Esc como saída. A resposta usa a preferência `protonRoutePreference` que já existia (a mesma de Configurações); responder ou dispensar grava `protonRoutePreferencePrompted` e a pergunta não volta, nem depois de sair da conta ou importar um `.conf`. Não aparece no modo `.conf` personalizado, nem para quem já tem preferência salva ou usou uma rota antes. A regra fica em `electron/route-preference-prompt.ts`.
+
+### Pendências do cliente macOS
+
 ### Linux: fallback de alvo manual quando a varredura não reconhece a instalação
 
 - O usuário que **tem** o Discord instalado continuava vendo "Nenhuma instalação do Discord foi encontrada.": `discord_dirs` é uma lista de raízes e padrões (bootstrap em `~/.config`, nativo, paralelos, snap, Nix, flatpaks conhecidos), e o que escapa dela deixa o preflight `ok:false` — com `linuxPreflightRepairable` exigindo `discord.found`, a ativação ficava barrada mesmo com o WireGuard pronto. Faltava descobrir **o que** lançar dentro do namespace, não o túnel.

@@ -1785,6 +1785,27 @@ body.logs-window {
   line-height: 1.5;
   color: var(--muted);
 }
+.route-prompt__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 11px 13px;
+  text-align: left;
+  font-family: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: background var(--t-med) var(--ease), border-color var(--t-med) var(--ease);
+}
+.route-prompt__option:hover { background: var(--surface-muted); }
+.route-prompt__option:focus-visible { outline: 2px solid var(--ink-strong); outline-offset: 2px; }
+.route-prompt__name { font-size: 13.5px; font-weight: 600; color: var(--ink-strong); }
+.route-prompt__badge { margin-left: 4px; font-size: 10.5px; font-weight: 500; color: var(--muted); }
+.route-prompt__desc { font-size: 12px; line-height: 1.4; color: var(--muted); }
 .bug-field {
   display: flex;
   flex-direction: column;

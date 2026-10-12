@@ -32,6 +32,8 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 - **Cliente macOS (`golive-gui-mac/`)** (#338, contribuição de @GabrielRanna): app Electron standalone que reativa o Go Live pondo só o tráfego do Discord num túnel WireGuard — split por IP nos ranges Cloudflare do Discord (com rejeição IPv6 para cair no IPv4 tunelado), helper root instalado em `/Library/PrivilegedHelperTools` com sudoers limitado a `up`/`down` e sanitização do conf, geração de perfil Proton via `proton-confgen` com escolha MX/US por ping, conta Proton reutilizável, DMG universal x86_64+arm64, tray, auto-reconexão e auto-updater por assets `GoLiveBypass-macos-<versão>-<arch>.dmg`. Testado em Macs M1/M2/M3 e Intel.
 
+- **GUI (modo Proton):** na primeira abertura, quem ainda não escolheu como lidar com a rota vê uma pergunta única — "Automática (recomendado)" ou "Manual" — com "Decidir depois" e Esc como saída. A resposta usa a preferência `protonRoutePreference` que já existia (a mesma de Configurações); responder ou dispensar grava `protonRoutePreferencePrompted` e a pergunta não volta, nem depois de sair da conta ou importar um `.conf`. Não aparece no modo `.conf` personalizado, nem para quem já tem preferência salva ou usou uma rota antes. A regra fica em `electron/route-preference-prompt.ts`.
+
 ### Pendências do cliente macOS
 
 - O split é por IP, não por processo: outros sites servidos pelos ranges da Cloudflare também passam pelo túnel.

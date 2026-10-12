@@ -8,12 +8,6 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [2.0.10-beta-7] - 2026-10-12
 
-### GUI (modo Proton): pergunta única de rota automática ou manual na primeira abertura
-
-- **GUI (modo Proton):** na primeira abertura, quem ainda não escolheu como lidar com a rota vê uma pergunta única — "Automática (recomendado)" ou "Manual" — com "Decidir depois" e Esc como saída. A resposta usa a preferência `protonRoutePreference` que já existia (a mesma de Configurações); responder ou dispensar grava `protonRoutePreferencePrompted` e a pergunta não volta, nem depois de sair da conta ou importar um `.conf`. Não aparece no modo `.conf` personalizado, nem para quem já tem preferência salva ou usou uma rota antes. A regra fica em `electron/route-preference-prompt.ts`.
-
-### Pendências do cliente macOS
-
 ### Linux: fallback de alvo manual quando a varredura não reconhece a instalação
 
 - O usuário que **tem** o Discord instalado continuava vendo "Nenhuma instalação do Discord foi encontrada.": `discord_dirs` é uma lista de raízes e padrões (bootstrap em `~/.config`, nativo, paralelos, snap, Nix, flatpaks conhecidos), e o que escapa dela deixa o preflight `ok:false` — com `linuxPreflightRepairable` exigindo `discord.found`, a ativação ficava barrada mesmo com o WireGuard pronto. Faltava descobrir **o que** lançar dentro do namespace, não o túnel.
@@ -26,6 +20,10 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Evidência real no host: com um alvo vivo registrado, `--status --json` devolve a linha `flavour:"manual"`, `detected_by:"manual"`, `running:"sim"` e o `pid` correto **junto** da instalação reconhecida pela varredura, e o `--preflight --json` reporta `manual:{present:true,valid:true}` com `count` incluindo o alvo. A GUI renderizada (build servido, API simulada) mostra o botão no lugar da mensagem, o dialog com os apps abertos, a linha "Túnel aplicado em …" com Trocar/Remover e o estado "alvo indisponível" com as duas ações.
 - **Prova de ponta a ponta no host (executada nesta sessão):** com um alvo manual registrado (o binário do próprio Discord em `~/.config/discord/app-1.0.161/Discord`, layout bootstrap), a ativação criou o namespace `discord-vpn` e o `wg-discord`, lançou o alvo pelo ramo manual (`launch=manual kind=exec` no log) e o `--status --json` passou a devolver **duas** linhas com `running:"sim"` e **`inNamespace:"sim"`**, uma da varredura e outra `flavour:"manual"`. `ip netns pids discord-vpn` listou **9 processos** do cliente dentro do namespace, o `wg show` mostrou `latest handshake: 9 seconds ago` com `transfer: 761.10 KiB received / 162.63 KiB sent`, e o `curl` dentro do namespace devolveu `ip=146.70.230.147 loc=US` contra `loc=BR` no host — ou seja, o tráfego do app realmente sai pelo túnel. O `--uninstall` fechou o alvo, removeu o namespace e a interface, e a rede do host voltou ao normal (mesmo IP público).
 - Limites da prova: o peer usado foi o **perfil padrão embutido** do script (EUA), porque a máquina não tinha `wireguard.conf` nem sessão Proton — a rota é a do produto, mas não um servidor escolhido pelo usuário. O `wireguard-tools` faltava na máquina e foi instalado pelo próprio `--ensure-dependencies` (caminho do produto, também `openresolv`); o `compile` segue sem fechar por ausência do toolchain Go (`build:proton`), limitação de ambiente anterior a esta mudança. Um alvo que delega para instância já aberta (testado com `dolphin`) é confirmado no namespace e depois pode sair sozinho: a identidade continua válida, mas o app não permanece — caso do app, não do mecanismo. O caso positivo de identidade flatpak por cgroup ficou como `[SKIP]` no teste shell (exige um flatpak rodando de verdade).
+
+### GUI (modo Proton): pergunta única de rota automática ou manual na primeira abertura
+
+- **GUI (modo Proton):** na primeira abertura, quem ainda não escolheu como lidar com a rota vê uma pergunta única — "Automática (recomendado)" ou "Manual" — com "Decidir depois" e Esc como saída. A resposta usa a preferência `protonRoutePreference` que já existia (a mesma de Configurações); responder ou dispensar grava `protonRoutePreferencePrompted` e a pergunta não volta, nem depois de sair da conta ou importar um `.conf`. Não aparece no modo `.conf` personalizado, nem para quem já tem preferência salva ou usou uma rota antes. A regra fica em `electron/route-preference-prompt.ts`.
 
 ## [2.0.10-beta-6] - 2026-10-12
 

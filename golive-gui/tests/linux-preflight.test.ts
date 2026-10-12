@@ -15,6 +15,66 @@ function shellHelper(source: string, name: string): string {
 }
 
 describe("preflight Linux", () => {
+  it("reporta o alvo manual no JSON do preflight real", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-manual-preflight-"));
+    tempRoots.push(root);
+    const app = path.join(root, "discord");
+    fs.writeFileSync(app, "#!/bin/sh\n");
+    fs.chmodSync(app, 0o755);
+    const arquivo = path.join(root, "manual-target.conf");
+    const script = path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh");
+
+    const rodar = (): { manual: { present: boolean; valid: boolean }; count: number } => {
+      const run = spawnSync("/bin/bash", [script, "--preflight", "--json"], {
+        env: { ...process.env, GOLIVE_GUI: "1", MANUAL_TARGET_FILE: arquivo },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      expect(run.status, run.stderr).toBe(0);
+      const json = JSON.parse(run.stdout.trim().split("\n").pop() as string);
+      return { manual: json.discord.manual, count: json.discord.count };
+    };
+
+    // Sem arquivo: presente e valido sao falsos, e a varredura segue sendo a unica fonte.
+    expect(rodar().manual).toEqual({ present: false, valid: false });
+
+    fs.writeFileSync(arquivo, ["schema=1", "kind=exec", `key=${app}`, "label=Discord", "resources=", `arg=${app}`, ""].join("\n"));
+    const comAlvo = rodar();
+    expect(comAlvo.manual).toEqual({ present: true, valid: true });
+    // O alvo manual entra em $FOUND: sem instalacao reconhecida ele ainda conta como um alvo.
+    expect(comAlvo.count).toBeGreaterThanOrEqual(1);
+
+    // Registro que existe e nao serve (schema desconhecido) nao vira alvo.
+    fs.writeFileSync(arquivo, ["schema=2", "kind=exec", `key=${app}`, "label=Discord", "resources=", `arg=${app}`, ""].join("\n"));
+    expect(rodar().manual).toEqual({ present: true, valid: false });
+
+    // Alvo obsoleto: o caminho deixou de existir desde a escolha.
+    fs.rmSync(app);
+    fs.writeFileSync(arquivo, ["schema=1", "kind=exec", `key=${app}`, "label=Discord", "resources=", `arg=${app}`, ""].join("\n"));
+    expect(rodar().manual).toEqual({ present: true, valid: false });
+  });
+
+  it("le o bloco do alvo manual e assume ausente quando o script nao manda o campo", () => {
+    const comManual = parseLinuxPreflight(JSON.stringify({
+      ok: true, platform: "linux", distro: "Arch Linux",
+      dependencies: { missing: [], required: ["wg", "ip", "curl"] },
+      elevation: { available: true, method: "sudo" }, netns: { available: true },
+      kernel: { wireguard: "loaded" },
+      discord: { found: true, count: 1, firstPath: "/home/u/Discord/resources", manual: { present: true, valid: true } },
+      errors: [], installCommand: "",
+    }));
+
+    expect(comManual.discord.manual).toEqual({ present: true, valid: true });
+
+    const alvoMorto = parseLinuxPreflight(JSON.stringify({ discord: { found: false, count: 0, manual: { present: true, valid: false } } }));
+    expect(alvoMorto.discord.manual).toEqual({ present: true, valid: false });
+
+    // Script antigo (sem o campo) e valores de tipo errado nao podem virar "alvo existente".
+    expect(parseLinuxPreflight(JSON.stringify({ discord: { found: true, count: 1 } })).discord.manual).toEqual({ present: false, valid: false });
+    expect(parseLinuxPreflight(JSON.stringify({ discord: { manual: { present: "sim", valid: 1 } } })).discord.manual).toEqual({ present: false, valid: false });
+    expect(parseLinuxPreflight(JSON.stringify({ discord: { manual: null } })).discord.manual).toEqual({ present: false, valid: false });
+  });
+
   it("mapeia dependencias ausentes do Arch para um comando pacman copiavel", () => {
     const result = parseLinuxPreflight(JSON.stringify({
       ok: false,
@@ -230,6 +290,139 @@ describe("preflight Linux", () => {
     expect(() => parseLinuxPreflight("nao-json")).toThrow(/JSON inválido/);
   });
 
+  it("o standalone oferece preflight e nao instala pacotes sozinho", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    expect(source).toContain("--preflight");
+    expect(source).toContain("sudo pacman -S --needed");
+    expect(source).not.toMatch(/^\s*(?:sudo\s+)?pacman\s+-S/m);
+  });
+
+  it("a ativacao Linux verifica o ambiente antes de limpar legado", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "electron/main.ts"), "utf8");
+    const activation = source.slice(source.indexOf("async function linuxActivate"), source.indexOf("async function linuxDeactivate"));
+    expect(activation.indexOf("linuxPreflight(")) .toBeGreaterThanOrEqual(0);
+    expect(activation.indexOf("linuxPreflight(")) .toBeLessThan(activation.indexOf("--cleanup-legacy"));
+    expect(activation).toContain('await linuxStatus() === "ACTIVE"');
+    expect(source).toContain("let linuxStatusInFlight: Promise<string> | null = null");
+  });
+
+  it("carrega o modulo WireGuard antes de fechar o Discord e aborta sem namespace em falha", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const ensureStart = source.indexOf("ensure_wireguard_module() {");
+    const ensureEnd = source.indexOf("\n}\n\n# Ler campo a campo", ensureStart);
+    expect(ensureStart).toBeGreaterThanOrEqual(0);
+    expect(ensureEnd).toBeGreaterThan(ensureStart);
+    const ensureCall = source.indexOf("ensure_wireguard_module || fail", ensureStart);
+    const stopCall = source.indexOf("\nstop_discord", ensureCall);
+    expect(ensureCall).toBeGreaterThan(ensureStart);
+    expect(stopCall).toBeGreaterThan(ensureCall);
+    const ensureFunction = source.slice(ensureStart, ensureEnd + 2);
+
+    const runCase = (loaded: boolean, modprobeSucceeds: boolean) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-wireguard-module-"));
+      tempRoots.push(root);
+      const bin = path.join(root, "bin");
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, "modprobe"), "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(path.join(bin, "modprobe"), 0o755);
+      const state = path.join(root, "sys", "module", "wireguard");
+      if (loaded) fs.mkdirSync(state, { recursive: true });
+      const trace = path.join(root, "trace");
+      const harness = path.join(root, "module.sh");
+      fs.writeFileSync(harness, [
+        "#!/bin/sh",
+        "have() { command -v \"$1\" >/dev/null 2>&1; }",
+        "wireguard_module_loaded() { [ -e \"$MODULE_STATE\" ]; }",
+        "elevate() {",
+        "  printf '%s\\n' \"$*\" >> \"$TRACE\"",
+        "  if [ \"$1\" = modprobe ] && [ \"$MODPROBE_SUCCEEDS\" = 1 ]; then /bin/mkdir -p \"$MODULE_STATE\"; return 0; fi",
+        "  return 1",
+        "}",
+        ensureFunction,
+        "authorize_install_elevation() { printf '%s\\n' authorization >> \"$TRACE\"; return 0; }",
+        "setup_wireguard_netns() { printf '%s\\n' namespace >> \"$TRACE\"; printf '%s\\n' 'ip link add' >> \"$TRACE\"; }",
+        "stop_discord() { printf '%s\\n' stop >> \"$TRACE\"; }",
+        "fail() { printf '%s\\n' \"$1\" >&2; exit 1; }",
+        "if ! authorize_install_elevation; then fail 'autorizacao recusada'; fi",
+        "if ! ensure_wireguard_module; then fail 'modulo nao preparado'; fi",
+        "stop_discord",
+        "setup_wireguard_netns",
+      ].join("\n"));
+      fs.chmodSync(harness, 0o755);
+      const run = spawnSync("/bin/sh", [harness], {
+        env: {
+          ...process.env,
+          PATH: bin,
+          MODULE_STATE: state,
+          MODPROBE_SUCCEEDS: modprobeSucceeds ? "1" : "0",
+          TRACE: trace,
+        },
+        encoding: "utf8",
+      });
+      return {
+        run,
+        trace: fs.existsSync(trace) ? fs.readFileSync(trace, "utf8") : "",
+      };
+    };
+
+    const alreadyLoaded = runCase(true, false);
+    expect(alreadyLoaded.run.status, alreadyLoaded.run.stderr).toBe(0);
+    expect(alreadyLoaded.trace).toBe("authorization\nstop\nnamespace\nip link add\n");
+
+    const loadedByActivation = runCase(false, true);
+    expect(loadedByActivation.run.status, loadedByActivation.run.stderr).toBe(0);
+    expect(loadedByActivation.trace).toBe("authorization\nmodprobe wireguard\nstop\nnamespace\nip link add\n");
+
+    const loadFailed = runCase(false, false);
+    expect(loadFailed.trace).not.toContain("ip link add");
+    expect(loadFailed.run.stderr).toContain("ativacao foi cancelada antes de fechar o Discord");
+    expect(loadFailed.trace).toBe("authorization\nmodprobe wireguard\n");
+    expect(loadFailed.trace).not.toContain("stop");
+    expect(loadFailed.trace).not.toContain("namespace");
+  });
+
+  it("autoriza a elevacao antes de fechar o Discord no fluxo de instalacao", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const installStart = source.indexOf('FOUND="$(escolher_alvos patchear)"');
+    const installEnd = source.indexOf("\nwhile IFS='|' read", installStart);
+    expect(installStart).toBeGreaterThanOrEqual(0);
+    expect(installEnd).toBeGreaterThan(installStart);
+
+    const install = source.slice(installStart, installEnd);
+    const authorizeIndex = install.indexOf("\nauthorize_install_elevation");
+    const stopIndex = install.indexOf("\nstop_discord");
+    expect(authorizeIndex).toBeGreaterThanOrEqual(0);
+    expect(stopIndex).toBeGreaterThanOrEqual(0);
+    expect(authorizeIndex).toBeLessThan(stopIndex);
+    expect(install).toMatch(/authorize_install_elevation\s+\|\|\s+fail/);
+  });
+
+  it("não chama a barreira nos modos status, preflight e ensure-dependencies", () => {
+    const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
+    const ensureStart = source.indexOf('[ "$MODE" = "ensure-dependencies" ] && {');
+    const preflightStart = source.indexOf('[ "$MODE" = "preflight" ] && {');
+    // Ancora pelo prefixo: a linha ganhou o ramo do alvo manual e a assercao aqui e a ORDEM
+    // dos blocos, nao o texto exato do FOUND.
+    const foundStart = source.indexOf('FOUND="$(discord_dirs');
+    const preflightEnd = source.indexOf('[ -n "$FOUND" ] || fail', preflightStart);
+    const statusStart = source.indexOf('if [ "$MODE" = "status" ]');
+    const statusEnd = source.indexOf('if [ "$MODE" = "uninstall" ] || [ "$MODE" = "restore" ]', statusStart);
+    expect(ensureStart).toBeGreaterThanOrEqual(0);
+    expect(foundStart).toBeGreaterThan(ensureStart);
+    expect(preflightStart).toBeGreaterThan(foundStart);
+    expect(preflightEnd).toBeGreaterThan(preflightStart);
+    expect(statusStart).toBeGreaterThan(preflightEnd);
+    expect(statusEnd).toBeGreaterThan(statusStart);
+
+    const modeBlocks = [
+      source.slice(ensureStart, foundStart),
+      source.slice(preflightStart, preflightEnd),
+      source.slice(statusStart, statusEnd),
+    ];
+    for (const block of modeBlocks) {
+      expect(block).not.toMatch(/^\s*authorize_install_elevation\b/m);
+    }
+  });
 
   it("não fecha o Discord quando a autorização falha e mantém a ordem quando aceita", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");

@@ -20,6 +20,7 @@ import { runScript } from "./linux-helper";
 import {
   applyPendingUpdate,
   checkWindowsUpdate,
+  isCheckingForUpdate,
   isQuittingForUpdate,
   isUpdateReady,
   setupUpdater,
@@ -39,7 +40,7 @@ import { restoreBypassOnStartup, type StartupOptimizationResult } from "./startu
 import { findWindowsDiscordInstall } from "./windows-discord-install";
 import { assembleWindowsDiscoverySnapshotFromRaw, collectWindowsDiscoveryPowerShell, collectWindowsDiscoveryPowerShellAsync, collectWindowsDiscoverySnapshot, createWindowsDiscoveryCache, failedWindowsDiscoveryRawFor, rootsForEnvironment, toPublicWindowsDiscoveryInstall, type WindowsDiscoveryEnvironment, type WindowsDiscoveryRaw, type WindowsDiscoverySnapshot, type WindowsDiscoverySnapshotCollectors } from "./windows-discord-discovery";
 import { shouldAskRoutePreference } from "./route-preference-prompt";
-import { planoDoMonitor, runningImageNames, waitForProcessRunning, waitForProcessStopped, whenProcessStops, type ProcessProbeState } from "./wait-condition";
+import { aguardarAte, planoDoMonitor, runningImageNames, waitForProcessRunning, waitForProcessStopped, whenProcessStops, type ProcessProbeState } from "./wait-condition";
 import { TUNNEL_STARTUP_SETTLE_MS, waitForTunnelStartupSettle } from "./tunnel-startup";
 import { linuxPreflightRepairable, parseLinuxPreflight, linuxPreflightMessage, type LinuxPreflight } from "./linux-preflight";
 import { createProcSeams } from "./linux-proc-seams";
@@ -56,6 +57,10 @@ const isMac = process.platform === "darwin";
 const IS_LINUX = process.platform === "linux";
 const IS_WINDOWS = process.platform === "win32";
 const MAIN_WINDOW_WIDTH = 720;
+// Janela compacta: a largura minima, em coluna e com o tamanho travado.
+const COMPACT_WINDOW_WIDTH = 360;
+// Limite da limpeza no Sair (inclui o pedido de administrador do Windows): depois disso o app fecha.
+const QUIT_CLEANUP_TIMEOUT_MS = 90_000;
 
 // Parar, resetar o lock e instalar outro perfil mexe no mesmo servico/driver
 // global. Uma fila unica impede que clique, bandeja e troca Proton criem duas
@@ -401,14 +406,15 @@ function startupLabel() {
 import { getStartup, setStartup, launchedHidden, syncStartupEntry } from "./startup";
 
 function createWindow() {
+  const compacta = readSharedSettings().janelaCompacta === true;
   mainWindow = new BrowserWindow({
-    width: MAIN_WINDOW_WIDTH,
+    width: compacta ? COMPACT_WINDOW_WIDTH : MAIN_WINDOW_WIDTH,
     // A altura e ajustada pelo proprio conteudo: a pagina avisa via IPC 'resize-window'
     // quando o warning do bypass ativo aparece/some, e a janela cresce/encolhe para nao
     // cortar nada (antes o aviso ficava cortado com a altura fixa de 560).
     height: 560,
-    resizable: true,
-    minWidth: 360,
+    resizable: !compacta,
+    minWidth: COMPACT_WINDOW_WIDTH,
     minHeight: 420,
     icon: loadAsset('icon.png'),
     webPreferences: {
@@ -884,13 +890,21 @@ app.on("before-quit", (event) => {
   const restore = IS_LINUX
     ? withWireSockLifecycle("encerrar-linux", () => linuxDeactivate(() => {}))
     : IS_WINDOWS
-      ? withWireSockLifecycle("encerrar-windows", () => deactivateAll())
+      // Sem withWireSockLifecycle aqui: o deactivateAll ja se serializa por dentro. A fila e serial
+      // e nao reentrante, entao embrulhar a chamada trava o Sair para sempre (a tarefa de fora
+      // espera a de dentro, que espera a de fora) e deixa o WireSock rodando.
+      ? deactivateAll()
       : Promise.resolve();
-  restore
-    .catch((error) => {
-      logger.error("app", "limpeza no encerramento falhou", {
-        erro: String((error as Error)?.message ?? error),
-      });
+  const limpeza = restore.catch((error) => {
+    logger.error("app", "limpeza no encerramento falhou", {
+      erro: String((error as Error)?.message ?? error),
+    });
+  });
+  // Rede de seguranca: se algum passo da limpeza travar (por exemplo, um pedido de administrador
+  // sem resposta), o app encerra assim mesmo depois do prazo em vez de ficar preso.
+  void aguardarAte(limpeza, QUIT_CLEANUP_TIMEOUT_MS)
+    .then((terminou) => {
+      if (!terminou) logger.error("app", "limpeza no encerramento passou do prazo; encerrando mesmo assim", { prazo_ms: QUIT_CLEANUP_TIMEOUT_MS });
     })
     .finally(() => app.quit());
 });
@@ -2311,7 +2325,7 @@ async function collectProtonFailoverSample(generation: number): Promise<void> {
     // O estado do WireSock e lido uma vez e repassado ao status da CLI. Antes cada amostra
     // (a cada 3 s) perguntava a mesma coisa duas vezes, em paralelo: 2x (sc + tasklist).
     const [traffic, stats, tunnelActive] = await Promise.all([
-      getWireSockAdapterTrafficAsync(),
+      getWireSockAdapterTrafficAsync({ lembrarAusencia: true }),
       getWgStatsAsync(),
       isWireSockActiveAsync({ processAlive: imagens ? imagens.has("wiresock-client.exe") : undefined }),
     ]);
@@ -3192,6 +3206,22 @@ ipcMain.handle("deactivate", async (event) => {
   persistBypassEnabled(false);
   refreshTray().catch(() => {});
 });
+// Janela compacta: abre na largura minima (coluna vertical) e trava o tamanho. Vale na hora.
+ipcMain.handle("get-compact-window", () => readSharedSettings().janelaCompacta === true);
+ipcMain.handle("set-compact-window", (_event, enabled: unknown) => {
+  const compacta = enabled === true;
+  updateSharedSettings({ janelaCompacta: compacta });
+  if (!mainWindow || mainWindow.isDestroyed()) return compacta;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  // O resize abaixo e do app, nao do usuario: sem isto o tamanho passaria a contar como manual.
+  const [, alturaAtual] = mainWindow.getContentSize();
+  const largura = compacta ? COMPACT_WINDOW_WIDTH : MAIN_WINDOW_WIDTH;
+  tamanhoPedidoPeloApp = { w: largura, h: alturaAtual, em: Date.now() };
+  tamanhoManual = false;
+  mainWindow.setResizable(!compacta);
+  mainWindow.setContentSize(largura, alturaAtual);
+  return compacta;
+});
 // Reiniciar = refazer a ativacao inteira (fecha o Discord, sobe o tunel de novo, reabre),
 // o mesmo caminho da revalidacao de sessao residual no boot.
 ipcMain.handle("restart-bypass", async () => {
@@ -3210,8 +3240,11 @@ ipcMain.handle("restart-bypass", async () => {
 });
 ipcMain.handle("check-updates", async () => {
   if (!IS_WINDOWS) return { ok: false, error: "Por enquanto só no Windows." };
+  // checkWindowsUpdate volta na hora (sem verificar) se ja ha uma em andamento: nesse caso o clique
+  // nao deve responder "voce esta na versao mais nova" como se tivesse conferido.
+  const jaVerificando = isCheckingForUpdate();
   await checkWindowsUpdate(() => mainWindow, () => true, () => readUpdateChannel(), { force: true, reason: "manual" });
-  return { ok: true, updateReady: isUpdateReady() };
+  return { ok: true, updateReady: isUpdateReady(), jaVerificando };
 });
 ipcMain.handle("restore-internet", async () => {
   if (!IS_WINDOWS) return { ok: false, error: "Esta recuperação só está disponível no Windows." };

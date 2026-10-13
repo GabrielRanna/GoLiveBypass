@@ -524,6 +524,21 @@
                 <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
               </label>
 
+              <label class="settings-switch" id="compactWindowRow">
+                <span class="settings-switch__icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="8" y="3" width="8" height="18" rx="2" />
+                    <path d="M11 18h2" />
+                  </svg>
+                </span>
+                <span class="settings-switch__copy">
+                  <span class="settings-switch__title">Janela compacta</span>
+                  <span class="settings-switch__hint">Menor tamanho, em coluna, e trava o tamanho</span>
+                </span>
+                <input type="checkbox" id="compactWindowToggle" />
+                <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+              </label>
+
               <label class="settings-switch" id="devModeRow">
                 <span class="settings-switch__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -618,6 +633,35 @@
                 </svg>
               </button>
             </div>
+
+            <svg class="guide-art" viewBox="0 0 360 100" role="img" aria-labelledby="guideArtTitle guideArtDesc" xmlns="http://www.w3.org/2000/svg">
+              <title id="guideArtTitle">Como o bypass roteia o tráfego</title>
+              <desc id="guideArtDesc">O Discord sai pelo túnel até um servidor de outro país. Os outros programas do computador seguem direto pela internet normal.</desc>
+              <rect class="ga-box" x="4" y="6" width="84" height="88" rx="12" />
+              <text class="ga-label" x="46" y="20" text-anchor="middle">SEU PC</text>
+              <rect class="ga-chip ga-chip--on" x="14" y="28" width="64" height="22" rx="7" />
+              <text class="ga-chip-text" x="46" y="42.5" text-anchor="middle">Discord</text>
+              <rect class="ga-chip" x="14" y="62" width="64" height="22" rx="7" />
+              <text class="ga-chip-text" x="46" y="76.5" text-anchor="middle">Outros apps</text>
+
+              <rect class="ga-tunnel" x="118" y="28" width="144" height="22" rx="11" />
+              <line class="ga-lane ga-lane--on" x1="88" y1="39" x2="292" y2="39" />
+              <text class="ga-note ga-note--on" x="190" y="21" text-anchor="middle">túnel só pro Discord</text>
+              <circle class="ga-packet ga-packet--lead" cx="92" cy="39" r="3.4" />
+              <circle class="ga-packet" cx="92" cy="39" r="3.4" style="animation-delay: -0.8s" />
+              <circle class="ga-packet" cx="92" cy="39" r="3.4" style="animation-delay: -1.6s" />
+
+              <line class="ga-lane" x1="88" y1="73" x2="292" y2="73" />
+              <text class="ga-note" x="190" y="65" text-anchor="middle">direto, sem túnel</text>
+              <circle class="ga-packet ga-packet--direct ga-packet--lead" cx="92" cy="73" r="3" />
+              <circle class="ga-packet ga-packet--direct" cx="92" cy="73" r="3" style="animation-delay: -1.2s" />
+
+              <rect class="ga-box ga-box--on" x="292" y="20" width="64" height="38" rx="10" />
+              <text class="ga-chip-text" x="324" y="36" text-anchor="middle">Servidor</text>
+              <text class="ga-note ga-note--on" x="324" y="48" text-anchor="middle">VPN</text>
+              <rect class="ga-box" x="292" y="60" width="64" height="26" rx="10" />
+              <text class="ga-chip-text" x="324" y="77" text-anchor="middle">Internet</text>
+            </svg>
 
             <p class="guide-intro">
               O Discord bloqueia o Go Live e a câmera pelo IP de quem está no Brasil. O GoLiveBypass faz só o

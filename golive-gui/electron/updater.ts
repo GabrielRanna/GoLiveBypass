@@ -93,6 +93,11 @@ export function isUpdateReady(): boolean {
   return updateReady;
 }
 
+// true enquanto uma verificacao esta em andamento: checkWindowsUpdate volta na hora nesse caso.
+export function isCheckingForUpdate(): boolean {
+  return checking;
+}
+
 export function applyPendingUpdate(): Promise<boolean> {
   return applyPendingUpdateImpl();
 }

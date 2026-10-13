@@ -110,3 +110,16 @@ export function tasklistHasProcess(tasklistCsv: string, imageName: string, pid: 
 export function planoDoMonitor(tique: number, contadoresDisponiveis: boolean): { lerContadores: boolean; medirPing: boolean } {
   return { lerContadores: contadoresDisponiveis || tique % 15 === 0, medirPing: tique % 5 === 0 };
 }
+
+// Espera `tarefa` por no maximo `ms`. true = terminou no prazo; false = estourou o prazo (a tarefa
+// continua rodando, mas o chamador segue). Usado no "Sair": a limpeza nunca pode prender o app
+// para sempre, mesmo que algum passo dela trave.
+export function aguardarAte(tarefa: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    tarefa.then(
+      () => { clearTimeout(timer); resolve(true); },
+      () => { clearTimeout(timer); resolve(true); },
+    );
+  });
+}

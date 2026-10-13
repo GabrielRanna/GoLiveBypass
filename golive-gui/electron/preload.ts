@@ -7,6 +7,8 @@ import type { ProtonOptimizationProgress } from './proton';
   restoreInternet: () => ipcRenderer.invoke('restore-internet'),
   restartBypass: () => ipcRenderer.invoke('restart-bypass'),
   checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  getCompactWindow: () => ipcRenderer.invoke('get-compact-window'),
+  setCompactWindow: (enabled: boolean) => ipcRenderer.invoke('set-compact-window', enabled),
   getStatus: () => ipcRenderer.invoke('get-status'),
   getLinuxPreflight: () => ipcRenderer.invoke('get-linux-preflight'),
   listLinuxRunningApps: () => ipcRenderer.invoke('list-linux-running-apps'),

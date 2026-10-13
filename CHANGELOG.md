@@ -33,9 +33,13 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 Cobertura: `traffic-log.test.ts`, `qualidade-de-vida.test.ts`, `wait-condition.test.ts` (parser do `tasklist` e vigia do Discord), `windows-discord-discovery.test.ts` (limites e ausência dos cmdlets lentos) e ajustes em `ativacao-guard.test.ts`.
 
-### Windows: correção do CSS, menos processos em segundo plano e sem congelar na ativação
+### Windows: "Sair" que não travava mais, correção do CSS, menos processos em segundo plano e sem congelar na ativação
+
+**Correção: "Sair" com o bypass ativo travava para sempre (existe desde o 2.0.9).** O encerramento do app embrulhava o `deactivateAll()` na fila serial de operações (`withWireSockLifecycle("encerrar-windows", ...)`), e o `deactivateAll()` enfileira a si mesmo de novo na mesma fila (`"desativacao"`). A fila não é reentrante: a operação de dentro espera a de fora terminar, e a de fora espera a de dentro. O app nunca chegava a `app.quit()`, não restaurava a rede e deixava o `wiresock-client` rodando, e quem forçava o fechamento ficava com um túnel órfão (o que, na ativação seguinte, exigia a inspeção elevada e podia falhar com `spawn EPERM`). O sintoma no log é `inicio de operacao serializada | operation=encerrar-windows` sem o `fim` correspondente. Agora o "Sair" chama o `deactivateAll()` direto (ele já se serializa por dentro) e a limpeza ganhou um prazo de 90 s (`QUIT_CLEANUP_TIMEOUT_MS`): se algum passo travar, por exemplo um pedido de administrador sem resposta, o app encerra mesmo assim em vez de ficar preso. Reproduzido com uma cópia fiel da fila, que trava, e conferido na tag `v2.0.9`, na beta-5 e na beta-7. O teste novo prende o "Sair" sem a fila e com prazo.
 
 **Correção (regressão do PR anterior):** a fusão de um conflito em `src/style.css` deixou a regra `.manual-target-dialog__feedback` sem o `}` de fechamento. O navegador aninha tudo que vem depois dentro da regra aberta, então **todo o CSS adicionado no PR anterior deixava de valer**: o terceiro ícone do topo (atualizar) caía numa linha abaixo, e o card de tráfego, o painel "Como funciona", as animações e o layout estreito ficavam sem estilo. Corrigido, com um teste que reprova CSS de chaves desbalanceadas ou de regras aninhadas por engano.
+
+**Medição (Windows 11, bypass ativo, janela visível, 40 s):** o 2.0.9 original criava **97 processos filhos** (38 `tasklist`, 25 `cmd`, 19 `sc`, 14 `powershell` e a sonda de rota). Esta versão cria **33** (13 `tasklist`, 13 `netsh`, 4 `ping`, 2 `where`, **nenhum `powershell`**), medidos antes da última otimização do `netsh` do failover, que tira os 13 `netsh` quando não há adaptador `ProTUN`. Na ativação com um túnel órfão de uma sessão anterior foram **observados 3 PowerShell** abrindo. Pelo código, são a inspeção elevada do túnel antigo, a limpeza dele e o início do túnel novo (não conferi cada um); sem túnel órfão o esperado é só o do início, o que ainda não foi medido.
 
 **Menos processos filhos com o bypass ativo** (o app criava processos sem parar: o amostrador de failover roda a cada 3 s, o monitor do card a cada 2 s, e vários caminhos usavam `execSync`, que no Windows passa por um `cmd.exe` e dobra a contagem):
 
@@ -44,14 +48,18 @@ Cobertura: `traffic-log.test.ts`, `qualidade-de-vida.test.ts`, `wait-condition.t
 - `isWireSockActiveAsync` consulta o processo (`tasklist`) **antes** dos dois `sc query`. O resultado é o mesmo "serviço rodando OU processo vivo"; com o túnel ativo, o processo responde no lugar de até três consultas.
 - A procura da CLI do WireSock (`findWireSockCli`) fica **em cache por 60 s**, inclusive o "não achei" (2 `where` síncronos por chamada).
 - O **monitor do card**: o ping passa de a cada 2 s para a cada 10 s, e sem o adaptador `ProTUN` o `netsh` só é revisto de 30 em 30 s (antes devolvia sempre nulo a cada 2 s).
+- O **amostrador de failover** também lembra por 30 s que o adaptador `ProTUN` não existe e pula o `netsh` nesse intervalo (a prontidão do túnel não faz isso, para ver na hora um adaptador que apareça depois do início).
 - A vigia da **desativação adiada** passa de 5 s para 10 s: o túnel cai até 10 s depois de fechar o Discord, com metade das consultas.
 - `execSync` virou `execFileSync` em `wiresock.ts` (`sc.exe`, `tasklist`, `where.exe`): sem a camada de `cmd.exe`, cada chamada cria um processo em vez de dois.
 
 **Interface:**
 
+- **Janela compacta** (Configurações, desligada por padrão): abre na largura mínima (360 px), com o layout em coluna, e **trava o tamanho**. Vale na hora ao ligar ou desligar, a altura continua seguindo o conteúdo, e a preferência fica em `janelaCompacta` no `settings.json`. Desligada, a janela segue redimensionável (mínimo 360 × 420 px).
+- O painel "Como funciona" ganhou uma **ilustração animada** (SVG inline): o Discord vai pelo túnel até o servidor VPN e os outros apps seguem direto pela internet. Usa as cores do tema, tem título e descrição para leitor de tela e fica parada com `prefers-reduced-motion`.
 - O card de tráfego mostra **só o ping**, sem células vazias, quando não há adaptador `ProTUN`.
 - Os textos de apoio das Configurações quebram em até 2 linhas em vez de serem cortados com reticências, e a largura mínima da janela sobe de 340 para 360 px (a 340 o botão "Proton Otimizado" estourava 2 px).
 - A leitura do `netsh` ignora diferença de maiúsculas no nome do adaptador.
+- "Checar updates" diz **"Já está procurando, aguarde"** quando já há uma verificação em andamento, em vez de responder "você está na versão mais nova" sem ter conferido (`checkWindowsUpdate` volta na hora nesse caso).
 
 **Limpeza:** código morto da sonda de rota removido de `electron/main.ts` (imports, `logRouteProbe` e as variáveis do vigia que só eram escritas). `route-diagnostics.ts` e `discord-scope-proof.ts` continuam no repositório, sem uso no `main.ts`.
 
@@ -62,7 +70,7 @@ Cobertura: `traffic-log.test.ts`, `qualidade-de-vida.test.ts`, `wait-condition.t
 - "Reiniciar bypass" zera a assinatura da última ativação, então ignora a guarda "já ativo com a mesma configuração".
 - A janela só é criada no boot se o app não iniciar oculto no login.
 
-**Fora do escopo (declarado):** o **plugin Vencord/Equicord**, o **standalone**, o **Linux** e o **macOS** não foram portados nem testados. Atenção: o renderer e o `electron/main.ts` são compartilhados, então a **janela redimensionável** e o **modo desenvolvedor no app empacotado** valem também no Linux e no macOS, sem teste nessas plataformas. Lendo o código do plugin: ele não usa a varredura de registro que levava 35 s (tem a própria detecção e já agrupa as consultas CIM em `vpn-windows.ts`), mas a taxa de processos dele não foi medida. As contagens de processos desta seção vêm do código e de um inventário por leitura, não de nova medição em execução.
+**Fora do escopo (declarado):** o **plugin Vencord/Equicord**, o **standalone**, o **Linux** e o **macOS** não foram portados nem testados. Atenção: o renderer e o `electron/main.ts` são compartilhados, então a **janela redimensionável** e o **modo desenvolvedor no app empacotado** valem também no Linux e no macOS, sem teste nessas plataformas. Lendo o código do plugin: ele não usa a varredura de registro que levava 35 s (tem a própria detecção e já agrupa as consultas CIM em `vpn-windows.ts`), mas a taxa de processos dele não foi medida.
 
 ## [2.0.10-beta-9] - 2026-10-12
 

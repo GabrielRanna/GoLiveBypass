@@ -3584,3 +3584,88 @@ html[data-theme='dark'] .settings-switch input:checked + .switch-track .switch-t
 .traffic-cell[hidden] {
   display: none;
 }
+
+/* Ilustracao animada do painel "Como funciona": o Discord vai pelo tunel, o resto vai direto */
+.guide-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  /* O painel e uma coluna flex com altura maxima: sem isto o desenho encolhe ate altura 0. */
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+.guide-art .ga-box {
+  fill: var(--surface-muted);
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+}
+.guide-art .ga-box--on,
+.guide-art .ga-chip--on {
+  stroke: var(--ok-ink);
+}
+.guide-art .ga-chip {
+  fill: var(--surface);
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+}
+.guide-art .ga-label,
+.guide-art .ga-chip-text,
+.guide-art .ga-note {
+  font-family: var(--sans);
+  fill: var(--muted);
+  font-size: 9px;
+}
+.guide-art .ga-label {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  font-size: 8px;
+}
+.guide-art .ga-chip-text {
+  fill: var(--ink-strong);
+  font-size: 9.5px;
+  font-weight: 600;
+}
+.guide-art .ga-note--on {
+  fill: var(--ok-ink);
+}
+.guide-art .ga-lane {
+  stroke: var(--line-strong);
+  stroke-width: 2;
+  stroke-dasharray: 3 4;
+  stroke-linecap: round;
+}
+.guide-art .ga-lane--on {
+  stroke: var(--ok-ink);
+  opacity: 0.5;
+}
+.guide-art .ga-tunnel {
+  fill: color-mix(in srgb, var(--ok-ink) 14%, transparent);
+  stroke: var(--ok-ink);
+  stroke-width: 1;
+  animation: ga-pulse 2.4s ease-in-out infinite;
+}
+.guide-art .ga-packet {
+  fill: var(--ok-ink);
+  opacity: 0;
+  animation: ga-flow 2.4s linear infinite;
+}
+.guide-art .ga-packet--direct {
+  fill: var(--faint);
+  animation-duration: 3.2s;
+}
+@keyframes ga-flow {
+  0% { transform: translateX(0); opacity: 0; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { transform: translateX(196px); opacity: 0; }
+}
+@keyframes ga-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-art .ga-tunnel { animation: none; }
+  .guide-art .ga-packet { animation: none; opacity: 0; }
+  /* parado: um pacote no meio de cada trilha mostra a ideia sem movimento */
+  .guide-art .ga-packet--lead { transform: translateX(98px); opacity: 1; }
+}

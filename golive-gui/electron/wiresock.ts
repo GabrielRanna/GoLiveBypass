@@ -699,12 +699,20 @@ export async function pingHostAsync(host: string): Promise<number | null> {
   }
 }
 
-export async function getWireSockAdapterTrafficAsync(): Promise<WireSockAdapterTraffic | null> {
+// Sem o adaptador ProTUN o netsh devolve sempre null. O failover (a cada 3 s) pede para lembrar
+// essa ausencia por 30 s e pular o processo; a prontidao nao pede, porque la um adaptador que
+// aparece depois do inicio precisa ser visto na hora.
+let adaptadorAusenteAte = 0;
+
+export async function getWireSockAdapterTrafficAsync(options: { lembrarAusencia?: boolean } = {}): Promise<WireSockAdapterTraffic | null> {
   if (process.platform !== "win32") return null;
+  if (options.lembrarAusencia && Date.now() < adaptadorAusenteAte) return null;
   // netsh (~90ms) no lugar de um PowerShell inteiro (~600ms) por leitura: a prontidao le a cada
   // segundo e o failover a cada 3s. O PowerShell fica so de reserva se o netsh nao rodar.
   try {
-    return parseNetshInterfaceBytes(await execFileText("netsh", ["interface", "ipv4", "show", "subinterfaces"]), "ProTUN");
+    const leitura = parseNetshInterfaceBytes(await execFileText("netsh", ["interface", "ipv4", "show", "subinterfaces"]), "ProTUN");
+    if (options.lembrarAusencia && leitura === null) adaptadorAusenteAte = Date.now() + 30_000;
+    return leitura;
   } catch { /* cai no PowerShell */ }
   try {
     const script = "$a = Get-NetAdapterStatistics -Name 'ProTUN' -ErrorAction Stop; [PSCustomObject]@{adapter='ProTUN';receivedBytes=[int64]$a.ReceivedBytes;sentBytes=[int64]$a.SentBytes} | ConvertTo-Json -Compress";

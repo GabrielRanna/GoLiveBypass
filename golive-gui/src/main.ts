@@ -49,7 +49,9 @@ declare global {
       deactivate: () => Promise<void>;
       restoreInternet: () => Promise<{ ok: boolean; error?: string; residual?: string[]; dnsOk?: boolean; httpsOk?: boolean }>;
       restartBypass: () => Promise<{ ok: boolean; error?: string }>;
-      checkUpdates: () => Promise<{ ok: boolean; error?: string; updateReady?: boolean }>;
+      checkUpdates: () => Promise<{ ok: boolean; error?: string; updateReady?: boolean; jaVerificando?: boolean }>;
+      getCompactWindow: () => Promise<boolean>;
+      setCompactWindow: (enabled: boolean) => Promise<boolean>;
       getStatus: () => Promise<string>;
       getLinuxPreflight: () => Promise<{
         ok: boolean;
@@ -288,6 +290,7 @@ let hasSelectedConf = false;
 const appVersionEl = document.getElementById('appVersion');
 const startupToggle = document.getElementById('startupToggle') as HTMLInputElement;
 const autoUpdateToggle = document.getElementById('autoUpdateToggle') as HTMLInputElement | null;
+const compactWindowToggle = document.getElementById('compactWindowToggle') as HTMLInputElement | null;
 const autoFailoverToggle = document.getElementById('autoFailoverToggle') as HTMLInputElement | null;
 const updateChannelRow = document.getElementById('updateChannelRow') as HTMLElement | null;
 const updateChannelToggle = document.getElementById('updateChannelToggle') as HTMLInputElement | null;
@@ -423,6 +426,7 @@ function openSettingsDialog() {
   syncThemeOptions();
   void refreshAutoFailover();
   void refreshProtonRoutePreference();
+  void window.api.getCompactWindow().then((on) => { if (compactWindowToggle) compactWindowToggle.checked = on; }).catch(() => {});
   settingsDialog.hidden = false;
   settingsClose?.focus();
 }
@@ -709,6 +713,17 @@ restartBypassBtn?.addEventListener('click', () => {
   });
 });
 
+// Janela compacta: o main troca a largura e trava (ou destrava) o tamanho; a altura segue o conteudo.
+compactWindowToggle?.addEventListener('change', async () => {
+  if (!compactWindowToggle) return;
+  try {
+    await window.api.setCompactWindow(compactWindowToggle.checked);
+    fitWindowToContent();
+  } catch {
+    compactWindowToggle.checked = !compactWindowToggle.checked;
+  }
+});
+
 // Botao de icone: o feedback vai no tooltip (data-tip) e o icone gira enquanto procura.
 checkUpdatesBtn?.addEventListener('click', async () => {
   if (checkUpdatesBtn.disabled) return;
@@ -721,6 +736,7 @@ checkUpdatesBtn?.addEventListener('click', async () => {
     const result = await window.api.checkUpdates();
     resultado = !result.ok
       ? (result.error || 'Não foi possível checar')
+      : result.jaVerificando ? 'Já está procurando, aguarde'
       : result.updateReady ? 'Update pronto, veja a bandeja' : 'Você está na versão mais nova';
   } catch {
     resultado = 'Não foi possível checar';

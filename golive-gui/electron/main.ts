@@ -183,7 +183,7 @@ let protonFailoverGeneration = 0;
 let protonFailoverTracker: FailoverHealthTracker | null = null;
 let protonFailoverPreviousAdapterTraffic: ReturnType<typeof getWireSockAdapterTraffic> = null;
 let protonFailoverDisabled = false;
-let protonRoutePoolBuild: Promise<void> | null = null;
+let protonRoutePoolBuild: Promise<unknown> | null = null;
 let protonRoutePoolAbort: AbortController | null = null;
 function withWireSockLifecycle<T>(operation: string, task: () => Promise<T>): Promise<T> {
   const run = wireSockLifecycleQueue.then(async () => {
@@ -707,7 +707,7 @@ async function toggleFromTray() {
       await deactivateAll({ manterDiscordAberto: true });
       persistBypassEnabled(false);
     } else {
-      await activateBypass(null, "");
+      await activateBypass(null);
     }
   } catch (error) {
     console.error('toggle falhou:', error);
@@ -1068,7 +1068,7 @@ async function discordProcessStateAsync(): Promise<ProcessProbeState> {
         return "running";
       } catch (e) {
         // pgrep usa exit 1 para "nenhum processo", que e uma resposta valida.
-        const code = (e as NodeJS.ErrnoException)?.status;
+        const code = (e as { status?: number | null })?.status;
         if (code === 1) discordscan.runningPgrep(processName, false);
         else {
           probeFailed = true;
@@ -1146,7 +1146,7 @@ async function discordUpdaterProcessState(): Promise<ProcessProbeState> {
   } catch (err) {
     // O exit 1 e' a resposta esperada do script para nenhuma instancia Discord.
     // `execFileSync` expunha o codigo em `.status`; o assincrono usa `.code`.
-    const failure = err as NodeJS.ErrnoException & { status?: number };
+    const failure = err as { status?: number; code?: string | number };
     if (failure.status === 1 || failure.code === 1) return "stopped";
     logger.warn("discord", "updater.estado_desconhecido", {
       erro: String((err as Error)?.message ?? err),
@@ -1952,7 +1952,7 @@ function scheduleProtonRoutePoolBuild(generation: number, count: number): void {
   const task = buildProtonRoutePoolNow(generation, count).catch((error) => {
     logger.warn("proton", "pool.background.error", { erro: String((error as Error)?.message ?? error) });
   });
-  let tracked: Promise<void>;
+  let tracked: Promise<unknown>;
   tracked = task.finally(() => {
     if (protonRoutePoolBuild === tracked) {
       protonRoutePoolBuild = null;
@@ -2415,7 +2415,7 @@ function startProtonFailoverMonitor(): void {
   })().catch((error) => logger.warn("proton", "failover.setup.error", { erro: String((error as Error)?.message ?? error) }));
 }
 
-export interface WindowsRouteReadiness {
+export type WindowsRouteReadiness = {
   verified: boolean;
   state: "connected" | "unverified" | "disconnected";
   source: WireSockConnectionStatus["source"] | "wg" | "functional" | "none";
@@ -2801,6 +2801,9 @@ type LinuxElevationEventName =
   | "authorization.requested"
   | "authorization";
 type LinuxElevationProvider = "none" | "root" | "sudo" | "zenity" | "kdialog" | "askpass" | "pkexec" | "tty" | "gui" | "unknown";
+type LinuxElevationResult =
+  | "not_attempted" | "requested" | "accepted" | "rejected" | "cancelled" | "unavailable"
+  | "failed" | "cached" | "empty" | "authorized" | "unknown";
 type LinuxElevationDetails = {
   input?: "nonempty" | "empty" | "unknown" | "not_applicable";
   code?: "0" | "1" | "2" | "126" | "127" | "other";
@@ -4595,7 +4598,8 @@ ipcMain.handle("optimize-proton-route", async (event, options?: ProtonOptimizati
             country,
             freeOnly,
             autoPing,
-            candidates: new sessions.constructor(),
+            // Construtor do proprio Map das sessoes (os harnesses de teste nao expoem o global Map).
+            candidates: new (sessions.constructor as MapConstructor)<string, ManualRouteCandidateState>(),
             expiresAt: Date.now() + MANUAL_MEASUREMENT_TTL_MS,
           });
           event.sender.once("destroyed", () => sessions.delete(event.sender.id));

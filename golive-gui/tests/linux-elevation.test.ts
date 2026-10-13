@@ -241,7 +241,8 @@ function runElevation(options: ElevationOptions): ElevationResult {
   return { log, stdout, stderr, status };
 }
 
-describe("elevacao Linux no standalone", () => {
+// Depende de /bin/sh, /usr/bin e do comportamento de sudo/pkexec do Linux.
+describe.skipIf(process.platform !== "linux")("elevacao Linux no standalone", () => {
   it("usa sudo quando a autorizacao ja esta cacheada", () => {
     const result = runElevation({ cached: true, pkexec: true });
     expect(result.status).toBe(0);

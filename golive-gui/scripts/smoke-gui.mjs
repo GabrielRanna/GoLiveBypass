@@ -122,7 +122,16 @@ try {
   await s.enviar("Page.enable");
   // Recarrega com o Runtime ligado para pegar qualquer exceção da carga da página.
   await s.enviar("Page.reload", { ignoreCache: true });
-  await dormir(6000);
+  await dormir(2000);
+  // A primeira leitura de status espera a varredura do Discord, e só no fim dela os botões que
+  // dependem da plataforma aparecem (src/main.ts). Num runner lento isso passa de 6 s: espera o
+  // status sair de "Verificando..." em vez de um tempo fixo.
+  for (let i = 0; i < 30; i++) {
+    const st = await s.enviar("Runtime.evaluate", { expression: 'document.getElementById("statusText")?.textContent ?? ""', returnByValue: true });
+    if (!/Verificando/i.test(st.result?.result?.value ?? "")) break;
+    await dormir(1000);
+  }
+  await dormir(1000);
   const resp = await s.enviar("Runtime.evaluate", { expression: INSPECAO, awaitPromise: true, returnByValue: true });
   const r = JSON.parse(resp.result?.result?.value ?? "{}");
   relatorio.janela = r;

@@ -1,4 +1,8 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it as vitestIt, vi } from "vitest";
+import { pluginHostSupported } from "./helpers/plugin-host";
+
+// O controlador do plugin só roda em Windows x64 e Linux x64; fora deles estes testes pulam.
+const it = vitestIt.skipIf(!pluginHostSupported);
 import { EventEmitter } from "events";
 import fs from "fs";
 import os from "os";

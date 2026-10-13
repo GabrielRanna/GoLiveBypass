@@ -96,29 +96,15 @@ vi.mock('child_process', () => ({
   }),
 }));
 
-// O spawn é simulado, mas o produto exige um arquivo de helper existente (e, sem ele,
-// tentaria baixar o runtime pela rede). Um stub temporário faz a busca ser determinística
-// e independente de o proton-confgen real estar compilado.
-const stub = vi.hoisted(() => ({ dir: '', exe: '' }));
-vi.mock('../electron/proton-runtime', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../electron/proton-runtime')>();
-  const nodeFs = await import('fs');
-  const nodeOs = await import('os');
-  const nodePath = await import('path');
-  stub.dir = nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'golive-confgen-stub-'));
-  stub.exe = nodePath.join(stub.dir, process.platform === 'win32' ? 'proton-confgen.exe' : 'proton-confgen');
-  nodeFs.writeFileSync(stub.exe, 'stub');
-  return {
-    ...original,
-    findProtonConfgenPath: () => stub.exe,
-    ensureProtonConfgen: async () => stub.exe,
-  };
-});
+// O produto exige um helper existente; o stub evita depender do proton-confgen compilado.
+vi.mock('../electron/proton-runtime', async (original) =>
+  (await import('./helpers/confgen-runtime-stub')).stubProtonRuntime(await original<object>()));
+import { removeConfgenStub } from './helpers/confgen-runtime-stub';
 
 import { canReuseMeasuredProfile, generateManualProtonConfig, generateOptimalProtonConfig, generateProtonRouteCatalog, generateProtonRoutePool, findProtonConfgenExe, MEASUREMENT_CRITERION_VERSION, removeStagedProtonConfig, runConfgen } from '../electron/proton';
 import * as logger from '../electron/logger';
 
-afterAll(() => { fs.rmSync(stub.dir, { recursive: true, force: true }); });
+afterAll(removeConfgenStub);
 
 describe('medidor isolado da regra WireSock', () => {
   beforeEach(() => {

@@ -6,6 +6,8 @@ import path from "node:path";
 import { findProtonConfgenPath } from "../../electron/proton-runtime";
 
 export function resolveConfgenBinary(): string | undefined {
+  // O runtime Proton da GUI só existe para Windows x64 e Linux x64.
+  if ((process.platform !== "win32" && process.platform !== "linux") || process.arch !== "x64") return undefined;
   const guiDir = process.cwd();
   const context = { cwd: guiDir, platform: process.platform };
   const found = findProtonConfgenPath(context);

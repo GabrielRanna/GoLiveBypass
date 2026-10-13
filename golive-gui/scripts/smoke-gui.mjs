@@ -7,7 +7,12 @@
 // erro de JavaScript na carga e o "iniciado" no gui.log. Não ativa o bypass: túnel, rede e o
 // "Sair" com o bypass ativo continuam precisando de teste manual na máquina.
 //
-// Uso: node scripts/smoke-gui.mjs <executável> [--json <arquivo>]
+// Uso: node scripts/smoke-gui.mjs <executável> [--json <arquivo>] [--janela-na-frente] [--busca-presa]
+//   --janela-na-frente  a janela está visível e na frente (CI): liga e desliga a janela compacta e
+//                       confere a largura da página (com a janela coberta o Chromium não redesenha).
+//   --busca-presa       a busca de updates da inicialização está presa (o CI aponta api.github.com
+//                       para um endereço que não responde): o clique em "Checar updates" tem que
+//                       responder "Já está procurando" em vez de fingir que conferiu.
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,6 +20,8 @@ import path from "node:path";
 
 const exe = process.argv[2];
 const jsonOut = process.argv.includes("--json") ? process.argv[process.argv.indexOf("--json") + 1] : null;
+const janelaNaFrente = process.argv.includes("--janela-na-frente");
+const buscaPresa = process.argv.includes("--busca-presa");
 if (!exe || !fs.existsSync(exe)) {
   console.error(`executável não encontrado: ${exe ?? "(nenhum)"}`);
   process.exit(2);
@@ -141,6 +148,27 @@ try {
     .map((e) => e.params.entry?.text ?? e.params.args?.map((a) => a.value ?? a.description).join(" "));
   relatorio.excecoes = excecoes;
   relatorio.errosConsole = errosConsole;
+  const avaliar = async (expr) => (await s.enviar("Runtime.evaluate", { expression: expr, awaitPromise: true, returnByValue: true })).result?.result?.value;
+  if (janelaNaFrente) {
+    // Clique de verdade no interruptor (dispara o "change"), e espera a página acompanhar o tamanho.
+    const esperarLargura = (alvo) => avaliar(`(async () => { for (let i = 0; i < 25; i++) { if (Math.abs(innerWidth - ${alvo}) <= 4) return innerWidth; await new Promise((r) => setTimeout(r, 200)); } return innerWidth; })()`);
+    const antes = await avaliar("innerWidth");
+    await avaliar('(() => { document.getElementById("compactWindowToggle").click(); return 0; })()');
+    const compacta = await esperarLargura(360);
+    await avaliar('(() => { document.getElementById("compactWindowToggle").click(); return 0; })()');
+    const depois = await esperarLargura(720);
+    conferir("janela compacta liga (360) e desliga (720) com a janela na frente", Math.abs(compacta - 360) <= 4 && Math.abs(depois - 720) <= 4, { antes, compacta, depois });
+  }
+  if (buscaPresa) {
+    const dica = await avaliar(`(async () => {
+      const b = document.getElementById("checkUpdatesBtn");
+      if (!b || b.hidden) return "botão ausente";
+      b.click();
+      for (let i = 0; i < 40; i++) { const t = b.dataset.tip || ""; if (t && t !== "Procurando…" && t !== "Checar updates") return t; await new Promise((r) => setTimeout(r, 100)); }
+      return b.dataset.tip;
+    })()`);
+    conferir("Checar updates com a busca da inicialização presa responde 'Já está procurando'", /Já está procurando/.test(dica ?? ""), dica);
+  }
   s.fechar();
 
   conferir("página carregada", r.readyState === "complete", r.readyState);

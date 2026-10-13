@@ -67,6 +67,8 @@ O programa **não é assinado**. O sistema avisa na primeira vez. Na 2.0.0, a GU
 
 **Windows (SmartScreen):** **Mais informações → Executar assim mesmo**.
 
+**Antivírus acusou "trojan" ou "stealer"?** É falso positivo por heurística em programa sem assinatura. Veja [O antivírus acusou o GoLiveBypass?](docs/antivirus.md) para conferir o arquivo pelo SHA-256 e saber o que fazer.
+
 #### macOS
 
 O suporte macOS está temporariamente indisponível na 2.0.0. A GUI não usa mais injeção ou PAC;

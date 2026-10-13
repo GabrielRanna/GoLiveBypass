@@ -33,7 +33,8 @@ if (args[0] === 'mod' && args[1] === 'download' && args[2] === '-json') {
   console.log(JSON.stringify({Dir:${JSON.stringify(moduleDirectory)}})); process.exit(0);
 }
 if (args[0] === 'build' && args.includes('-o')) {
-  if (process.cwd() !== ${JSON.stringify(moduleDirectory)} || process.env.GOOS !== 'linux' || process.env.CGO_ENABLED !== '0') process.exit(3);
+  // realpath nos dois lados: no macOS o tmpdir (/var) é link para /private/var e cwd() devolve o real.
+  if (fs.realpathSync(process.cwd()) !== fs.realpathSync(${JSON.stringify(moduleDirectory)}) || process.env.GOOS !== 'linux' || process.env.CGO_ENABLED !== '0') process.exit(3);
   fs.writeFileSync(args[args.indexOf('-o') + 1], ${JSON.stringify(bytes)}); process.exit(0);
 }
 console.error('unexpected Go command'); process.exit(4);

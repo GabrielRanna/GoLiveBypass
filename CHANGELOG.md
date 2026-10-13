@@ -6,6 +6,13 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Linux: senha do sudo pedida na janela da GUI quando o sistema não tem diálogo nem polkit
+
+- Sem zenity/kdialog e sem agente polkit alcançável (NixOS enxuto, spins mínimos), a ativação morria em "não há agente de autenticação polkit" sem alternativa. Agora a GUI resolve sozinha: quando o script sinaliza `prompt.unavailable reason=provider_missing`, abre um modal próprio de senha e repete a operação com a credencial (provider `gui`), até 3 tentativas com aviso de "senha recusada" entre elas; cancelar mantém o erro original e o Discord intacto.
+- Contrato: `GOLIVE_SUDO_PASS_FILE` aponta um arquivo 0600 com a senha + newline, válido só com `GOLIVE_GUI=1`; vazio/ilegível/ausente cai no fluxo normal (zenity → kdialog → pkexec → askpass, ordem inalterada). A senha nunca entra em log, argv ou variável de ambiente — só no arquivo, apagado pelo trap EXIT do script e pelo `dispose()` da GUI em qualquer caminho. Com provider `gui`, senha incorreta falha na primeira tentativa (`reason=incorrect_password`, sem re-prompt interno): quem re-pergunta é a janela.
+- Fiação: `runScript` ganhou `extraEnv` opcional; `createLinuxPasswordFallback` envolve `--ensure-dependencies`, `--yes --cleanup-legacy` (ativação) e `--uninstall` (desativação); o parser de elevação aceita `provider=gui` e sinaliza `providerMissing`/`guiPasswordRejected`. Página `sudo-password.html` registrada no `vite.config.ts`; IPC `sudo-password-response` validado por sender, limite de 1024 chars.
+- Prova na VM NixOS 26.05 (sem diálogos externos): modal aberto, senha digitada, `sudo.validation provider=gui result=accepted`, túnel com handshake vivo e Discord relançado no namespace, nenhum arquivo residual. Cobertura: 3 casos no harness `linux-elevation.test.ts` + caso `provider=gui` no `linux-elevation-logger.test.ts`. Nada muda em Windows, macOS, plugin ou proxy legado.
+
 ### Linux: fallback de alvo manual quando a varredura não reconhece a instalação
 
 - O usuário que **tem** o Discord instalado continuava vendo "Nenhuma instalação do Discord foi encontrada.": `discord_dirs` é uma lista de raízes e padrões (bootstrap em `~/.config`, nativo, paralelos, snap, Nix, flatpaks conhecidos), e o que escapa dela deixa o preflight `ok:false` — com `linuxPreflightRepairable` exigindo `discord.found`, a ativação ficava barrada mesmo com o WireGuard pronto. Faltava descobrir **o que** lançar dentro do namespace, não o túnel.

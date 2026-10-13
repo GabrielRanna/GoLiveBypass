@@ -37,6 +37,8 @@ type ElevationOptions = {
   cachedPass?: boolean;
   strictShell?: boolean;
   attempts?: number;
+  guiPassword?: string;
+  guiPasswordFileMissing?: boolean;
 };
 type ElevationResult = {
   log: string;
@@ -134,6 +136,15 @@ function runElevation(options: ElevationOptions): ElevationResult {
   const passFile = path.join(dir, "pass");
   const secret = "unit-test-sudo-secret";
   fs.writeFileSync(passFile, `${secret}\n`);
+  // Senha vinda da janela da GUI: arquivo 0600 apontado por GOLIVE_SUDO_PASS_FILE.
+  let guiPassFile = "";
+  if (options.guiPassword !== undefined) {
+    guiPassFile = path.join(dir, "gui-pass");
+    fs.writeFileSync(guiPassFile, options.guiPassword.length > 0 ? `${options.guiPassword}\n` : "");
+    fs.chmodSync(guiPassFile, 0o600);
+  } else if (options.guiPasswordFileMissing) {
+    guiPassFile = path.join(dir, "gui-pass-ausente");
+  }
   const call = options.authorize
     ? "authorize_install_elevation"
     : options.readonly
@@ -166,6 +177,7 @@ function runElevation(options: ElevationOptions): ElevationResult {
       PROMPT_SECRET: secret,
       TMPDIR: dir,
       LD_LIBRARY_PATH: "/appimage/lib",
+      ...(guiPassFile ? { GOLIVE_SUDO_PASS_FILE: guiPassFile } : {}),
     },
     encoding: "utf8",
   });
@@ -529,5 +541,37 @@ describe("elevacao Linux no standalone", () => {
     expect(`${result.log}\n${result.stdout}\n${result.stderr}`).not.toContain(
       "unit-test-sudo-secret",
     );
+  });
+
+  it("usa a senha da GUI sem zenity, kdialog ou pkexec", () => {
+    const result = runElevation({ guiPassword: "senha-da-janela", authorize: true });
+    expect(result.status).toBe(0);
+    expect(result.log).toContain("sudo_validate:nonempty");
+    expect(result.log).not.toContain("prompt:");
+    expect(result.log).not.toContain("pkexec:");
+    expect(result.stderr).toMatch(/prompt\.finished provider=gui result=not_attempted input=nonempty code=0/);
+    expect(result.stderr).toMatch(/sudo\.validation provider=gui result=accepted code=0/);
+    expect(`${result.log}\n${result.stdout}\n${result.stderr}`).not.toContain("senha-da-janela");
+  });
+
+  it("senha da GUI incorreta falha uma vez sem re-perguntar sozinha", () => {
+    const result = runElevation({ guiPassword: "senha-errada", sudoValidation: "incorrect", authorize: true });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/sudo\.validation provider=gui result=rejected code=1 phase=password reason=incorrect_password/);
+    expect(result.stderr).toContain("Informe a senha novamente na janela");
+    expect(result.stderr).not.toContain("tentativa");
+    expect(result.log.match(/sudo_validate:nonempty/g)).toHaveLength(1);
+    expect(`${result.log}\n${result.stdout}\n${result.stderr}`).not.toContain("senha-errada");
+  });
+
+  it("arquivo de senha da GUI vazio ou ausente cai no fluxo normal", () => {
+    const empty = runElevation({ guiPassword: "", pkexec: true });
+    expect(empty.status).toBe(0);
+    expect(empty.log).toContain("pkexec:");
+    expect(empty.stderr).not.toContain("provider=gui");
+    const missing = runElevation({ guiPasswordFileMissing: true, pkexec: true });
+    expect(missing.status).toBe(0);
+    expect(missing.log).toContain("pkexec:");
+    expect(missing.stderr).not.toContain("provider=gui");
   });
 });

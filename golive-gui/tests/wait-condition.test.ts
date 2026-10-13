@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runningImageNames, waitForCondition, waitForProcessRunning, waitForProcessStopped, whenProcessStops } from "../electron/wait-condition";
+import { memoizeWithTtl, planoDoMonitor, runningImageNames, tasklistHasProcess, waitForCondition, waitForProcessRunning, waitForProcessStopped, whenProcessStops } from "../electron/wait-condition";
 
 describe("espera de lifecycle", () => {
   it("retorna assim que o recurso encerra", async () => {
@@ -99,5 +99,54 @@ describe("espera de lifecycle", () => {
     cancel();
     await ticks[0]();
     expect(fired).toBe(0);
+  });
+
+  it("tasklistHasProcess exige imagem E pid exatos na mesma linha do CSV", () => {
+    const csv = [
+      '"wiresock-client.exe","7060","Console","3","16.540 K"',
+      '"other.exe","1234","Console","1","1 K"',
+      '"wiresock-client.exe","70600","Console","3","1 K"',
+    ].join("\r\n");
+    expect(tasklistHasProcess(csv, "wiresock-client.exe", 7060)).toBe(true);
+    expect(tasklistHasProcess(csv, "WIRESOCK-CLIENT.EXE", 7060)).toBe(true);
+    expect(tasklistHasProcess(csv, "wiresock-client.exe", 706)).toBe(false);
+    expect(tasklistHasProcess(csv, "wiresock-client.exe", 1234)).toBe(false);
+    expect(tasklistHasProcess("INFO: No tasks are running which match the specified criteria.", "wiresock-client.exe", 7060)).toBe(false);
+  });
+
+  it("planoDoMonitor: com contadores le todo tique, sem contadores so de 30 em 30 s, ping a cada 10 s", () => {
+    // tique de 2 s: 5 tiques = 10 s, 15 tiques = 30 s
+    const com = Array.from({ length: 10 }, (_, t) => planoDoMonitor(t, true));
+    expect(com.every((p) => p.lerContadores)).toBe(true);
+    expect(com.map((p) => p.medirPing)).toEqual([true, false, false, false, false, true, false, false, false, false]);
+
+    const sem = Array.from({ length: 31 }, (_, t) => planoDoMonitor(t, false));
+    expect(sem.filter((p) => p.lerContadores).length).toBe(3); // tiques 0, 15 e 30
+    expect(sem[0].lerContadores).toBe(true);
+    expect(sem[15].lerContadores).toBe(true);
+    expect(sem[7].lerContadores).toBe(false);
+    expect(sem.filter((p) => p.medirPing).length).toBe(7); // 0, 5, 10, 15, 20, 25 e 30
+  });
+
+  it("memoizeWithTtl reaproveita o valor dentro do prazo e recalcula depois, inclusive null", () => {
+    let agora = 1_000;
+    let chamadas = 0;
+    const achar = memoizeWithTtl(() => (++chamadas >= 2 ? "cli.exe" : null), 60_000, () => agora);
+    expect(achar()).toBeNull();
+    agora += 59_000;
+    expect(achar()).toBeNull(); // null tambem fica em cache: era o caso caro (2 spawns sincronos)
+    expect(chamadas).toBe(1);
+    agora += 2_000;
+    expect(achar()).toBe("cli.exe");
+    expect(chamadas).toBe(2);
+    expect(achar()).toBe("cli.exe");
+    expect(chamadas).toBe(2);
+  });
+
+  it("memoizeWithTtl nao guarda excecao e tenta de novo na proxima chamada", () => {
+    let chamadas = 0;
+    const f = memoizeWithTtl(() => { if (++chamadas === 1) throw new Error("falhou"); return chamadas; }, 60_000, () => 0);
+    expect(() => f()).toThrow("falhou");
+    expect(f()).toBe(2);
   });
 });

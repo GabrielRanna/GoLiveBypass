@@ -144,15 +144,15 @@
             </div>
 
             <div class="traffic-card" id="trafficCard" hidden aria-label="Tráfego do Discord no túnel">
-              <div class="traffic-cell traffic-cell--wide">
+              <div class="traffic-cell traffic-cell--wide" data-counters>
                 <span class="traffic-label">Velocidade atual</span>
                 <span class="traffic-value"><span aria-hidden="true">↑</span> <b id="trafficUp">0.0</b> <small>Mbps</small> <span class="traffic-sep" aria-hidden="true">·</span> <span aria-hidden="true">↓</span> <b id="trafficDown">0.0</b> <small>Mbps</small></span>
               </div>
-              <div class="traffic-cell">
+              <div class="traffic-cell" data-counters>
                 <span class="traffic-label">Upload</span>
                 <b class="traffic-value" id="trafficSent">0 MB</b>
               </div>
-              <div class="traffic-cell">
+              <div class="traffic-cell" data-counters>
                 <span class="traffic-label">Download</span>
                 <b class="traffic-value" id="trafficReceived">0 MB</b>
               </div>

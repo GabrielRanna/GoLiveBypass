@@ -2170,8 +2170,10 @@ html[data-theme='dark'] .settings-switch input:checked + .switch-track .switch-t
   color: var(--faint);
   font-size: 10px;
   line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* ate 2 linhas em vez de cortar com reticencias: o texto de apoio fica legivel */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 .settings-switch .switch-track {
   flex: 0 0 auto;
@@ -3333,6 +3335,7 @@ html[data-theme='dark'] .settings-switch input:checked + .switch-track .switch-t
 .manual-target-dialog__feedback {
   font-size: 12.5px;
   color: var(--muted);
+}
 
 /* Painel "Como funciona": reaproveita o .settings-dialog */
 .guide-panel {
@@ -3572,4 +3575,12 @@ html[data-theme='dark'] .settings-switch input:checked + .switch-track .switch-t
   .bypass-description {
     min-height: 0;
   }
+}
+
+/* Sem contadores de bytes (sem o adaptador ProTUN): so o ping, em uma celula */
+.traffic-card--ping-only {
+  grid-template-columns: 1fr;
+}
+.traffic-cell[hidden] {
+  display: none;
 }

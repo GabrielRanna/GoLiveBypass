@@ -29,7 +29,7 @@ import * as logger from "./logger";
 import * as discordscan from "./discordscan";
 import * as logsDir from "./logsDir";
 import { submitBugReport } from "./bugreport";
-import { ensureWireSockInstalled, getWireSockAdapterTrafficNetshAsync, pingHostAsync, trafficSample, type WireSockAdapterTraffic, getWireSockConnectionStatus, getWireSockConnectionStatusAsync, getWireSockAdapterTraffic, getWireSockAdapterTrafficAsync, hasWireSockAdapterTrafficIncrease, isWireSockActive, isWireSockActiveAsync, startWireSockService, switchWireSockService, recoverWireSockNetwork, type WireSockConnectionStatus } from "./wiresock";
+import { ensureWireSockInstalled, listRunningImageNamesAsync, getWireSockAdapterTrafficNetshAsync, pingHostAsync, trafficSample, type WireSockAdapterTraffic, getWireSockConnectionStatus, getWireSockConnectionStatusAsync, getWireSockAdapterTraffic, getWireSockAdapterTrafficAsync, hasWireSockAdapterTrafficIncrease, isWireSockActive, isWireSockActiveAsync, startWireSockService, switchWireSockService, recoverWireSockNetwork, type WireSockConnectionStatus } from "./wiresock";
 import { classifyWgReadiness, getWgStats, getWgStatsAsync, iniciarWgStatsWatchdog, pararWgStatsWatchdog, type WgTunnelStats } from "./wgstats";
 import { classifyFailoverHealth, FailoverHealthTracker, FAILOVER_ROUTE_TIMEOUT_MS, FAILOVER_SAMPLE_INTERVAL_MS, routeCandidateUsable, routePoolDirectory, readRoutePoolManifest, makeRoutePoolManifest, routePoolMatches, ROUTE_POOL_RESERVE_COUNT, ROUTE_POOL_TOTAL, safeRoutePoolPath, writeRoutePoolManifest, type ProtonRouteMetadata, type ProtonRoutePoolManifest } from "./route-failover";
 import { validateWgConfContent } from "./wg-validator";
@@ -39,7 +39,7 @@ import { restoreBypassOnStartup, type StartupOptimizationResult } from "./startu
 import { findWindowsDiscordInstall } from "./windows-discord-install";
 import { assembleWindowsDiscoverySnapshotFromRaw, collectWindowsDiscoveryPowerShell, collectWindowsDiscoveryPowerShellAsync, collectWindowsDiscoverySnapshot, createWindowsDiscoveryCache, failedWindowsDiscoveryRawFor, rootsForEnvironment, toPublicWindowsDiscoveryInstall, type WindowsDiscoveryEnvironment, type WindowsDiscoveryRaw, type WindowsDiscoverySnapshot, type WindowsDiscoverySnapshotCollectors } from "./windows-discord-discovery";
 import { shouldAskRoutePreference } from "./route-preference-prompt";
-import { runningImageNames, waitForProcessRunning, waitForProcessStopped, whenProcessStops, type ProcessProbeState } from "./wait-condition";
+import { planoDoMonitor, runningImageNames, waitForProcessRunning, waitForProcessStopped, whenProcessStops, type ProcessProbeState } from "./wait-condition";
 import { TUNNEL_STARTUP_SETTLE_MS, waitForTunnelStartupSettle } from "./tunnel-startup";
 import { linuxPreflightRepairable, parseLinuxPreflight, linuxPreflightMessage, type LinuxPreflight } from "./linux-preflight";
 import { createProcSeams } from "./linux-proc-seams";
@@ -48,9 +48,6 @@ import { readManualTarget } from "./linux-manual-target";
 import { sessionMarkerPaths } from "./linux-session-marker";
 import { classifyLinuxHealth } from "./linux-health";
 import { PROTON_CAPTCHA_IPC_CHANNEL, isAllowedProtonCaptchaNavigation, parseProtonCaptchaChallenge, validateProtonCaptchaResponse } from "./proton-captcha";
-import { observeRouteDiagnostic } from "./route-diagnostics";
-import { decideRouteProof, maskedIP, type RouteProbeResult } from "./route-proof";
-import { prepareDiscordScopeProbes } from "./discord-scope-proof";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -170,8 +167,6 @@ type WindowsRouteState = "inactive" | "preparing" | "active" | "failed" | "recov
 let windowsRouteStarted = false;
 let windowsRouteState: WindowsRouteState = "inactive";
 let windowsRouteGeneration = 0;
-let windowsRouteWatchdogTimer: ReturnType<typeof setInterval> | null = null;
-let windowsRouteWatchdogInFlight = false;
 
 // Failover automatico e separado dos watchdogs diagnosticos: ele observa apenas
 // a saude do peer WireGuard e so troca depois de falha sustentada. O pool local
@@ -413,7 +408,7 @@ function createWindow() {
     // cortar nada (antes o aviso ficava cortado com a altura fixa de 560).
     height: 560,
     resizable: true,
-    minWidth: 340,
+    minWidth: 360,
     minHeight: 420,
     icon: loadAsset('icon.png'),
     webPreferences: {
@@ -1237,27 +1232,7 @@ function windowsAllowedAppPaths(installs: DiscordInstall[]): string[] {
   return [...apps];
 }
 
-function logRouteProbe(stage: "direct" | "tunnel", attempt: number, result: RouteProbeResult, target = "central") {
-  logger.info("wiresock", "route.probe", {
-    stage,
-    attempt,
-    target,
-    success: result.success,
-    discord_ok: result.discordOk,
-    observations: result.observations.map((item) => ({
-      source: item.source,
-      ip: maskedIP(item.ip),
-      country: item.country || "?",
-      ms: item.latencyMs ?? "?",
-    })),
-    error: result.error || "",
-  });
-}
-
 function stopWindowsRouteWatchdog() {
-  if (windowsRouteWatchdogTimer) clearInterval(windowsRouteWatchdogTimer);
-  windowsRouteWatchdogTimer = null;
-  windowsRouteWatchdogInFlight = false;
   pararMonitorTrafego();
 }
 
@@ -1286,21 +1261,33 @@ function iniciarMonitorTrafego() {
   let anterior: { leitura: WireSockAdapterTraffic; em: number } | null = null;
   let upAnterior: number | null = null;
   let ocupado = false;
+  let tique = 0;
+  let contadoresDisponiveis = true;
+  let ultimoPing: number | null = null;
   monitorTrafegoTimer = setInterval(() => {
     const janelaVisivel = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
     const devMode = logWindow && !logWindow.isDestroyed();
     if (ocupado || (!janelaVisivel && !devMode)) return;
+    const plano = planoDoMonitor(tique++, contadoresDisponiveis);
+    if (!plano.lerContadores && !plano.medirPing) return;
     ocupado = true;
-    void Promise.all([getWireSockAdapterTrafficNetshAsync(), host ? pingHostAsync(host) : Promise.resolve(null)])
-      .then(([leitura, pingMs]) => {
+    void Promise.all([
+      plano.lerContadores ? getWireSockAdapterTrafficNetshAsync() : Promise.resolve(undefined),
+      plano.medirPing && host ? pingHostAsync(host) : Promise.resolve(undefined),
+    ])
+      .then(([leitura, ping]) => {
         if (!monitorTrafegoTimer) return;
-        if (!leitura) {
+        if (ping !== undefined) ultimoPing = ping;
+        const pingMs = ultimoPing;
+        if (leitura === undefined || leitura === null) {
           // Sem interface virtual do WireSock nao ha contadores; o ping ainda vale.
-          anterior = null;
+          if (leitura === null) { contadoresDisponiveis = false; anterior = null; }
+          if (ping === undefined) return; // nada novo para mostrar neste tique
           if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("tunnel-stats", { downMbps: null, upMbps: null, receivedBytes: null, sentBytes: null, pingMs });
           if (devMode) logger.info("trafego", "discord", { ping_ms: pingMs ?? "sem resposta", contadores: "indisponiveis" });
           return;
         }
+        contadoresDisponiveis = true;
         const agora = Date.now();
         if (anterior) {
           const s = trafficSample(anterior.leitura, leitura, agora - anterior.em, upAnterior);
@@ -1590,7 +1577,7 @@ function agendarDesativacaoAdiada() {
       refreshWindowStatus();
       void refreshTray();
     }).catch((error) => logger.error("wiresock", "desativacao.adiada.falhou", { erro: String((error as Error)?.message ?? error) }));
-  });
+  }, { intervalMs: 10_000 }); // 10 s: o tunel cai ate 10 s depois de fechar o Discord, com metade dos tasklist
 }
 
 async function deactivateAll(options: { manterDiscordAberto?: boolean } = {}) {
@@ -2315,13 +2302,20 @@ async function collectProtonFailoverSample(generation: number): Promise<void> {
       statsFailureEvidence: /namespace inativo|sem peer|interface .*inativ/i.test(stats.error || ""),
     };
   } else if (IS_WINDOWS) {
-    const discordRunning = await discordIsRunningAsync();
-    const [traffic, wireSock, stats, tunnelActive] = await Promise.all([
+    // Um unico tasklist responde "o Discord esta aberto" e "o WireSock esta vivo". Se ele falhar,
+    // cada pergunta cai no caminho proprio, como antes.
+    const imagens = await listRunningImageNamesAsync();
+    const discordRunning = imagens
+      ? ALL_APPS.some((flavour) => imagens.has(`${flavour}.exe`.toLowerCase()))
+      : await discordIsRunningAsync();
+    // O estado do WireSock e lido uma vez e repassado ao status da CLI. Antes cada amostra
+    // (a cada 3 s) perguntava a mesma coisa duas vezes, em paralelo: 2x (sc + tasklist).
+    const [traffic, stats, tunnelActive] = await Promise.all([
       getWireSockAdapterTrafficAsync(),
-      getWireSockConnectionStatusAsync(),
       getWgStatsAsync(),
-      isWireSockActiveAsync(),
+      isWireSockActiveAsync({ processAlive: imagens ? imagens.has("wiresock-client.exe") : undefined }),
     ]);
+    const wireSock = await getWireSockConnectionStatusAsync({ activeHint: tunnelActive });
     const trafficIncreasing = hasWireSockAdapterTrafficIncrease(protonFailoverPreviousAdapterTraffic, traffic);
     protonFailoverPreviousAdapterTraffic = traffic;
     sample = {

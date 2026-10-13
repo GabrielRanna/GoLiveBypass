@@ -80,3 +80,33 @@ export function whenProcessStops(
     stop();
   };
 }
+
+// Guarda o resultado de `fn` por `ttlMs` (inclusive null/undefined, que e o caso caro de
+// "nao achei"). Excecao nao e guardada: a proxima chamada tenta de novo.
+export function memoizeWithTtl<T>(fn: () => T, ttlMs: number, now: () => number = Date.now): () => T {
+  let guardado: { valor: T; ate: number } | null = null;
+  return () => {
+    if (guardado && now() < guardado.ate) return guardado.valor;
+    const valor = fn();
+    guardado = { valor, ate: now() + ttlMs };
+    return valor;
+  };
+}
+
+// Em `tasklist /FO CSV /NH`, true se alguma linha tem a imagem E o pid exatos nas duas primeiras
+// colunas. Comparar por coluna evita casar "70600" com "7060" ou outra imagem com o mesmo pid.
+export function tasklistHasProcess(tasklistCsv: string, imageName: string, pid: number): boolean {
+  const alvo = imageName.toLowerCase();
+  for (const line of tasklistCsv.split(/\r?\n/)) {
+    const m = /^"([^"]+)","(\d+)"/.exec(line);
+    if (m && m[1].toLowerCase() === alvo && Number(m[2]) === pid) return true;
+  }
+  return false;
+}
+
+// O monitor de trafego do card roda num tique de 2 s, mas nem toda leitura precisa de um processo
+// novo por tique: o ping muda devagar (a cada 10 s basta) e, sem o adaptador ProTUN, o netsh
+// devolve sempre null (revisa so de 30 em 30 s, caso o adaptador apareca).
+export function planoDoMonitor(tique: number, contadoresDisponiveis: boolean): { lerContadores: boolean; medirPing: boolean } {
+  return { lerContadores: contadoresDisponiveis || tique % 15 === 0, medirPing: tique % 5 === 0 };
+}

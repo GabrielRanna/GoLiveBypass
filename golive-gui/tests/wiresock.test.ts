@@ -270,7 +270,7 @@ describe("WireSock no Windows", () => {
 
   it("inclui o diretorio app do Discord para cobrir todos os subprocessos", () => {
     const src = fs.readFileSync(path.resolve(process.cwd(), "electron/main.ts"), "utf8");
-    const fn = src.slice(src.indexOf("function windowsAllowedAppPaths"), src.indexOf("function logRouteProbe"));
+    const fn = src.slice(src.indexOf("function windowsAllowedAppPaths"), src.indexOf("function stopWindowsRouteWatchdog"));
     expect(fn).toContain("path.dirname(path.resolve(install.exePath))");
     expect(fn).not.toContain("proton.findProtonConfgenExe()");
   });

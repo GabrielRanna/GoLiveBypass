@@ -2384,10 +2384,18 @@ window.api.onTunnelStats((stats) => {
     fitWindowToContent();
   }
   if (!stats) return;
-  setTrafficText('trafficUp', stats.upMbps === null ? '-' : stats.upMbps.toFixed(1));
-  setTrafficText('trafficDown', stats.downMbps === null ? '-' : stats.downMbps.toFixed(1));
-  setTrafficText('trafficSent', stats.sentBytes === null ? '-' : formatBytes(stats.sentBytes));
-  setTrafficText('trafficReceived', stats.receivedBytes === null ? '-' : formatBytes(stats.receivedBytes));
+  // Sem o adaptador ProTUN nao ha contadores de bytes: o card mostra so o ping, sem celulas vazias.
+  const temContadores = stats.upMbps !== null && stats.downMbps !== null && stats.sentBytes !== null && stats.receivedBytes !== null;
+  const mudouLayout = trafficCard.classList.contains('traffic-card--ping-only') === temContadores;
+  trafficCard.classList.toggle('traffic-card--ping-only', !temContadores);
+  trafficCard.querySelectorAll<HTMLElement>('[data-counters]').forEach((cell) => { cell.hidden = !temContadores; });
+  if (mudouLayout) fitWindowToContent();
+  if (temContadores) {
+    setTrafficText('trafficUp', stats.upMbps!.toFixed(1));
+    setTrafficText('trafficDown', stats.downMbps!.toFixed(1));
+    setTrafficText('trafficSent', formatBytes(stats.sentBytes!));
+    setTrafficText('trafficReceived', formatBytes(stats.receivedBytes!));
+  }
   setTrafficText('trafficPing', stats.pingMs === null ? 'sem resposta' : `${stats.pingMs} ms`);
   trafficCard.classList.toggle('traffic-card--slow', stats.pingMs !== null && stats.pingMs > 150);
 });

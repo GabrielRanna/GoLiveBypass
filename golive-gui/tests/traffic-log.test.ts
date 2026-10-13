@@ -16,6 +16,7 @@ describe("log de trafego do tunel", () => {
     expect(parseNetshInterfaceBytes(NETSH_PT, "Radmin VPN")?.sentBytes).toBe(42245);
   });
 
+it("acha o adaptador mesmo se o Windows o listar com outra caixa", () => {    const saida = NETSH_PT.replace("ProTUN", "PROTUN");    expect(parseNetshInterfaceBytes(saida, "ProTUN")).toEqual({ adapter: "ProTUN", receivedBytes: 12500000, sentBytes: 2500000 });    expect(parseNetshInterfaceBytes(saida.replace("PROTUN", "protun"), "PROTUN")?.sentBytes).toBe(2500000);  });
   it("devolve null sem o adaptador (tunel desligado)", () => {
     expect(parseNetshInterfaceBytes(NETSH_PT, "WireSock")).toBeNull();
   });

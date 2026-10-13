@@ -60,3 +60,77 @@ describe("sondas e varreduras", () => {
     expect(renderer).not.toContain("import.meta.env.DEV");
   });
 });
+
+describe("processos em segundo plano (amostrador de failover, a cada 3 s)", () => {
+  const wiresock = fs.readFileSync(path.resolve(process.cwd(), "electron/wiresock.ts"), "utf8");
+
+  it("o amostrador le o estado do WireSock uma vez e repassa a resposta", () => {
+    const sample = main.slice(main.indexOf("async function collectProtonFailoverSample"), main.indexOf("function stopProtonFailoverMonitor"));
+    expect(sample).toContain("getWireSockConnectionStatusAsync({ activeHint: tunnelActive })");
+    expect(sample.match(/isWireSockActiveAsync\(/g)?.length).toBe(1);
+    expect(wiresock).toContain("options.activeHint ?? await isWireSockActiveAsync()");
+  });
+
+  it("com o tunel ativo, o tasklist responde antes dos dois sc query", () => {
+    const fn = wiresock.slice(wiresock.indexOf("export async function isWireSockActiveAsync"), wiresock.indexOf("export async function getWireSockConnectionStatusAsync"));
+    expect(fn.indexOf('"tasklist"')).toBeGreaterThan(-1);
+    expect(fn.indexOf('"tasklist"')).toBeLessThan(fn.indexOf('"sc.exe"'));
+    // A mesma regex do original: servico em RUNNING.
+    expect(fn).toContain(String.raw`/STATE\s*:\s*\d+\s+RUNNING/i`);
+  });
+
+  it("a procura da CLI do WireSock e guardada em cache (evita `where` sincrono a cada tique)", () => {
+    expect(wiresock).toMatch(/export const findWireSockCli = memoizeWithTtl\(procurarWireSockCli, 60_000\)/);
+  });
+
+});
+
+describe("integridade do CSS", () => {
+  it("as chaves e os comentarios do style.css estao balanceados", () => {
+    // Uma chave sem fechar nao da erro: o navegador aninha tudo que vem depois dentro da regra
+    // aberta e as regras seguintes deixam de valer, sem aviso. Ja aconteceu numa fusao de conflito.
+    const css = fs.readFileSync(path.resolve(process.cwd(), "src/style.css"), "utf8");
+    const semComentarios = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    expect((css.match(/\/\*/g) ?? []).length).toBe((css.match(/\*\//g) ?? []).length);
+    expect((semComentarios.match(/\{/g) ?? []).length).toBe((semComentarios.match(/\}/g) ?? []).length);
+  });
+
+  it("as regras do fim do arquivo ficam na raiz (nao aninhadas em outra regra)", () => {
+    const css = fs.readFileSync(path.resolve(process.cwd(), "src/style.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    let profundidade = 0;
+    let maxNoFim = 0;
+    const fim = css.indexOf(".corner--tr3 {");
+    expect(fim).toBeGreaterThan(-1);
+    for (let i = 0; i < fim; i++) {
+      if (css[i] === "{") profundidade++;
+      else if (css[i] === "}") profundidade--;
+    }
+    maxNoFim = profundidade;
+    expect(maxNoFim).toBe(0);
+  });
+});
+
+describe("menos processos: leituras compartilhadas e fora da thread principal", () => {
+  const wiresock = fs.readFileSync(path.resolve(process.cwd(), "electron/wiresock.ts"), "utf8");
+
+  it("o amostrador de failover faz um tasklist so e deriva Discord e WireSock dele", () => {
+    const sample = main.slice(main.indexOf("async function collectProtonFailoverSample"), main.indexOf("function stopProtonFailoverMonitor"));
+    expect(sample).toContain("await listRunningImageNamesAsync()");
+    expect(sample).toContain('imagens.has("wiresock-client.exe")');
+    expect(sample).toContain("isWireSockActiveAsync({ processAlive:");
+    // Se o tasklist unico falhar, cada pergunta cai no caminho proprio, como antes.
+    expect(sample).toContain(": await discordIsRunningAsync()");
+  });
+
+  it("a espera da ativacao nao usa mais execSync (congelava a janela ate ~5 s por ativacao)", () => {
+    const fn = wiresock.slice(wiresock.indexOf("async function isWireSockProcessPidAlive"), wiresock.indexOf("// Fonte de verdade"));
+    expect(fn).toContain("await execFileText(");
+    expect(fn).not.toContain("execSync");
+    expect(wiresock).not.toMatch(/\bexecSync\(/);
+  });
+
+  it("o monitor do card consulta o ping a cada 10 s e revisa o netsh de 30 em 30 s sem o adaptador", () => {
+    expect(main).toContain("planoDoMonitor(tique++, contadoresDisponiveis)");
+    expect(main).toMatch(/whenProcessStops\(discordProcessStateAsync[\s\S]{0,900}intervalMs: 10_000/);
+  });
+});

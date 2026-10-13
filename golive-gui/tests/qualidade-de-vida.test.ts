@@ -131,7 +131,7 @@ describe("menos processos: leituras compartilhadas e fora da thread principal", 
   });
 
   it("o monitor do card consulta o ping a cada 10 s e revisa o netsh de 30 em 30 s sem o adaptador", () => {
-    expect(main).toContain("planoDoMonitor(tique++, contadoresDisponiveis)");
+    expect(main).toContain("trafficMonitorPlan(tique++, contadoresDisponiveis)");
     expect(main).toMatch(/whenProcessStops\(discordProcessStateAsync[\s\S]{0,900}intervalMs: 10_000/);
   });
 });
@@ -215,7 +215,7 @@ describe("Sair com o bypass ativo nao trava", () => {
 
   it("a limpeza tem prazo: se travar, o app encerra assim mesmo", () => {
     expect(main).toContain("const QUIT_CLEANUP_TIMEOUT_MS = 90_000;");
-    expect(quit).toContain("aguardarAte(limpeza, QUIT_CLEANUP_TIMEOUT_MS)");
+    expect(quit).toContain("settlesWithin(limpeza, QUIT_CLEANUP_TIMEOUT_MS)");
     expect(quit).toMatch(/\.finally\(\(\) => app\.quit\(\)\)/);
   });
 });

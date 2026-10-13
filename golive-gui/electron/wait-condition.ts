@@ -107,17 +107,17 @@ export function tasklistHasProcess(tasklistCsv: string, imageName: string, pid: 
 // O monitor de trafego do card roda num tique de 2 s, mas nem toda leitura precisa de um processo
 // novo por tique: o ping muda devagar (a cada 10 s basta) e, sem o adaptador ProTUN, o netsh
 // devolve sempre null (revisa so de 30 em 30 s, caso o adaptador apareca).
-export function planoDoMonitor(tique: number, contadoresDisponiveis: boolean): { lerContadores: boolean; medirPing: boolean } {
-  return { lerContadores: contadoresDisponiveis || tique % 15 === 0, medirPing: tique % 5 === 0 };
+export function trafficMonitorPlan(tick: number, countersAvailable: boolean): { readCounters: boolean; measurePing: boolean } {
+  return { readCounters: countersAvailable || tick % 15 === 0, measurePing: tick % 5 === 0 };
 }
 
-// Espera `tarefa` por no maximo `ms`. true = terminou no prazo; false = estourou o prazo (a tarefa
+// Espera `task` por no maximo `ms`. true = terminou no prazo; false = estourou o prazo (a tarefa
 // continua rodando, mas o chamador segue). Usado no "Sair": a limpeza nunca pode prender o app
 // para sempre, mesmo que algum passo dela trave.
-export function aguardarAte(tarefa: Promise<unknown>, ms: number): Promise<boolean> {
+export function settlesWithin(task: Promise<unknown>, ms: number): Promise<boolean> {
   return new Promise<boolean>((resolve) => {
     const timer = setTimeout(() => resolve(false), ms);
-    tarefa.then(
+    task.then(
       () => { clearTimeout(timer); resolve(true); },
       () => { clearTimeout(timer); resolve(true); },
     );

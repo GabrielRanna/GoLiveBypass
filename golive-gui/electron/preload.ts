@@ -1,5 +1,6 @@
 import { ipcRenderer } from 'electron';
 import type { ProtonOptimizationProgress } from './proton';
+import type { TunnelStats } from './wiresock';
 (window as any).api = {
   platform: process.platform,
   activate: () => ipcRenderer.invoke('activate'),
@@ -43,7 +44,7 @@ import type { ProtonOptimizationProgress } from './proton';
   onRefreshStartup: (callback: () => void) => ipcRenderer.on('refresh-startup', callback),
   onRefreshAutoUpdate: (callback: () => void) => ipcRenderer.on('refresh-auto-update', callback),
   onRefreshStatus: (callback: () => void) => ipcRenderer.on('refresh-status', callback),
-  onTunnelStats: (callback: (stats: { downMbps: number | null; upMbps: number | null; receivedBytes: number | null; sentBytes: number | null; pingMs: number | null } | null) => void) =>
+  onTunnelStats: (callback: (stats: TunnelStats | null) => void) =>
     ipcRenderer.on('tunnel-stats', (_event, stats) => callback(stats)),
   resizeWindow: (height: number) => ipcRenderer.send('resize-window', height),
   setTheme: (theme: string) => ipcRenderer.send('set-theme', theme),

@@ -669,19 +669,22 @@ export async function getWireSockAdapterTrafficNetshAsync(adapter = "ProTUN"): P
   }
 }
 
-// Taxa entre duas leituras. "queda" = upload despencou para menos de 20% da amostra anterior
+// O que o card de trafego recebe a cada leitura (null nos contadores = adaptador do tunel ausente).
+export type TunnelStats = { downMbps: number | null; upMbps: number | null; receivedBytes: number | null; sentBytes: number | null; pingMs: number | null };
+
+// Taxa entre duas leituras. "uploadDrop" = upload despencou para menos de 20% da amostra anterior
 // estando acima de 1 Mbps: e a assinatura de uma stream congelando.
 export function trafficSample(
   previous: WireSockAdapterTraffic,
   current: WireSockAdapterTraffic,
   elapsedMs: number,
   previousUpMbps: number | null,
-): { downMbps: number; upMbps: number; queda: boolean } {
+): { downMbps: number; upMbps: number; uploadDrop: boolean } {
   const mbps = (bytes: number) => (bytes > 0 && elapsedMs > 0 ? (bytes * 8) / (elapsedMs * 1000) : 0);
   const downMbps = mbps(current.receivedBytes - previous.receivedBytes);
   const upMbps = mbps(current.sentBytes - previous.sentBytes);
-  const queda = previousUpMbps !== null && previousUpMbps > 1 && upMbps < previousUpMbps * 0.2;
-  return { downMbps, upMbps, queda };
+  const uploadDrop = previousUpMbps !== null && previousUpMbps > 1 && upMbps < previousUpMbps * 0.2;
+  return { downMbps, upMbps, uploadDrop };
 }
 
 // Tempo de resposta do servidor da VPN (ping.exe localizado: so o "=NNms"/"<1ms" importa).

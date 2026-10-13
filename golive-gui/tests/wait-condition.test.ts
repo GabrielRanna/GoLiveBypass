@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aguardarAte, memoizeWithTtl, planoDoMonitor, runningImageNames, tasklistHasProcess, waitForCondition, waitForProcessRunning, waitForProcessStopped, whenProcessStops } from "../electron/wait-condition";
+import { settlesWithin, memoizeWithTtl, trafficMonitorPlan, runningImageNames, tasklistHasProcess, waitForCondition, waitForProcessRunning, waitForProcessStopped, whenProcessStops } from "../electron/wait-condition";
 
 describe("espera de lifecycle", () => {
   it("retorna assim que o recurso encerra", async () => {
@@ -114,30 +114,33 @@ describe("espera de lifecycle", () => {
     expect(tasklistHasProcess("INFO: No tasks are running which match the specified criteria.", "wiresock-client.exe", 7060)).toBe(false);
   });
 
-  it("planoDoMonitor: com contadores le todo tique, sem contadores so de 30 em 30 s, ping a cada 10 s", () => {
+  it("trafficMonitorPlan: com contadores le todo tique, sem contadores so de 30 em 30 s, ping a cada 10 s", () => {
     // tique de 2 s: 5 tiques = 10 s, 15 tiques = 30 s
-    const com = Array.from({ length: 10 }, (_, t) => planoDoMonitor(t, true));
-    expect(com.every((p) => p.lerContadores)).toBe(true);
-    expect(com.map((p) => p.medirPing)).toEqual([true, false, false, false, false, true, false, false, false, false]);
+    const com = Array.from({ length: 10 }, (_, t) => trafficMonitorPlan(t, true));
+    expect(com.every((p) => p.readCounters)).toBe(true);
+    expect(com.map((p) => p.measurePing)).toEqual([true, false, false, false, false, true, false, false, false, false]);
 
-    const sem = Array.from({ length: 31 }, (_, t) => planoDoMonitor(t, false));
-    expect(sem.filter((p) => p.lerContadores).length).toBe(3); // tiques 0, 15 e 30
-    expect(sem[0].lerContadores).toBe(true);
-    expect(sem[15].lerContadores).toBe(true);
-    expect(sem[7].lerContadores).toBe(false);
-    expect(sem.filter((p) => p.medirPing).length).toBe(7); // 0, 5, 10, 15, 20, 25 e 30
+    const sem = Array.from({ length: 31 }, (_, t) => trafficMonitorPlan(t, false));
+    expect(sem.filter((p) => p.readCounters).length).toBe(3); // tiques 0, 15 e 30
+    expect(sem[0].readCounters).toBe(true);
+    expect(sem[15].readCounters).toBe(true);
+    expect(sem[7].readCounters).toBe(false);
+    expect(sem.filter((p) => p.measurePing).length).toBe(7); // 0, 5, 10, 15, 20, 25 e 30
   });
 
-  it("aguardarAte devolve true se a tarefa termina no prazo e false se ela trava", async () => {
-    expect(await aguardarAte(Promise.resolve("ok"), 200)).toBe(true);
+  it("settlesWithin devolve true se a tarefa termina no prazo e false se ela trava", async () => {
+    expect(await settlesWithin(Promise.resolve("ok"), 200)).toBe(true);
     // Tarefa que nunca termina (como a limpeza do Sair travada): o prazo vence e o app segue.
     const t0 = Date.now();
-    expect(await aguardarAte(new Promise<void>(() => {}), 60)).toBe(false);
+    expect(await settlesWithin(new Promise<void>(() => {}), 60)).toBe(false);
     expect(Date.now() - t0).toBeLessThan(1000);
   });
 
-  it("aguardarAte trata a tarefa que falha como terminada (o chamador ja registra o erro)", async () => {
-    expect(await aguardarAte(Promise.reject(new Error("falhou")).catch(() => undefined), 200)).toBe(true);
+  it("settlesWithin trata a tarefa que falha como terminada (o chamador ja registra o erro)", async () => {
+    // Rejeicao crua, sem .catch antes: e o ramo de erro do settlesWithin que precisa responder true.
+    expect(await settlesWithin(Promise.reject(new Error("falhou")), 200)).toBe(true);
+    // E rejeicao que chega depois de um tempo, ainda dentro do prazo.
+    expect(await settlesWithin(new Promise((_, reject) => setTimeout(() => reject(new Error("tarde")), 20)), 200)).toBe(true);
   });
 
   it("uma fila serial nao e reentrante: chamar a fila de dentro de uma tarefa dela mesma trava (a causa do Sair preso)", async () => {
@@ -153,10 +156,10 @@ describe("espera de lifecycle", () => {
     };
     // Antes: o Sair embrulhava o deactivateAll na fila, e ele se enfileira por dentro: trava.
     const antes = novaFila();
-    expect(await aguardarAte(antes.comFila(() => antes.deactivateAll()), 100)).toBe(false);
+    expect(await settlesWithin(antes.comFila(() => antes.deactivateAll()), 100)).toBe(false);
     // Agora: o Sair chama direto e a propria fila serializa (fila nova: a de cima ficou presa).
     const agora = novaFila();
-    expect(await aguardarAte(agora.deactivateAll(), 100)).toBe(true);
+    expect(await settlesWithin(agora.deactivateAll(), 100)).toBe(true);
   });
 
   it("memoizeWithTtl reaproveita o valor dentro do prazo e recalcula depois, inclusive null", () => {

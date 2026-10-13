@@ -27,12 +27,12 @@ it("acha o adaptador mesmo se o Windows o listar com outra caixa", () => {    co
     const s1 = trafficSample(a, b, 2000, null);
     expect(s1.downMbps).toBeCloseTo(1, 5);
     expect(s1.upMbps).toBeCloseTo(6, 5);
-    expect(s1.queda).toBe(false);
+    expect(s1.uploadDrop).toBe(false);
 
     const c = { adapter: "ProTUN", receivedBytes: 260_000, sentBytes: 1_550_000 };
     const s2 = trafficSample(b, c, 2000, s1.upMbps);
     expect(s2.upMbps).toBeCloseTo(0.2, 5);
-    expect(s2.queda).toBe(true);
+    expect(s2.uploadDrop).toBe(true);
   });
 
   it("contador zerado (tunel reiniciado) nao vira taxa negativa", () => {

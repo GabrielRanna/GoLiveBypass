@@ -30,7 +30,7 @@ import * as logger from "./logger";
 import * as discordscan from "./discordscan";
 import * as logsDir from "./logsDir";
 import { submitBugReport } from "./bugreport";
-import { ensureWireSockInstalled, listRunningImageNamesAsync, getWireSockAdapterTrafficNetshAsync, pingHostAsync, trafficSample, type WireSockAdapterTraffic, getWireSockConnectionStatus, getWireSockConnectionStatusAsync, getWireSockAdapterTraffic, getWireSockAdapterTrafficAsync, hasWireSockAdapterTrafficIncrease, isWireSockActive, isWireSockActiveAsync, startWireSockService, switchWireSockService, recoverWireSockNetwork, type WireSockConnectionStatus } from "./wiresock";
+import { ensureWireSockInstalled, listRunningImageNamesAsync, getWireSockAdapterTrafficNetshAsync, pingHostAsync, trafficSample, type TunnelStats, type WireSockAdapterTraffic, getWireSockConnectionStatus, getWireSockConnectionStatusAsync, getWireSockAdapterTraffic, getWireSockAdapterTrafficAsync, hasWireSockAdapterTrafficIncrease, isWireSockActive, isWireSockActiveAsync, startWireSockService, switchWireSockService, recoverWireSockNetwork, type WireSockConnectionStatus } from "./wiresock";
 import { classifyWgReadiness, getWgStats, getWgStatsAsync, iniciarWgStatsWatchdog, pararWgStatsWatchdog, type WgTunnelStats } from "./wgstats";
 import { classifyFailoverHealth, FailoverHealthTracker, FAILOVER_ROUTE_TIMEOUT_MS, FAILOVER_SAMPLE_INTERVAL_MS, routeCandidateUsable, routePoolDirectory, readRoutePoolManifest, makeRoutePoolManifest, routePoolMatches, ROUTE_POOL_RESERVE_COUNT, ROUTE_POOL_TOTAL, safeRoutePoolPath, writeRoutePoolManifest, type ProtonRouteMetadata, type ProtonRoutePoolManifest } from "./route-failover";
 import { validateWgConfContent } from "./wg-validator";
@@ -40,7 +40,7 @@ import { restoreBypassOnStartup, type StartupOptimizationResult } from "./startu
 import { findWindowsDiscordInstall } from "./windows-discord-install";
 import { assembleWindowsDiscoverySnapshotFromRaw, collectWindowsDiscoveryPowerShell, collectWindowsDiscoveryPowerShellAsync, collectWindowsDiscoverySnapshot, createWindowsDiscoveryCache, failedWindowsDiscoveryRawFor, rootsForEnvironment, toPublicWindowsDiscoveryInstall, type WindowsDiscoveryEnvironment, type WindowsDiscoveryRaw, type WindowsDiscoverySnapshot, type WindowsDiscoverySnapshotCollectors } from "./windows-discord-discovery";
 import { shouldAskRoutePreference } from "./route-preference-prompt";
-import { aguardarAte, planoDoMonitor, runningImageNames, waitForProcessRunning, waitForProcessStopped, whenProcessStops, type ProcessProbeState } from "./wait-condition";
+import { settlesWithin, trafficMonitorPlan, runningImageNames, waitForProcessRunning, waitForProcessStopped, whenProcessStops, type ProcessProbeState } from "./wait-condition";
 import { TUNNEL_STARTUP_SETTLE_MS, waitForTunnelStartupSettle } from "./tunnel-startup";
 import { linuxPreflightRepairable, parseLinuxPreflight, linuxPreflightMessage, type LinuxPreflight } from "./linux-preflight";
 import { createProcSeams } from "./linux-proc-seams";
@@ -890,7 +890,8 @@ app.on("before-quit", (event) => {
   const restore = IS_LINUX
     ? withWireSockLifecycle("encerrar-linux", () => linuxDeactivate(() => {}))
     : IS_WINDOWS
-      // Sem withWireSockLifecycle aqui: o deactivateAll ja se serializa por dentro. A fila e serial
+      // Sem withWireSockLifecycle aqui: a parte do deactivateAll que mexe na rede ja roda na fila
+      // "desativacao" (o preambulo dele corre fora dela, o que basta para o Sair). A fila e serial
       // e nao reentrante, entao embrulhar a chamada trava o Sair para sempre (a tarefa de fora
       // espera a de dentro, que espera a de fora) e deixa o WireSock rodando.
       ? deactivateAll()
@@ -901,8 +902,9 @@ app.on("before-quit", (event) => {
     });
   });
   // Rede de seguranca: se algum passo da limpeza travar (por exemplo, um pedido de administrador
-  // sem resposta), o app encerra assim mesmo depois do prazo em vez de ficar preso.
-  void aguardarAte(limpeza, QUIT_CLEANUP_TIMEOUT_MS)
+  // sem resposta), o app encerra assim mesmo depois do prazo em vez de ficar preso. Vale em todas
+  // as plataformas: no Linux o prazo tambem cobre o linuxDeactivate.
+  void settlesWithin(limpeza, QUIT_CLEANUP_TIMEOUT_MS)
     .then((terminou) => {
       if (!terminou) logger.error("app", "limpeza no encerramento passou do prazo; encerrando mesmo assim", { prazo_ms: QUIT_CLEANUP_TIMEOUT_MS });
     })
@@ -1246,15 +1248,11 @@ function windowsAllowedAppPaths(installs: DiscordInstall[]): string[] {
   return [...apps];
 }
 
-function stopWindowsRouteWatchdog() {
-  pararMonitorTrafego();
-}
-
 // Card de trafego da janela + log do modo desenvolvedor: contadores do adaptador do tunel
 // a cada 2s e o ping ate o servidor da VPN. So amostra com alguma janela visivel.
 let monitorTrafegoTimer: ReturnType<typeof setInterval> | null = null;
 
-function pararMonitorTrafego() {
+function stopWindowsRouteWatchdog() {
   if (monitorTrafegoTimer) clearInterval(monitorTrafegoTimer);
   monitorTrafegoTimer = null;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("tunnel-stats", null);
@@ -1270,7 +1268,7 @@ function hostDoServidorVpn(): string | null {
 }
 
 function iniciarMonitorTrafego() {
-  pararMonitorTrafego();
+  stopWindowsRouteWatchdog();
   const host = hostDoServidorVpn();
   let anterior: { leitura: WireSockAdapterTraffic; em: number } | null = null;
   let upAnterior: number | null = null;
@@ -1282,12 +1280,12 @@ function iniciarMonitorTrafego() {
     const janelaVisivel = mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
     const devMode = logWindow && !logWindow.isDestroyed();
     if (ocupado || (!janelaVisivel && !devMode)) return;
-    const plano = planoDoMonitor(tique++, contadoresDisponiveis);
-    if (!plano.lerContadores && !plano.medirPing) return;
+    const plano = trafficMonitorPlan(tique++, contadoresDisponiveis);
+    if (!plano.readCounters && !plano.measurePing) return;
     ocupado = true;
     void Promise.all([
-      plano.lerContadores ? getWireSockAdapterTrafficNetshAsync() : Promise.resolve(undefined),
-      plano.medirPing && host ? pingHostAsync(host) : Promise.resolve(undefined),
+      plano.readCounters ? getWireSockAdapterTrafficNetshAsync() : Promise.resolve(undefined),
+      plano.measurePing && host ? pingHostAsync(host) : Promise.resolve(undefined),
     ])
       .then(([leitura, ping]) => {
         if (!monitorTrafegoTimer) return;
@@ -1297,7 +1295,7 @@ function iniciarMonitorTrafego() {
           // Sem interface virtual do WireSock nao ha contadores; o ping ainda vale.
           if (leitura === null) { contadoresDisponiveis = false; anterior = null; }
           if (ping === undefined) return; // nada novo para mostrar neste tique
-          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("tunnel-stats", { downMbps: null, upMbps: null, receivedBytes: null, sentBytes: null, pingMs });
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("tunnel-stats", { downMbps: null, upMbps: null, receivedBytes: null, sentBytes: null, pingMs } satisfies TunnelStats);
           if (devMode) logger.info("trafego", "discord", { ping_ms: pingMs ?? "sem resposta", contadores: "indisponiveis" });
           return;
         }
@@ -1306,10 +1304,10 @@ function iniciarMonitorTrafego() {
         if (anterior) {
           const s = trafficSample(anterior.leitura, leitura, agora - anterior.em, upAnterior);
           upAnterior = s.upMbps;
-          const stats = { downMbps: s.downMbps, upMbps: s.upMbps, receivedBytes: leitura.receivedBytes, sentBytes: leitura.sentBytes, pingMs };
+          const stats: TunnelStats = { downMbps: s.downMbps, upMbps: s.upMbps, receivedBytes: leitura.receivedBytes, sentBytes: leitura.sentBytes, pingMs };
           if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("tunnel-stats", stats);
           const campos = { down_mbps: s.downMbps.toFixed(2), up_mbps: s.upMbps.toFixed(2), ping_ms: pingMs ?? "sem resposta" };
-          if (s.queda) logger.warn("trafego", "queda.upload", campos);
+          if (s.uploadDrop) logger.warn("trafego", "queda.upload", campos);
           else if (devMode) logger.info("trafego", "discord", campos);
         }
         anterior = { leitura, em: agora };

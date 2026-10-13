@@ -5,6 +5,8 @@ import path from "path";
 import os from "os";
 import { execFileSync, spawn, spawnSync, type ChildProcess } from "child_process";
 
+// Os testes que rodam o script bash dependem de /bin/bash, /proc e binários do Linux.
+const itLinux = it.skipIf(process.platform !== "linux");
 const tempRoots: string[] = [];
 afterEach(() => { for (const root of tempRoots.splice(0)) fs.rmSync(root, { recursive: true, force: true }); });
 
@@ -15,7 +17,7 @@ function shellHelper(source: string, name: string): string {
 }
 
 describe("preflight Linux", () => {
-  it("reporta o alvo manual no JSON do preflight real", () => {
+  itLinux("reporta o alvo manual no JSON do preflight real", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-manual-preflight-"));
     tempRoots.push(root);
     const app = path.join(root, "discord");
@@ -179,7 +181,7 @@ describe("preflight Linux", () => {
     );
   });
 
-  it.each([
+  itLinux.each([
     { loaded: false, userspace: false, wireguard: "missing", selectedUserspace: false, ok: false },
     { loaded: false, userspace: true, wireguard: "missing", selectedUserspace: true, ok: true },
     { loaded: true, userspace: true, wireguard: "loaded", selectedUserspace: false, ok: true },
@@ -209,7 +211,7 @@ describe("preflight Linux", () => {
     expect(result.ok).toBe(ok);
   });
 
-  it("mantém o daemon vivo até o teardown e remove seu pidfile", () => {
+  itLinux("mantém o daemon vivo até o teardown e remove seu pidfile", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const userspaceBlock = [
       "wireguard_go_pid_file", "wireguard_go_log_file", "resolve_wireguard_go",
@@ -223,7 +225,12 @@ describe("preflight Linux", () => {
     fs.mkdirSync(bin);
     fs.mkdirSync(install);
     // `ip` falso: a espera pela interface nao pode depender de namespace real no teste.
-    fs.writeFileSync(path.join(bin, "ip"), "#!/bin/sh\nexit 0\n");
+    // `link show` so responde depois que o daemon gravou o pidfile (como o device TUN
+    // real, que nasce depois do exec); sem isso o script le o pidfile antes de ele existir.
+    fs.writeFileSync(
+      path.join(bin, "ip"),
+      `#!/bin/sh\nif [ "$1" = link ] && [ "$2" = show ]; then [ -s "${install}/wireguard-go.pid" ]; exit $?; fi\nexit 0\n`,
+    );
     const daemon = path.join(bin, "wireguard-go");
     fs.writeFileSync(daemon, "#!/bin/sh\nsleep 30\n");
     for (const file of ["ip", "wireguard-go"]) fs.chmodSync(path.join(bin, file), 0o755);
@@ -259,6 +266,8 @@ describe("preflight Linux", () => {
     const run = spawnSync("/bin/sh", [harness], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 20_000,
     });
     const saida = run.stdout + run.stderr;
     expect(run.status, saida).toBe(0);
@@ -291,7 +300,7 @@ describe("preflight Linux", () => {
   });
 
 
-  it("não fecha o Discord quando a autorização falha e mantém a ordem quando aceita", () => {
+  itLinux("não fecha o Discord quando a autorização falha e mantém a ordem quando aceita", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const authorizeMatch = source.match(/authorize_install_elevation\(\) \{[\s\S]*?\n\}\n\n# Variante somente-leitura/);
     const callMatch = source.match(/^authorize_install_elevation \|\| fail "[^\n]*"$/m);
@@ -338,7 +347,7 @@ describe("preflight Linux", () => {
     expect(accepted.orderLog).toBe("authorize\nstop\n");
   });
 
-  it("limpa recursos legados depois da autorizacao e antes de fechar o Discord", () => {
+  itLinux("limpa recursos legados depois da autorizacao e antes de fechar o Discord", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const installStart = source.indexOf('FOUND="$(escolher_alvos patchear)"');
     const installEnd = source.indexOf("\nwhile IFS='|' read", installStart);
@@ -402,7 +411,7 @@ describe("preflight Linux", () => {
     expect(accepted.orderLog).toBe("authorize\ncleanup\nstop\n");
   });
 
-  it("mantem o rollback pendente ate o Discord iniciar e o limpa depois da confirmacao", () => {
+  itLinux("mantem o rollback pendente ate o Discord iniciar e o limpa depois da confirmacao", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     expect(source).toMatch(/^ACTIVATION_ROLLBACK_PENDING=0$/m);
     expect(source).toMatch(/^ACTIVATION_ROLLBACK_REOPEN=0$/m);
@@ -462,7 +471,7 @@ describe("preflight Linux", () => {
     );
   });
 
-  it("seleciona runuser ou setpriv sem sudo e preserva a entrada no namespace", () => {
+  itLinux("seleciona runuser ou setpriv sem sudo e preserva a entrada no namespace", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const haveMatch = source.match(/^have\(\) \{[^\n]*\}$/m);
     const prepareStart = source.indexOf("prepare_run_user() {");
@@ -546,7 +555,7 @@ describe("preflight Linux", () => {
     expect(unavailable.run.stderr).toContain("nenhum executor seguro");
   });
 
-  it("instala apenas comandos ausentes com argv pacman fixo e verifica o resultado", () => {
+  itLinux("instala apenas comandos ausentes com argv pacman fixo e verifica o resultado", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-deps-"));
     tempRoots.push(root);
     const bin = path.join(root, "bin");
@@ -559,9 +568,12 @@ describe("preflight Linux", () => {
     fs.writeFileSync(path.join(bin, "pacman"), "#!/bin/sh\nif [ \"$1\" = \"-Qu\" ]; then exit 1; fi\nprintf '%s\\n' \"$*\" > \"$GOLIVE_TEST_PACMAN_LOG\"\nfor c in wg ip curl; do printf '#!/bin/sh\\nexit 0\\n' > \"$GOLIVE_TEST_BIN/$c\"; chmod +x \"$GOLIVE_TEST_BIN/$c\"; done\n");
     for (const file of ["sudo", "pacman"]) fs.chmodSync(path.join(bin, file), 0o755);
     const log = path.join(root, "pacman.args");
+    // Distro fixa (Arch): o resultado não pode depender do /etc/os-release do host.
+    const osRelease = path.join(root, "os-release");
+    fs.writeFileSync(osRelease, "ID=arch\n");
     const script = path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh");
     const run = spawnSync("/bin/bash", [script, "--ensure-dependencies"], {
-      env: { ...process.env, GOLIVE_GUI: "1", PATH: bin, GOLIVE_TEST_BIN: bin, GOLIVE_TEST_PACMAN_LOG: log },
+      env: { ...process.env, GOLIVE_GUI: "1", PATH: bin, GOLIVE_TEST_BIN: bin, GOLIVE_TEST_PACMAN_LOG: log, OS_RELEASE_FILE: osRelease },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -571,7 +583,7 @@ describe("preflight Linux", () => {
     expect(fs.readFileSync(log, "utf8")).not.toContain("-Sy");
   });
 
-  it("é idempotente e não chama o gerenciador quando tudo já existe", () => {
+  itLinux("é idempotente e não chama o gerenciador quando tudo já existe", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-deps-ready-"));
     tempRoots.push(root);
     const bin = path.join(root, "bin");
@@ -590,7 +602,7 @@ describe("preflight Linux", () => {
     expect(run.stderr).toContain("Dependencias Linux ja estao instaladas");
   });
 
-  it("gera o plano de pacotes correto para cada família suportada", () => {
+  itLinux("gera o plano de pacotes correto para cada família suportada", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const match = source.match(/linux_dependency_plan\(\) \{[\s\S]*?\n\}/);
     expect(match).not.toBeNull();
@@ -605,7 +617,7 @@ describe("preflight Linux", () => {
     expect(plan("ubuntu", "debian")).toBe("apt-get|install -y --no-install-recommends wireguard-tools iproute2 curl");
   });
 
-  it("exibe um comando de reparo especifico sem upgrade global", () => {
+  itLinux("exibe um comando de reparo especifico sem upgrade global", () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const plan = source.match(/linux_dependency_plan\(\) \{[\s\S]*?\n\}/);
     const command = source.match(/linux_dependency_install_command\(\) \{[\s\S]*?\n\}/);
@@ -648,7 +660,7 @@ describe("preflight Linux", () => {
     expect(() => execFileSync("bash", [script, "--ensure-dependencies"], { env: { ...process.env, GOLIVE_GUI: "" }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).toThrow();
   });
 
-  it("reconhece e encerra todos os processos Vesktop ELF da raiz exata", async () => {
+  itLinux("reconhece e encerra todos os processos Vesktop ELF da raiz exata", async () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const extract = (name: string) => {
       const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
@@ -694,7 +706,7 @@ describe("preflight Linux", () => {
     }
   });
 
-  it("escalona Flatpak apenas para PID positivo do application ID confirmado", async () => {
+  itLinux("escalona Flatpak apenas para PID positivo do application ID confirmado", async () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const extract = (name: string) => {
       const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
@@ -773,7 +785,7 @@ describe("preflight Linux", () => {
     }
   });
 
-  it("confirma o processo no namespace, usa readonly sem prompt e faz rollback se ele sumir", async () => {
+  itLinux("confirma o processo no namespace, usa readonly sem prompt e faz rollback se ele sumir", async () => {
     const source = fs.readFileSync(path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"), "utf8");
     const extract = (name: string) => {
       const match = source.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}\\n`));
@@ -824,7 +836,7 @@ describe("preflight Linux", () => {
         "wait_discord_started '/resources|discord||'",
       ].join("\n"));
       fs.chmodSync(harness, 0o755);
-      return spawnSync("/bin/sh", [harness], {
+      return spawnSync("/bin/bash", [harness], {
         env: { ...process.env, SCENARIO: scenario, STATE: state, TRACE: path.join(root, "trace") },
         encoding: "utf8",
       });
@@ -857,14 +869,14 @@ describe("preflight Linux", () => {
     ].join("\n"));
     fs.chmodSync(readonlyHarness, 0o755);
     const readonlyTrace = path.join(readonlyRoot, "trace");
-    const readonlyRun = spawnSync("/bin/sh", [readonlyHarness], {
+    const readonlyRun = spawnSync("/bin/bash", [readonlyHarness], {
       env: { ...process.env, SCENARIO: "inside", TRACE: readonlyTrace },
       encoding: "utf8",
     });
     expect(readonlyRun.status, readonlyRun.stderr).toBe(0);
     expect(fs.existsSync(readonlyTrace)).toBe(false);
 
-    const outsideRun = spawnSync("/bin/sh", [readonlyHarness], {
+    const outsideRun = spawnSync("/bin/bash", [readonlyHarness], {
       env: { ...process.env, SCENARIO: "outside", TRACE: readonlyTrace },
       encoding: "utf8",
     });

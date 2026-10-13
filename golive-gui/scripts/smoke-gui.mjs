@@ -137,9 +137,12 @@ try {
   conferir("página carregada", r.readyState === "complete", r.readyState);
   conferir("CSS carregado", r.cssRules > 50, `${r.cssRules} regras`);
   conferir("regras do #351 no nível de cima do CSS (sem chave faltando)", r.trafficCardTopo && r.guidePanelTopo, { trafficCard: r.trafficCardTopo, guidePanel: r.guidePanelTopo });
-  const canto = ["settingsBtn", "guideBtn", "checkUpdatesBtn"].map((i) => r.icones?.[i]);
+  // "Checar updates" só existe no Windows (src/main.ts esconde nos demais): fora dele, conferir que sumiu.
+  const comUpdates = process.platform === "win32";
+  const canto = ["settingsBtn", "guideBtn", ...(comUpdates ? ["checkUpdatesBtn"] : [])].map((i) => r.icones?.[i]);
   conferir("ícones do topo existem e têm tamanho", canto.every((c) => c && c.w > 0 && c.h > 0), r.icones);
   conferir("ícones do topo na mesma linha", canto.every((c) => c && Math.abs(c.top - canto[0].top) <= 3), canto.map((c) => c?.top));
+  if (!comUpdates) conferir("Checar updates escondido fora do Windows", (r.icones?.checkUpdatesBtn?.w ?? 0) === 0, r.icones?.checkUpdatesBtn);
   conferir("painel Como funciona abre", r.guiaVisivel, r.guiaVisivel);
   conferir("versão aparece na janela", !!r.versao, r.versao);
   conferir("sem exceção de JavaScript na carga", excecoes.length === 0, excecoes);

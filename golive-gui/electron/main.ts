@@ -12,7 +12,7 @@ import {
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import { createRequire } from "module";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import fs from "fs";
 import { randomUUID } from "crypto";
 import { execFileSync, execSync, spawn } from "child_process";
@@ -2637,7 +2637,7 @@ type LinuxElevationEventName =
   | "pkexec.result"
   | "authorization.requested"
   | "authorization";
-type LinuxElevationProvider = "none" | "root" | "sudo" | "zenity" | "kdialog" | "askpass" | "pkexec" | "tty" | "unknown";
+type LinuxElevationProvider = "none" | "root" | "sudo" | "zenity" | "kdialog" | "askpass" | "pkexec" | "tty" | "gui" | "unknown";
 type LinuxElevationResult = "not_attempted" | "requested" | "accepted" | "rejected" | "cancelled" | "unavailable" | "failed" | "cached" | "empty" | "authorized" | "unknown";
 type LinuxElevationDetails = {
   input?: "nonempty" | "empty" | "unknown" | "not_applicable";
@@ -2652,7 +2652,7 @@ type LinuxElevationRecord = {
   result: LinuxElevationResult;
   details: LinuxElevationDetails;
 };
-type LinuxElevationParserState = { pending: string };
+type LinuxElevationParserState = { pending: string; providerMissing: boolean; guiPasswordRejected: boolean };
 
 const LINUX_ELEVATION_PREFIX = "[elevation]";
 const LINUX_ELEVATION_MAX_LINE_LENGTH = 256;
@@ -2670,7 +2670,7 @@ const LINUX_ELEVATION_LOG_EVENTS: Record<LinuxElevationEventName, string> = {
   authorization: "elevation.authorization",
 };
 const LINUX_ELEVATION_PROVIDERS = new Set<LinuxElevationProvider>([
-  "none", "root", "sudo", "zenity", "kdialog", "askpass", "pkexec", "tty", "unknown",
+  "none", "root", "sudo", "zenity", "kdialog", "askpass", "pkexec", "tty", "gui", "unknown",
 ]);
 const LINUX_ELEVATION_RESULTS = new Set<LinuxElevationResult>([
   "not_attempted", "requested", "accepted", "rejected", "cancelled", "unavailable", "failed", "cached", "empty", "authorized", "unknown",
@@ -2766,7 +2766,16 @@ function consumeLinuxElevationEvents(chunk: string, state: LinuxElevationParserS
   for (const rawLine of lines) {
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     const record = parseLinuxElevationLine(line);
-    if (record) persistLinuxElevationEvent(record);
+    if (record) {
+      persistLinuxElevationEvent(record);
+      if (record.event === "prompt.unavailable" && record.details.reason === "provider_missing") {
+        state.providerMissing = true;
+      }
+      if (record.event === "sudo.validation" && record.provider === "gui"
+        && record.result === "rejected" && record.details.reason === "incorrect_password") {
+        state.guiPasswordRejected = true;
+      }
+    }
   }
 
   // Nunca acumula stderr arbitrario: só retém um prefixo que ainda pode virar uma
@@ -2777,15 +2786,149 @@ function consumeLinuxElevationEvents(chunk: string, state: LinuxElevationParserS
   }
 }
 
+// Último recurso quando o sistema não tem zenity/kdialog nem agente polkit
+// alcançável: a senha do sudo é pedida na janela da própria GUI e entregue ao
+// script por arquivo temporário (GOLIVE_SUDO_PASS_FILE, provider "gui").
+// A senha nunca entra em log, argv ou variável legível — só no arquivo 0600,
+// apagado pelo script ao sair e por dispose() em qualquer caminho.
+const LINUX_GUI_PASSWORD_ATTEMPTS = 3;
+
+type LinuxPasswordFallback = {
+  run: (args: string[], onChunk: (chunk: string) => void) => Promise<{ code: number | null; stdout: string; stderr: string }>;
+  dispose: () => void;
+};
+
+function promptLinuxSudoPassword(incorrect: boolean): Promise<string | null> {
+  const { promise, resolve } = Promise.withResolvers<string | null>();
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const win = new BrowserWindow({
+    width: 440,
+    height: 300,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    parent: parent ?? undefined,
+    modal: parent !== null,
+    show: false,
+    autoHideMenuBar: true,
+    title: "Senha do sudo — GoLiveBypass",
+    backgroundColor: "#14161c",
+    icon: loadAsset("icon.png"),
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+  let settled = false;
+  const finish = (value: string | null) => {
+    if (settled) return;
+    settled = true;
+    ipcMain.removeListener("sudo-password-response", onResponse);
+    resolve(value);
+    if (!win.isDestroyed()) win.destroy();
+  };
+  const onResponse = (event: Electron.IpcMainEvent, message: unknown) => {
+    if (settled || event.sender !== win.webContents) return;
+    if (message === null) {
+      finish(null);
+      return;
+    }
+    const password = (message as { password?: unknown } | null)?.password;
+    if (typeof password !== "string" || password.length === 0 || password.length > 1024) {
+      finish(null);
+      return;
+    }
+    finish(password);
+  };
+  ipcMain.on("sudo-password-response", onResponse);
+  win.once("ready-to-show", () => {
+    if (!settled) win.show();
+  });
+  win.once("closed", () => finish(null));
+  if (process.env.VITE_DEV_SERVER_URL) {
+    const base = process.env.VITE_DEV_SERVER_URL.replace(/\/?$/, "/");
+    win.loadURL(`${base}sudo-password.html${incorrect ? "?incorrect=1" : ""}`).catch(() => finish(null));
+  } else {
+    win.loadFile(path.join(__dirname, "../dist/sudo-password.html"), { query: incorrect ? { incorrect: "1" } : {} }).catch(() => finish(null));
+  }
+  return promise;
+}
+
+function createLinuxPasswordFallback(
+  state: LinuxElevationParserState,
+  forwardChunk: (chunk: string) => void,
+): LinuxPasswordFallback {
+  let passFile: string | null = null;
+  let passDir: string | null = null;
+  const cleanupFile = () => {
+    // O script também apaga no EXIT; aqui vale para cancelamento e erro antes do spawn.
+    if (passFile) {
+      try { fs.unlinkSync(passFile); } catch { /* já removido */ }
+      passFile = null;
+    }
+    if (passDir) {
+      try { fs.rmdirSync(passDir); } catch { /* já removido */ }
+      passDir = null;
+    }
+  };
+  const storePassword = (password: string): string => {
+    cleanupFile();
+    passDir = fs.mkdtempSync(path.join(tmpdir(), "golive-sudo-"));
+    passFile = path.join(passDir, "pass");
+    fs.writeFileSync(passFile, `${password}\n`, { mode: 0o600 });
+    try { fs.chmodSync(passFile, 0o600); } catch { /* umask já garantiu */ }
+    return passFile;
+  };
+  const run = async (args: string[], onChunk: (chunk: string) => void) => {
+    const forward = (chunk: string) => {
+      forwardChunk(chunk);
+      if (onChunk !== forwardChunk) onChunk(chunk);
+    };
+    let extraEnv: Record<string, string> | undefined;
+    if (passFile) extraEnv = { GOLIVE_SUDO_PASS_FILE: passFile };
+    let result = await runScript(args, forward, extraEnv);
+    if (result.code === 0 || !state.providerMissing) return result;
+    // Sem providers, o script falha antes de qualquer stop_discord — repetir
+    // com a senha da GUI é seguro e resolve sozinho (NixOS enxuto, spins).
+    let incorrect = false;
+    for (let attempt = 0; attempt < LINUX_GUI_PASSWORD_ATTEMPTS; attempt += 1) {
+      state.guiPasswordRejected = false;
+      const password = await promptLinuxSudoPassword(incorrect);
+      if (password === null) return result;
+      const file = storePassword(password);
+      result = await runScript(args, forward, { GOLIVE_SUDO_PASS_FILE: file });
+      if (result.code === 0) return result;
+      if (!state.guiPasswordRejected) return result;
+      incorrect = true;
+    }
+    return result;
+  };
+  return { run, dispose: cleanupFile };
+}
+
 async function linuxActivate(onChunk: (c: string) => void) {
-  const elevationParserState: LinuxElevationParserState = { pending: "" };
+  const elevationParserState: LinuxElevationParserState = { pending: "", providerMissing: false, guiPasswordRejected: false };
   const forwardLinuxChunk = (chunk: string) => {
     consumeLinuxElevationEvents(chunk, elevationParserState);
     onChunk(chunk);
   };
+  const passwordFallback = createLinuxPasswordFallback(elevationParserState, forwardLinuxChunk);
+  try {
+    await linuxActivateInner(onChunk, forwardLinuxChunk, passwordFallback);
+  } finally {
+    passwordFallback.dispose();
+  }
+}
+
+async function linuxActivateInner(
+  onChunk: (c: string) => void,
+  forwardLinuxChunk: (chunk: string) => void,
+  elevated: LinuxPasswordFallback,
+) {
+  void onChunk;
   let preflight = await linuxPreflight();
   if (!preflight.ok && linuxPreflightRepairable(preflight)) {
-    const ensured = await runScript(["--ensure-dependencies"], forwardLinuxChunk);
+    const ensured = await elevated.run(["--ensure-dependencies"], forwardLinuxChunk);
     if (ensured.code !== 0) {
       throw new Error(tailErroScript(ensured.stderr, 4) || "Não foi possível preparar as dependências do Linux.");
     }
@@ -2804,7 +2947,7 @@ async function linuxActivate(onChunk: (c: string) => void) {
   }
   await ensureProtonActivationProfile();
   updateSharedSettings({ routeMode: "wireguard" });
-  const { code, stderr } = await runScript(["--yes", "--cleanup-legacy"], forwardLinuxChunk);
+  const { code, stderr } = await elevated.run(["--yes", "--cleanup-legacy"], forwardLinuxChunk);
   if (code !== 0) {
     throw new Error(
       tailErroScript(stderr, 3) ||
@@ -2847,15 +2990,25 @@ async function linuxDeactivate(onChunk: (c: string) => void) {
   stopProtonFailoverMonitor();
   pararWgStatsWatchdog();
   stopLinuxHealthWatchdog();
-  const { code, stderr } = await runScript(["--uninstall"], onChunk);
-  if (code !== 0) {
-    // Sem manter o marker: o disco continua "nosso"; o boot seguinte reverte a orfa assim
-    // que o cliente estiver fechado. O erro vai inteiro para a UI (stderr cortado no fim da
-    // linha), em vez dos ultimos 3 fragmentos que sumiam com altas linhas longas.
-    throw new Error(
-      tailErroScript(stderr, 6) ||
-        "Falha ao desativar (a elevacao provavelmente falhou)",
-    );
+  const elevationParserState: LinuxElevationParserState = { pending: "", providerMissing: false, guiPasswordRejected: false };
+  const forwardLinuxChunk = (chunk: string) => {
+    consumeLinuxElevationEvents(chunk, elevationParserState);
+    onChunk(chunk);
+  };
+  const passwordFallback = createLinuxPasswordFallback(elevationParserState, forwardLinuxChunk);
+  try {
+    const { code, stderr } = await passwordFallback.run(["--uninstall"], forwardLinuxChunk);
+    if (code !== 0) {
+      // Sem manter o marker: o disco continua "nosso"; o boot seguinte reverte a orfa assim
+      // que o cliente estiver fechado. O erro vai inteiro para a UI (stderr cortado no fim da
+      // linha), em vez dos ultimos 3 fragmentos que sumiam com altas linhas longas.
+      throw new Error(
+        tailErroScript(stderr, 6) ||
+          "Falha ao desativar (a elevacao provavelmente falhou)",
+      );
+    }
+  } finally {
+    passwordFallback.dispose();
   }
   clearSessionMarker();
   linuxStatusCache = null;

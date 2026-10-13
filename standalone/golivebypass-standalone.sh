@@ -741,7 +741,7 @@ elevation_event() {
     esac
 
     case "${ELEVATION_PROVIDER:-none}" in
-        none|root|sudo|zenity|kdialog|askpass|pkexec|tty) provider="$ELEVATION_PROVIDER" ;;
+        none|root|sudo|zenity|kdialog|askpass|pkexec|tty|gui) provider="$ELEVATION_PROVIDER" ;;
         *) provider="unknown" ;;
     esac
     case "${ELEVATION_RESULT:-not_attempted}" in
@@ -866,6 +866,23 @@ sudo_pass_get() {
     local prompt_stderr_state="empty" provider_seen=0 provider_failure=0
     SUDO_PROMPT_FALLBACK_PKEXEC=0
     SUDO_PROMPT_OUTCOME="not_attempted"
+    # Senha vinda da janela da propria GUI (GOLIVE_SUDO_PASS_FILE aponta um
+    # arquivo 0600 com a senha + newline). Ultimo recurso quando o sistema nao
+    # tem zenity/kdialog nem agente polkit alcancavel: a GUI decide quando
+    # oferecer, nunca o script por conta propria. Vazio/ilegivel cai no fluxo
+    # normal; o trap de saida apaga o arquivo como qualquer senha temporaria.
+    if [ "${GOLIVE_GUI:-0}" = "1" ] && [ -n "${GOLIVE_SUDO_PASS_FILE:-}" ] \
+        && [ -f "$GOLIVE_SUDO_PASS_FILE" ] && [ -r "$GOLIVE_SUDO_PASS_FILE" ] \
+        && [ -s "$GOLIVE_SUDO_PASS_FILE" ]; then
+        SUDO_PASS_FILE="$GOLIVE_SUDO_PASS_FILE"
+        ELEVATION_PROVIDER="gui"
+        ELEVATION_RESULT="not_attempted"
+        ELEVATION_INPUT_STATE="nonempty"
+        elevation_event "prompt.requested" "phase=dialog"
+        elevation_event "prompt.finished" "$(elevation_code_detail 0)" "stderr=empty"
+        SUDO_PROMPT_OUTCOME="credential_received"
+        return 0
+    fi
     providers="$(sudo_prompt_provider 2>/dev/null || true)"
     if [ -z "$providers" ]; then
         ELEVATION_PROVIDER="none"
@@ -1311,6 +1328,12 @@ sudo_authenticate_once() {
                 incorrect_password)
                     ELEVATION_RESULT="rejected"
                     elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=incorrect_password"
+                    # Senha da GUI: repetir aqui so revalidaria o mesmo arquivo.
+                    # Quem re-pergunta e a janela, com a mensagem de erro.
+                    if [ "${ELEVATION_PROVIDER:-}" = "gui" ]; then
+                        printf '%s\n' "Falha: senha do sudo incorreta. Informe a senha novamente na janela." >&2
+                        return 1
+                    fi
                     password_attempt=$((password_attempt + 1))
                     if [ "$password_attempt" -lt "$GOLIVE_SUDO_PASSWORD_ATTEMPTS" ]; then
                         printf '%s\n' "Falha: senha do sudo incorreta. Informe a senha novamente (tentativa ${password_attempt} de ${GOLIVE_SUDO_PASSWORD_ATTEMPTS})." >&2

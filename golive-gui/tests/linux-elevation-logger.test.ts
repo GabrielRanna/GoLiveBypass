@@ -192,15 +192,37 @@ describe("persistencia dos eventos de elevacao Linux", () => {
     expect(sink.calls[2][3]).toMatchObject({ reason: "pam_error", result: "unavailable" });
   });
 
+  it("persiste eventos do provedor gui e sinaliza falta de providers e recusa", () => {
+    const sink = makeSink();
+    const { consumeLinuxElevationEvents } = loadElevationConsumer(sink.logger);
+    const state = { pending: "", providerMissing: false, guiPasswordRejected: false };
+    consumeLinuxElevationEvents([
+      "[elevation] prompt.unavailable provider=none result=unavailable input=not_applicable reason=provider_missing",
+      "[elevation] prompt.requested provider=gui result=not_attempted input=unknown phase=dialog",
+      "[elevation] prompt.finished provider=gui result=not_attempted input=nonempty code=0 stderr=empty",
+      "[elevation] sudo.validation provider=gui result=rejected code=1 phase=password reason=incorrect_password",
+    ].join("\n") + "\n", state);
+    expect(sink.calls.map((call) => call[2])).toEqual([
+      "elevation.prompt.unavailable",
+      "elevation.prompt.requested",
+      "elevation.prompt.finished",
+      "elevation.sudo.validation",
+    ]);
+    expect(state.providerMissing).toBe(true);
+    expect(state.guiPasswordRejected).toBe(true);
+    expect(JSON.stringify(sink.calls)).not.toContain("124151");
+  });
+
   it("liga o consumidor ao callback da ativacao sem mudar o canal publico", () => {
     const activationStart = mainSource.indexOf("async function linuxActivate");
     const activationEnd = mainSource.indexOf("async function linuxDeactivate", activationStart);
     const activation = mainSource.slice(activationStart, activationEnd);
 
-    expect(activation).toContain("const elevationParserState: LinuxElevationParserState = { pending: \"\" };");
+    expect(activation).toContain("const elevationParserState: LinuxElevationParserState = { pending: \"\", providerMissing: false, guiPasswordRejected: false };");
     expect(activation).toContain("consumeLinuxElevationEvents(chunk, elevationParserState);");
     expect(activation).toContain("onChunk(chunk);");
-    expect(activation).toContain('runScript(["--yes", "--cleanup-legacy"], forwardLinuxChunk)');
+    expect(activation).toContain('elevated.run(["--yes", "--cleanup-legacy"], forwardLinuxChunk)');
+    expect(activation).toContain("createLinuxPasswordFallback(elevationParserState, forwardLinuxChunk)");
     expect(mainSource).toContain('logger.logEvent("info", "linux", LINUX_ELEVATION_LOG_EVENTS[record.event], data);');
   });
 });

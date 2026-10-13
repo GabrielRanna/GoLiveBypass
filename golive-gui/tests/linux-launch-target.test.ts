@@ -193,6 +193,27 @@ describe("identidade do cliente Linux ao relançar", () => {
     expect(result.stdout).toBe("");
   });
 
+  it("identifica o Electron com argv reescrito pelo Chromium (NULs viraram espaços)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-argv-rewrite-"));
+    roots.push(root);
+    const resources = path.join(root, "app", "resources");
+    fs.mkdirSync(resources, { recursive: true });
+    const executable = path.join(root, "runtime", "electron");
+    fs.mkdirSync(path.dirname(executable), { recursive: true });
+    fs.copyFileSync("/bin/bash", executable);
+    // O Chromium troca os NULs do argv por espaços e deixa um NUL só no fim
+    // (provado no NixOS real, Electron 42/43): argv0 carrega a linha colada.
+    const rewritten = `electron --no-sandbox ${path.join(resources, "app.asar")}`;
+    const client = spawn(executable, [], { argv0: rewritten, stdio: ["pipe", "ignore", "ignore"] });
+    children.push(client);
+    await new Promise<void>(resolve => client.once("spawn", resolve));
+    const cmdline = fs.readFileSync(`/proc/${client.pid}/cmdline`, "utf8");
+    expect(cmdline).toBe(`${rewritten}\0`);
+    const result = runHelpers(`parallel_pid_for_resources '${resources}'`);
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe(String(client.pid));
+  });
+
   it("detecta e encerra o Discord oficial com Electron compartilhado sem atingir outro processo", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-official-shared-"));
     roots.push(root);
@@ -218,5 +239,35 @@ describe("identidade do cliente Linux ao relançar", () => {
     expect(client.signalCode).toBe("SIGKILL");
     expect(unrelated.exitCode).toBeNull();
     expect(unrelated.signalCode).toBeNull();
+  });
+
+  it("lança o Discord na unidade systemd com env absoluto e PATH do scan (NixOS)", () => {
+    const launcher = ["run_user_systemd_command"]
+      .map(name => {
+        const fn = source.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}`, "m"));
+        if (!fn) throw new Error(`helper ausente: ${name}`);
+        return fn[0];
+      }).join("\n");
+    // A unidade parte de um PATH mínimo que no NixOS não contém o coreutils
+    // do store: `env` relativo morre com "comando não encontrado" antes de o
+    // Discord nascer, e alvos relativos (vesktop) e o `sh -c` não resolvem.
+    const script = [
+      launcher,
+      'elevate() { printf "%s\\n" "$@"; }',
+      'NETNS_NAME=discord-vpn',
+      'RUN_USER_METHOD=sudo',
+      'RUN_USER_NAME=testuser',
+      'SUDO_BIN=/run/wrappers/bin/sudo',
+      'ENV_BINARY=/run/current-system/sw/bin/env',
+      'PATH=/run/current-system/sw/bin:/usr/bin:/bin',
+      'run_user_systemd_command "discord-vpn-123" "PATH=$PATH" "HOME=/home/testuser" sh -c \'exec "$@"\' sh vesktop',
+    ].join("\n");
+    const result = spawnSync("/bin/sh", ["-c", script], { encoding: "utf8" });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.trim().split("\n");
+    expect(lines).toContain("/run/current-system/sw/bin/env");
+    expect(lines).not.toContain("env");
+    expect(lines).toContain("PATH=/run/current-system/sw/bin:/usr/bin:/bin");
+    expect(lines[lines.indexOf("/run/current-system/sw/bin/env") + 1]).toBe("PATH=/run/current-system/sw/bin:/usr/bin:/bin");
   });
 });

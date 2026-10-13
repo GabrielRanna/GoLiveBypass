@@ -743,8 +743,7 @@ sudo_bin_resolve() {
     local _glb_sudo="" _glb_dir="" _glb_ifs_saved=""
     _glb_sudo="$(command -v sudo 2>/dev/null || true)"
     if [ -n "$_glb_sudo" ] && [ -u "$_glb_sudo" ]; then
-        printf '%s
-' "$_glb_sudo"
+        printf '%s\n' "$_glb_sudo"
         return 0
     fi
     # PATH sem setuid: o resto do PATH antes ...
@@ -755,8 +754,7 @@ sudo_bin_resolve() {
         [ -n "$_glb_dir" ] || continue
         [ -x "$_glb_dir/sudo" ] || continue
         [ -u "$_glb_dir/sudo" ] || continue
-        printf '%s
-' "$_glb_dir/sudo"
+        printf '%s\n' "$_glb_dir/sudo"
         return 0
     done
     IFS="$_glb_ifs_saved"
@@ -764,18 +762,15 @@ sudo_bin_resolve() {
     for _glb_dir in /run/wrappers/bin; do
         [ -x "$_glb_dir/sudo" ] || continue
         [ -u "$_glb_dir/sudo" ] || continue
-        printf '%s
-' "$_glb_dir/sudo"
+        printf '%s\n' "$_glb_dir/sudo"
         return 0
     done
     # Nada com setuid: devolve o que o PATH resolveu (ou o nome, se nao houver) para
     # o fluxo e a mensagem de falha tratarem o caso.
     if [ -n "$_glb_sudo" ]; then
-        printf '%s
-' "$_glb_sudo"
+        printf '%s\n' "$_glb_sudo"
     else
-        printf '%s
-' sudo
+        printf '%s\n' sudo
     fi
     return 0
 }
@@ -784,6 +779,13 @@ IP_BINARY="$(resolve_binary ip || true)"
 MODPROBE_BINARY="$(resolve_binary modprobe || true)"
 MODINFO_BINARY="$(resolve_binary modinfo || true)"
 SUDO_BIN="$(sudo_bin_resolve)"
+# O launcher do Discord (systemd-run/ip netns + troca de usuario) resolve o `env`
+# com o PATH minimo da unidade, que no NixOS nao contem o coreutils do store
+# (/run/current-system/sw/bin/env): sem o caminho absoluto, sudo/runuser/setpriv
+# falham com "env: comando nao encontrado" antes de o Discord nascer. Nas outras
+# distros resolve para /usr/bin/env e nada muda.
+ENV_BINARY="$(resolve_binary env || true)"
+[ -n "$ENV_BINARY" ] || ENV_BINARY="env"
 
 # Senha digitada numa janela (zenity/kdialog) para o sudo -S. Cacheada em arquivo
 # temporario para nao repetir a pergunta a cada operacao da injecao (mv, mkdir, cp).
@@ -830,7 +832,7 @@ elevation_event() {
     esac
 
     case "${ELEVATION_PROVIDER:-none}" in
-        none|root|sudo|zenity|kdialog|askpass|pkexec|tty) provider="$ELEVATION_PROVIDER" ;;
+        none|root|sudo|zenity|kdialog|askpass|pkexec|tty|gui) provider="$ELEVATION_PROVIDER" ;;
         *) provider="unknown" ;;
     esac
     case "${ELEVATION_RESULT:-not_attempted}" in
@@ -868,12 +870,13 @@ elevation_code_detail() {
     esac
 }
 
+# Os quatro SUDO_ASKPASS_* podem estar desfeitos (unset) aqui: o caminho askpass
+# os remove logo apos validar e chama esta limpeza na sequencia. Sem o `:-`, o
+# `set -eu` do script transformaria a limpeza em saida silenciosa — o usuario
+# perderia a mensagem de falha e os eventos de elevacao.
 cleanup_sudo_pass() {
     cleanup_wireguard_temp
     rollback_activation
-    # `${VAR:-}` em vez de `$VAR`: o askpass faz `unset` dessas variaveis e esta
-    # limpeza roda no trap de saida; sob `set -eu` a referencia direta quebraria
-    # o script no exato momento de encerrar.
     if [ -n "${SUDO_PASS_FILE:-}" ] && [ -f "${SUDO_PASS_FILE:-}" ]; then
         rm -f "${SUDO_PASS_FILE:-}" 2>/dev/null || true
     fi
@@ -955,6 +958,23 @@ sudo_pass_get() {
     local prompt_stderr_state="empty" provider_seen=0 provider_failure=0
     SUDO_PROMPT_FALLBACK_PKEXEC=0
     SUDO_PROMPT_OUTCOME="not_attempted"
+    # Senha vinda da janela da propria GUI (GOLIVE_SUDO_PASS_FILE aponta um
+    # arquivo 0600 com a senha + newline). Ultimo recurso quando o sistema nao
+    # tem zenity/kdialog nem agente polkit alcancavel: a GUI decide quando
+    # oferecer, nunca o script por conta propria. Vazio/ilegivel cai no fluxo
+    # normal; o trap de saida apaga o arquivo como qualquer senha temporaria.
+    if [ "${GOLIVE_GUI:-0}" = "1" ] && [ -n "${GOLIVE_SUDO_PASS_FILE:-}" ] \
+        && [ -f "$GOLIVE_SUDO_PASS_FILE" ] && [ -r "$GOLIVE_SUDO_PASS_FILE" ] \
+        && [ -s "$GOLIVE_SUDO_PASS_FILE" ]; then
+        SUDO_PASS_FILE="$GOLIVE_SUDO_PASS_FILE"
+        ELEVATION_PROVIDER="gui"
+        ELEVATION_RESULT="not_attempted"
+        ELEVATION_INPUT_STATE="nonempty"
+        elevation_event "prompt.requested" "phase=dialog"
+        elevation_event "prompt.finished" "$(elevation_code_detail 0)" "stderr=empty"
+        SUDO_PROMPT_OUTCOME="credential_received"
+        return 0
+    fi
     providers="$(sudo_prompt_provider 2>/dev/null || true)"
     if [ -z "$providers" ]; then
         ELEVATION_PROVIDER="none"
@@ -1226,8 +1246,9 @@ ASKPASS_HELPER
         elevation_event "prompt.failed" "reason=temporary_file"
         return 1
     }
-    # `askpass_status` precisa de valor inicial: sob `set -eu`, a atribuicao
-    # `askpass_status=$?` depois de um subshell que falha derrubaria o shell.
+    # `|| askpass_status=$?` em vez de atribuicao direta: sob `set -eu`, uma
+    # atribuicao com substituicao de comando que falha derrubaria o script.
+    # `askpass_stderr` guarda o CAMINHO do arquivo temporario — nao o conteudo.
     askpass_status=0
     (
         unset LD_LIBRARY_PATH LD_PRELOAD
@@ -1290,11 +1311,11 @@ ASKPASS_HELPER
             account_blocked)
                 printf '%s\n' 'Falha: o sudo recusou a autenticacao desta conta (senha expirada, conta bloqueada ou troca de senha obrigatoria). Resolva o acesso com sudo -v em um terminal e tente de novo; a ativacao foi cancelada.' >&2
                 ;;
+            pam_error)
+                printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuração de PAM ausente — comum em instalações NixOS/contêineres enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
+                ;;
             suid_missing)
                 printf '%s\n' "Falha: o sudo encontrado (${SUDO_BIN}) nao tem o bit setuid e nao consegue elevar. No NixOS o sudo que funciona e o wrapper /run/wrappers/bin/sudo: o binario do systemPackages (/run/current-system/sw/bin/sudo, tambem alcancado por /usr/bin/sudo) nao tem setuid e recusa antes de ler a senha. Deixe /run/wrappers/bin na frente do PATH ou reinstale o sudo; a ativacao foi cancelada." >&2
-                ;;
-            pam_error)
-                printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuracao de PAM ausente — comum em instalacoes NixOS/enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
                 ;;
             *)
                 printf '%s\n' 'Falha: o sudo recusou a autorizacao por um motivo nao identificado. A ativacao foi cancelada sem repetir o pedido; rode "sudo -v" em um terminal para ver o motivo real exibido pelo sudo.' >&2
@@ -1305,7 +1326,6 @@ ASKPASS_HELPER
     elevation_event "sudo.validation" "$(elevation_code_detail "$askpass_status")" "phase=password"
     return 1
 }
-
 
 # A mensagem do sudo e lida somente para classificar a causa da recusa; ela nunca
 # volta para o log nem para a interface. O retorno e sempre um motivo conhecido da
@@ -1393,8 +1413,13 @@ sudo_authenticate_once() {
                 fi
                 return 1
             fi
-            sudo_stderr="$("$SUDO_BIN" -S -k -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)"
-            sudo_status=$?
+            # A atribuicao com substituicao de comando falha junto com o sudo sob
+            # `set -eu`: sem o `||`, o script morreria aqui (sem mensagem e sem
+            # eventos) em chamadas de elevate fora de contexto de condicao, como
+            # `elevate ip netns add`. O status e capturado, nao ignorado.
+            sudo_stderr=""
+            sudo_status=0
+            sudo_stderr="$("$SUDO_BIN" -S -k -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)" || sudo_status=$?
             if [ "$sudo_status" -eq 0 ]; then
                 sudo_stderr=""
                 ELEVATION_RESULT="accepted"
@@ -1410,6 +1435,12 @@ sudo_authenticate_once() {
                 incorrect_password)
                     ELEVATION_RESULT="rejected"
                     elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=incorrect_password"
+                    # Senha da GUI: repetir aqui so revalidaria o mesmo arquivo.
+                    # Quem re-pergunta e a janela, com a mensagem de erro.
+                    if [ "${ELEVATION_PROVIDER:-}" = "gui" ]; then
+                        printf '%s\n' "Falha: senha do sudo incorreta. Informe a senha novamente na janela." >&2
+                        return 1
+                    fi
                     password_attempt=$((password_attempt + 1))
                     if [ "$password_attempt" -lt "$GOLIVE_SUDO_PASSWORD_ATTEMPTS" ]; then
                         printf '%s\n' "Falha: senha do sudo incorreta. Informe a senha novamente (tentativa ${password_attempt} de ${GOLIVE_SUDO_PASSWORD_ATTEMPTS})." >&2
@@ -1436,22 +1467,22 @@ sudo_authenticate_once() {
                     printf '%s\n' 'Falha: o sudo recusou a autenticacao desta conta (senha expirada, conta bloqueada ou troca de senha obrigatoria). Resolva o acesso com sudo -v em um terminal e tente de novo; a ativacao foi cancelada.' >&2
                     return 1
                     ;;
+                pam_error)
+                    # Caminho comum em NixOS enxuto: o PAM do sistema nao resolve a
+                    # conta (modulo/servico incompleto) e o sudo recusa antes de
+                    # comparar a senha. A mensagem precisa dizer que a senha nao
+                    # estava em questao, senao o usuario a redigita infinitamente.
+                    ELEVATION_RESULT="unavailable"
+                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=pam_error"
+                    printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuração de PAM ausente — comum em instalações NixOS/contêineres enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
+                    return 1
+                    ;;
                 suid_missing)
                     # NixOS: o sudo do PATH e o binario do systemPackages, sem o bit
                     # setuid; quem eleva e /run/wrappers/bin/sudo, fora do PATH da GUI.
                     ELEVATION_RESULT="unavailable"
                     elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=suid_missing"
                     printf '%s\n' "Falha: o sudo encontrado (${SUDO_BIN}) nao tem o bit setuid e nao consegue elevar. No NixOS o sudo que funciona e o wrapper /run/wrappers/bin/sudo: o binario do systemPackages (/run/current-system/sw/bin/sudo, tambem alcancado por /usr/bin/sudo) nao tem setuid e recusa antes de ler a senha. Deixe /run/wrappers/bin na frente do PATH ou reinstale o sudo; a ativacao foi cancelada." >&2
-                    return 1
-                    ;;
-                pam_error)
-                    # Caminho comum em NixOS enxuto: o PAM do sistema nao resolve a
-                    # conta (modulo/servico incompleto) e o sudo recusa antes de
-                    # comparar a senha. A mensagem precisa dizer que a senha nao
-                    # estava em questao, senao o usuario a redigita sem sucesso.
-                    ELEVATION_RESULT="unavailable"
-                    elevation_event "sudo.validation" "$(elevation_code_detail "$sudo_status")" "phase=password" "reason=pam_error"
-                    printf '%s\n' 'Falha: o sudo nao conseguiu autenticar esta conta pelo PAM do sistema (senha expirada, conta sem senha definida ou configuracao de PAM ausente — comum em instalacoes NixOS/enxutas). Rode "sudo -v" em um terminal para ver o motivo exato e corrija-o antes de ativar.' >&2
                     return 1
                     ;;
                 *)
@@ -1673,15 +1704,15 @@ run_user_systemd_command() {
 
     case "$RUN_USER_METHOD" in
         sudo)
-            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" "$SUDO_BIN" -u "$RUN_USER_NAME" -- env "$@"
+            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" "$SUDO_BIN" -u "$RUN_USER_NAME" -- "$ENV_BINARY" "$@"
             # A unidade permanece em foreground; o chamador captura sua saida:
             # sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1
             ;;
         runuser)
-            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" runuser -u "$RUN_USER_NAME" -- env "$@"
+            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" runuser -u "$RUN_USER_NAME" -- "$ENV_BINARY" "$@"
             ;;
         setpriv)
-            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" setpriv --reuid "$RUN_USER_UID" --regid "$RUN_USER_GID" --init-groups -- env "$@"
+            elevate systemd-run --collect --unit="$unit" ip netns exec "$NETNS_NAME" setpriv --reuid "$RUN_USER_UID" --regid "$RUN_USER_GID" --init-groups -- "$ENV_BINARY" "$@"
             ;;
         *)
             printf '%s\n' 'Falha: executor seguro do Discord nao foi preparado.' >&2
@@ -3084,11 +3115,26 @@ parallel_process_belongs_to_resources() {
         */electron|*/Electron|*/electron[0-9]*|*/electron-[0-9]*|*/node|*/nodejs|*/Discord|*/DiscordPTB|*/DiscordCanary|*/discord|*/discordptb|*/discord-canary|*/vesktop|*/equibop|*/legcord) ;;
         *) return 1 ;;
     esac
+    # O Chromium reescreve o argv na memoria (espacos no lugar dos NULs, um NUL
+    # so no fim): provado no NixOS real com o Electron 42/43 do nixpkgs, para o
+    # Discord e o vesktop. Sem tratar isso, o cliente com Electron fora da raiz
+    # (nix, AUR) vira "nao esta rodando": o status erra, o stop deixa um orfao
+    # no host e o relaunch nao o preserva.
+    # A distincao e estrutural, nao textual: cmdline normal tem um NUL por
+    # argumento (arg exato ou prefixo arrpc, como antes); cmdline reescrito tem
+    # um unico NUL no fim e o path aparece como substring da linha colada. Uma
+    # mencao incidental dentro de um argumento maior continua sem identificar,
+    # porque ali os NULs entre argumentos estao intactos.
     GOLIVE_MATCH_RESOURCES="$resources" awk '
-        BEGIN { RS="\0"; resources=ENVIRON["GOLIVE_MATCH_RESOURCES"] }
-        $0 == resources "/app.asar" || $0 == resources "/_app.asar" ||
-        $0 == resources "/arrpc" || index($0, resources "/arrpc/") == 1 { found=1; exit }
-        END { exit found ? 0 : 1 }
+        BEGIN { RS="\0"; resources=ENVIRON["GOLIVE_MATCH_RESOURCES"]; n=0; partial=0 }
+        {
+            n++
+            if ($0 == resources "/app.asar" || $0 == resources "/_app.asar" ||
+                $0 == resources "/arrpc" || index($0, resources "/arrpc/") == 1) { exact=1; exit }
+            if (index($0, resources "/app.asar") || index($0, resources "/_app.asar") ||
+                index($0, resources "/arrpc")) partial=1
+        }
+        END { if (exact) exit 0; if (n == 1 && partial) exit 0; exit 1 }
     ' "/proc/$pid/cmdline" 2>/dev/null
 }
 
@@ -3170,6 +3216,7 @@ manual_pid_for_target() {
     done
     return 1
 }
+
 # Retorna o PID do cliente deste flavour. Usado pelo status para nao confundir um
 # Discord normal (fora do namespace) com a sessao protegida pelo WireGuard.
 discord_pid_flav() {
@@ -3277,8 +3324,6 @@ stop_discord() {
         flatpak kill "$id" >/dev/null 2>&1 || warn "flatpak kill $id nao respondeu; tento de novo na escalada."
     done
     # Os nomes possiveis do processo do Discord em Linux: maiusculo (Windows), minusculo
-    # (tar.gz/.deb/Flatpak) e os sufixos -canary/-ptb. pkill sem -x pegaria "discord" dentro
-    # de outro comando (ex.: "discordctl"), entao vamos de nome exato, um por um.
     pkill -x Discord 2>/dev/null || true
     pkill -x DiscordPTB 2>/dev/null || true
     pkill -x discord 2>/dev/null || true
@@ -3297,12 +3342,6 @@ stop_discord() {
     manual_pid="$(manual_pid_for_target 2>/dev/null || true)"
     if [ -n "$manual_pid" ]; then
         kill "$manual_pid" 2>/dev/null || true
-    fi
-    if have flatpak; then
-        local id
-        for id in $FLATPAK_IDS; do
-            flatpak kill "$id" >/dev/null 2>&1 || true
-        done
     fi
 
     local i
@@ -3928,6 +3967,7 @@ target_can_launch() {
 select_launch_target() {
     local found="${1:-}" resources flav detect id escolhido=""
     [ -n "$found" ] || return 0
+
     # Alvo manual (fallback): a escolha explicita do usuario vence a heuristica, inclusive
     # quando ela nao tem resources para comparar (flatpak, snap e AppImage ficam sem esse
     # caminho). A linha continua no FOUND para o status e a parada a cobrirem.
@@ -3937,7 +3977,6 @@ select_launch_target() {
         printf '%s\n' "$manual" | head -1
         return 0
     fi
-
 
     while IFS='|' read -r resources flav detect id; do
         [ -n "$resources" ] || continue
@@ -3987,7 +4026,11 @@ start_discord() {
 
     # Nao inventar wayland-1: em muitas sessoes o socket e wayland-0, e um
     # valor falso faz o Electron cair silenciosamente em XWayland.
-    local run_env="HOME=$_USER_HOME USER=$run_user LOGNAME=$run_user DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-} XAUTHORITY=${XAUTHORITY:-$_USER_HOME/.Xauthority} XDG_RUNTIME_DIR=$runtime_dir DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$run_uid/bus} PULSE_SERVER=${PULSE_SERVER:-unix:$runtime_dir/pulse/native} XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-} XDG_CURRENT_DESKTOP=${XDG_CURRENT_DESKTOP:-} XDG_SESSION_DESKTOP=${XDG_SESSION_DESKTOP:-} DESKTOP_SESSION=${DESKTOP_SESSION:-} GDK_BACKEND=${GDK_BACKEND:-} QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-} PIPEWIRE_REMOTE=${PIPEWIRE_REMOTE:-} ELECTRON_OZONE_PLATFORM_HINT=${ELECTRON_OZONE_PLATFORM_HINT:-auto}"
+    # PATH e o do proprio script (onde o scan achou Discord/vesktop/sh): a unidade
+    # systemd e o sudo interno partem de um PATH minimo que no NixOS nao contem
+    # nem o sh nem os wrappers do nixpkgs. Sem ele, alvos relativos (vesktop,
+    # flatpak, snap) e o proprio `sh -c` nao resolvem dentro do namespace.
+    local run_env="PATH=$PATH HOME=$_USER_HOME USER=$run_user LOGNAME=$run_user DISPLAY=${DISPLAY:-} WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-} XAUTHORITY=${XAUTHORITY:-$_USER_HOME/.Xauthority} XDG_RUNTIME_DIR=$runtime_dir DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$run_uid/bus} PULSE_SERVER=${PULSE_SERVER:-unix:$runtime_dir/pulse/native} XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-} XDG_CURRENT_DESKTOP=${XDG_CURRENT_DESKTOP:-} XDG_SESSION_DESKTOP=${XDG_SESSION_DESKTOP:-} DESKTOP_SESSION=${DESKTOP_SESSION:-} GDK_BACKEND=${GDK_BACKEND:-} QT_QPA_PLATFORM=${QT_QPA_PLATFORM:-} PIPEWIRE_REMOTE=${PIPEWIRE_REMOTE:-} ELECTRON_OZONE_PLATFORM_HINT=${ELECTRON_OZONE_PLATFORM_HINT:-auto}"
     printf '  Backend grafico: %s | Wayland=%s | portal=%s\n' "$(graphics_backend)" "${WAYLAND_DISPLAY:-nenhum}" "$(graphics_portal_state)" >&2
     printf '[%s] backend=%s wayland=%s session=%s portal=%s\n' "$(date -Is)" "$(graphics_backend)" "${WAYLAND_DISPLAY:-}" "${XDG_SESSION_TYPE:-}" "$(graphics_portal_state)" >>"$discord_log"
 
@@ -4014,11 +4057,11 @@ start_discord() {
         printf '[%s] launch=manual kind=%s key=%s\n' "$(date -Is)" "$MANUAL_KIND" "$MANUAL_KEY" >>"$discord_log"
         if [ "${START_DISCORD_HOST_ONLY:-0}" -eq 1 ]; then
             printf '[%s] launch=host-fallback\n' "$(date -Is)" >>"$discord_log"
-            run_user_host_command detached env $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
+            run_user_host_command detached "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
         elif have setsid; then
-            run_user_netns_command detached env $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
+            run_user_netns_command detached "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
         else
-            run_user_netns_command background env $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
+            run_user_netns_command background "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh "$@" >>"$discord_log" 2>&1 </dev/null
         fi
         printf '  Log do Discord: %s\n' "$discord_log" >&2
         return 0
@@ -4069,14 +4112,13 @@ start_discord() {
         # sem colocar um processo dentro de uma rota que nao foi validada.
         printf '[%s] launch=host-fallback\n' "$(date -Is)" >>"$discord_log"
         if have setsid; then
-            run_user_host_command detached env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
+            run_user_host_command detached "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
         else
-            run_user_host_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
+            run_user_host_command background "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null
         fi
         printf '  Log do Discord: %s\n' "$discord_log" >&2
         return 0
     fi
-
     local lancamento_rc=0
     if [ -n "$id" ]; then
         # Flatpak depende do barramento e do portal da sessão gráfica do usuário.
@@ -4086,9 +4128,9 @@ start_discord() {
         # ambiente Wayland/DBus e ainda mantém o tráfego isolado no WireGuard.
         printf '[%s] launch=flatpak-direct app=%s\n' "$(date -Is)" "$id" >>"$discord_log"
         if have setsid; then
-            run_user_netns_command detached env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
+            run_user_netns_command detached "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
         else
-            run_user_netns_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
+            run_user_netns_command background "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
         fi
     elif have systemd-run; then
         # O arquivo captura o stderr/stdout do cliente para diferenciar crash,
@@ -4099,7 +4141,7 @@ start_discord() {
         # processo destacado tentava le-la tarde demais, deixando o Discord
         # fechado apesar de o tunel estar ativo.
         run_user_systemd_command "discord-vpn-$(date +%s)" \
-            "HOME=$_USER_HOME" "USER=$run_user" "LOGNAME=$run_user" "DISPLAY=${DISPLAY:-}" \
+            "PATH=$PATH" "HOME=$_USER_HOME" "USER=$run_user" "LOGNAME=$run_user" "DISPLAY=${DISPLAY:-}" \
             "WAYLAND_DISPLAY=${WAYLAND_DISPLAY:-}" "XAUTHORITY=${XAUTHORITY:-$_USER_HOME/.Xauthority}" \
             "XDG_RUNTIME_DIR=$runtime_dir" "DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$run_uid/bus}" \
             "PULSE_SERVER=${PULSE_SERVER:-unix:$runtime_dir/pulse/native}" "XDG_SESSION_TYPE=${XDG_SESSION_TYPE:-}" \
@@ -4109,7 +4151,7 @@ start_discord() {
             "ELECTRON_OZONE_PLATFORM_HINT=${ELECTRON_OZONE_PLATFORM_HINT:-auto}" \
             sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 || lancamento_rc=$?
     else
-        run_user_netns_command background env $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
+        run_user_netns_command background "$ENV_BINARY" $run_env sh -c 'exec "$@"' sh $target_cmd >>"$discord_log" 2>&1 </dev/null || lancamento_rc=$?
     fi
     if [ "$lancamento_rc" -ne 0 ]; then
         # Registrado sem data entre colchetes no extrato final: a mensagem de falha

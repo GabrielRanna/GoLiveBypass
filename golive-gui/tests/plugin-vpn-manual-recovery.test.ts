@@ -8,13 +8,13 @@ vi.mock("node:child_process", () => ({ execFile: vi.fn(), execFileSync: vi.fn() 
 import * as windows from "../../goLiveBypass/vpn-windows";
 import { PluginVpnController } from "../../goLiveBypass/vpn-controller";
 import { VPN_OWNER_KIND } from "../../goLiveBypass/vpn-types";
+import { forcePluginHost } from "./helpers/plugin-host";
 
 const controllerSource = fs.readFileSync(
     path.resolve(__dirname, "../../goLiveBypass/vpn-controller.ts"),
     "utf8",
 );
 
-const originalPlatform = process.platform;
 
 function unknown(): windows.WireSockInspection {
     return {
@@ -78,14 +78,16 @@ function controller(dataDir: string): PluginVpnController {
 }
 
 describe("restauração manual e recuperação do WireSock (#306/#281/#309/#331)", () => {
+    let restoreHost = () => { };
+
     beforeEach(() => {
-        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        restoreHost = forcePluginHost("win32");
         vi.restoreAllMocks();
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
-        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+        restoreHost();
     });
 
     it("restauração manual executa a limpeza mesmo sem ownership comprovado (#306)", async () => {

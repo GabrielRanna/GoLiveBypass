@@ -4,12 +4,22 @@ import os from "os";
 import path from "path";
 import { spawn, spawnSync } from "node:child_process";
 
+// Estes testes executam o script com sh e curl falsos (shebang, chmod, process groups).
+const itLinux = it.skipIf(process.platform !== "linux");
 const scriptPath = path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh");
 
 function runWithOpenStdin(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  // O --status só emite JSON quando há algum alvo; um alvo manual válido evita depender de
+  // um Discord instalado no host (no CI o script falha com "Nao achei nenhum Discord").
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "golive-status-stdin-"));
+  const app = path.join(dir, "discord");
+  fs.writeFileSync(app, "#!/bin/sh\n");
+  fs.chmodSync(app, 0o755);
+  const manual = path.join(dir, "manual-target.conf");
+  fs.writeFileSync(manual, ["schema=1", "kind=exec", `key=${app}`, "label=Discord", "resources=", `arg=${app}`, ""].join("\n"));
   return new Promise((resolve, reject) => {
     const child = spawn("sh", [scriptPath, ...args], {
-      env: { ...process.env, GOLIVE_GUI: "1", REPORT_NO_AUTO: "1" },
+      env: { ...process.env, GOLIVE_GUI: "1", REPORT_NO_AUTO: "1", MANUAL_TARGET_FILE: manual },
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -20,9 +30,10 @@ function runWithOpenStdin(args: string[]): Promise<{ code: number | null; stdout
     }, 60_000);
     child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
     child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    child.once("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.once("error", (error) => { clearTimeout(timeout); fs.rmSync(dir, { recursive: true, force: true }); reject(error); });
     child.once("close", (code) => {
       clearTimeout(timeout);
+      fs.rmSync(dir, { recursive: true, force: true });
       resolve({ code, stdout, stderr });
     });
   });
@@ -33,7 +44,7 @@ describe("elevacao sudo no Linux", () => {
     path.resolve(process.cwd(), "../standalone/golivebypass-standalone.sh"),
     "utf8",
   );
-  it("monta o relatorio pelo contexto e log sem ler stdin aberto", { timeout: 10_000 }, async () => {
+  itLinux("monta o relatorio pelo contexto e log sem ler stdin aberto", { timeout: 10_000 }, async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-report-stdin-"));
     const context = path.join(root, "context.txt");
     const capture = path.join(root, "payload.txt");
@@ -178,7 +189,7 @@ describe("elevacao sudo no Linux", () => {
     expect(teardown).toContain("if ! netns_exists; then");
     expect(teardown).toContain('ok "Tunel WireGuard encerrado."');
   });
-  it("finaliza status e probe mesmo com stdin aberto", { timeout: 120_000 }, async () => {
+  itLinux("finaliza status e probe mesmo com stdin aberto", { timeout: 120_000 }, async () => {
     // Integração deliberada com o relógio real: reproduz o pipe/socket vivo do
     // Electron, e o timeout curto detecta regressão de bloqueio em cat/read.
     for (const args of [
@@ -192,7 +203,7 @@ describe("elevacao sudo no Linux", () => {
       expect(() => JSON.parse(jsonLine as string)).not.toThrow();
     }
   });
-  it("limita report_send quando curl nao responde", async () => {
+  itLinux("limita report_send quando curl nao responde", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-report-timeout-"));
     const curl = path.join(root, "curl");
     const marker = path.join(root, "marker");

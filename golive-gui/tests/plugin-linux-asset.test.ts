@@ -21,7 +21,8 @@ import { findLinuxNetnsLauncher } from "../../goLiveBypass/native";
 import { embeddedLinuxAssetSha256, isValidEmbeddedLinuxAsset, materializeEmbeddedLinuxAsset } from "../../goLiveBypass/vpn-proton";
 
 describe("asset Linux do launcher", () => {
-  it("rejeita launcher stale no caminho preferido e usa o asset materializado", () => {
+  // O asset embutido só existe para Linux x64.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("rejeita launcher stale no caminho preferido e usa o asset materializado", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-linux-asset-"));
     const stale = path.join(root, "netns-launcher");
     try {
@@ -49,7 +50,8 @@ describe("asset Linux do launcher", () => {
     expect(launcher).toContain("write_confirmation(confirm_path, argv[1])");
   });
 
-  it("materializa o asset com o protocolo e o digest declarado", () => {
+  // O asset embutido só existe para Linux x64.
+  it.skipIf(process.platform !== "linux" || process.arch !== "x64")("materializa o asset com o protocolo e o digest declarado", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "golive-linux-materialized-"));
     try {
       const materialized = materializeEmbeddedLinuxAsset("netns-launcher", root);

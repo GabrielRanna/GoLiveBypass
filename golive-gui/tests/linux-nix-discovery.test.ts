@@ -69,7 +69,8 @@ function nixLines(root: string, result: { stdout: string; status: number | null 
   return result.stdout.split("\n").filter(line => line.startsWith(root));
 }
 
-describe("descoberta de clientes instalados pelo Nix (nixpkgs)", () => {
+// Depende de /bin/sh, symlinks e do layout de store do Nix no Linux.
+describe.skipIf(process.platform !== "linux")("descoberta de clientes instalados pelo Nix (nixpkgs)", () => {
   it("acha o Discord oficial do modo FHS pelo wrapper encadeado ao pacote real", () => {
     const root = makeRoot();
     const unwrapped = makePkg(root, "discord-unwrapped-1.0.0");

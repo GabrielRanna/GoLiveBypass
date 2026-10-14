@@ -135,7 +135,7 @@ export function runningTasklist(imagem: string, ok: boolean, erro?: string) {
 // Resultado do script Linux --status --json: code + se o JSON parseou.
 // O stderr (banner, avisos) nao vai mais como blob — as linhas de trace viram
 // eventos proprios (scriptTrace) para o log ficar legivel.
-export function scriptStatus(code: number, jsonOk: boolean) {
+export function scriptStatus(code: number | null, jsonOk: boolean) {
   logger.info("discord", "script.status", { code, json_ok: jsonOk ? "sim" : "nao" });
 }
 

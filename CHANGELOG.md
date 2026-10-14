@@ -6,6 +6,11 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Documentação: guia para compilar do zero (NixOS, Void e distros afins)
+
+- Novo [`docs/compilar-do-zero.md`](docs/compilar-do-zero.md), ligado no Índice, na seção do AppImage e no resumo em inglês do README: requisitos (Node 22.12+, Go 1.26.6+), toolchain por distro (Arch/CachyOS, Debian/Ubuntu, Fedora, Void Linux, NixOS, tarball oficial), o que cada script `build:*` faz e o roteiro até `dist-app/GoLiveBypass-<versão>.AppImage`.
+- Erros comuns com a mensagem exata, incluindo o relato do helper: `dial tcp: lookup proxy.golang.org on [::1]:53: … address family not supported by protocol` — causa (`/etc/resolv.conf` só com o nameserver `::1` num sistema sem pilha IPv6), diagnóstico e as duas correções (resolvedor IPv4; religar IPv6). Medido em netns: o resolvedor puro do Go **pula** um nameserver inutilizável quando existe outro depois dele, e `GODEBUG=netdns=cgo` não contorna o caso (lê o mesmo arquivo). Entram também o toolchain do Go (`GOTOOLCHAIN=local` vs. download automático, os dois medidos), proxy/espelho de npm/Electron/Go, cache de módulos para máquina sem DNS (`GOPROXY=off`), FUSE do AppImage e as dependências de ativação (`wireguard-tools`/`iproute2`/`curl`, módulo `wireguard`, sudo setuid do NixOS).
+
 ### Linux: senha do sudo pedida na janela da GUI quando o sistema não tem diálogo nem polkit
 
 - Sem zenity/kdialog e sem agente polkit alcançável (NixOS enxuto, spins mínimos), a ativação morria em "não há agente de autenticação polkit" sem alternativa. Agora a GUI resolve sozinha: quando o script sinaliza `prompt.unavailable reason=provider_missing`, abre um modal próprio de senha e repete a operação com a credencial (provider `gui`), até 3 tentativas com aviso de "senha recusada" entre elas; cancelar mantém o erro original e o Discord intacto.

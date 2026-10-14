@@ -103,6 +103,10 @@ chmod +x GoLiveBypass-*.AppImage
 > ./GoLiveBypass-*.AppImage --appimage-extract-and-run
 > ```
 
+> **Prefere compilar você mesmo?** A receita por distro — incluindo NixOS e Void Linux — e a
+> solução dos erros de rede (`proxy.golang.org` sem IPv6, toolchain do Go, download do Electron)
+> estão em [`docs/compilar-do-zero.md`](docs/compilar-do-zero.md).
+
 ### Como Usar
 1. O aplicativo detecta o seu Discord automaticamente (nativo ou flatpak).
 2. Clique em **"Ativar Bypass"** — o Discord fecha, o bypass entra e ele reabre.
@@ -154,6 +158,7 @@ paralelos e Flatpak; Equicord/Vencord é preservado e não impede o túnel por n
 - [Instalação manual, passo a passo](#instalação-passo-a-passo-completo) — cada etapa à mão
 - [Instalação no Vesktop](#instalação-no-vesktop) — passo a passo para quem usa o Vesktop no lugar do Discord normal
 - [Dependências](#dependências-o-que-baixar-e-como-instalar) — só para o caminho manual
+- [**Compilar do zero**](docs/compilar-do-zero.md) — NixOS, Void, Arch, Debian, Fedora: receita por distro e os erros de rede/DNS que travam o build
 
 **Projeto**
 - [Estrutura](#estrutura) · [Licença](#licença) · [Autor](#autor) · [Agradecimentos](#agradecimentos)
@@ -931,6 +936,7 @@ It was written after Brazil's data protection authority (ANPD) [ordered Discord 
 
 - Desktop Discord with Equicord or Vencord injected; the migrated VPN is Windows x64 only. The renderer patch may load in other Electron hosts, but Vesktop and non-Windows VPN behavior are not validated by this migration.
 - Dependencies: Git, Node.js 22+, pnpm 11 (via `corepack enable`), and a desktop Discord client. The release package includes `proton-confgen.exe`; WireSock is installed on demand with a pinned official hash.
+- Build from source (GUI): [`docs/compilar-do-zero.md`](docs/compilar-do-zero.md) — per-distro toolchain (NixOS, Void, Arch, Debian, Fedora) plus the DNS/module-proxy and Electron download failures that stop the build.
 - **Your calls stay on the region you pick.** The plugin keeps its `RTCRegionStore` preference override separate from the VPN controller and restores it on `stop()`.
 - The plugin stores its WireGuard profile, Proton session and ownership lock in `%LOCALAPPDATA%\GoLiveBypass\plugin-vpn`; it does not read GUI settings or standalone state except for the one-time compatible-file migration described above.
 - DNS/HTTPS/route probes are diagnostic-only. They are logged for troubleshooting and do not block activation, change the route during a call, or stop Discord.

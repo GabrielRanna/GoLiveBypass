@@ -62,6 +62,7 @@ Execute a menor verificação que cubra o comportamento alterado. Confira os scr
 | --- | --- |
 | GUI/lógica TypeScript | `npm test -- tests/<arquivo>.test.ts` em `golive-gui/`; `npm test` para mudanças transversais |
 | Compilação da GUI | `npm run compile` em `golive-gui/` (inclui sync, helper Go, TypeScript e Vite) |
+| Tipos do processo principal (`electron/`) | `npm run typecheck:electron` em `golive-gui/` (o `tsc` padrão só cobre `src/`) |
 | Fonte do bypass legado | `npm run check-bypass` em `golive-gui/`, após sync, e regressões pertinentes de `tests/` |
 | Shell standalone | `bash -n standalone/golivebypass-standalone.sh` na raiz, além do teste comportamental pertinente |
 | API Go | `go test ./...` em `api/` |

@@ -18,6 +18,7 @@
     "preview": "vite preview",
     "sync-bypass": "node scripts/sync-bypass.mjs",
     "check-bypass": "node scripts/sync-bypass.mjs --check",
+    "typecheck:electron": "tsc -p tsconfig.electron.json",
     "test": "vitest run",
     "build:linux": "npm run compile && electron-builder --linux AppImage --publish never",
     "publish:win": "npm run compile && electron-builder --win --x64 --publish always",

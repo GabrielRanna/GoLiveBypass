@@ -20,7 +20,6 @@ export type LinuxPreflight = {
     /** `true` quando há wireguard-go + `/dev/net/tun`: o device sai no espaço do usuário. */
     userspace: boolean;
   };
-  discord: { found: boolean; count: number; firstPath: string };
   discord: {
     found: boolean;
     count: number;

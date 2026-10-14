@@ -51,9 +51,13 @@ function makeActivationPreflight() {
   }`)();
 }
 
+// A ativação Linux pode estar inteira em linuxActivate ou dividida em linuxActivateInner
+// (que recebe forwardLinuxChunk e o executor elevado como parâmetros). Aceita os dois formatos.
 function makeLinuxPreflight() {
-  const fn = findFunction("linuxActivate");
-  if (!fn.body || !ts.isBlock(fn.body)) throw new Error("linuxActivate sem corpo");
+  let fn: ts.FunctionLikeDeclaration;
+  let split = true;
+  try { fn = findFunction("linuxActivateInner"); } catch { fn = findFunction("linuxActivate"); split = false; }
+  if (!fn.body || !ts.isBlock(fn.body)) throw new Error("função de ativação Linux sem corpo");
   const statements = [...fn.body.statements];
   const end = statements.findIndex((s) => s.getText(file).includes("if (!preflight.ok)"));
   if (end < 0) throw new Error("bloco de validação Linux não encontrado");
@@ -61,8 +65,10 @@ function makeLinuxPreflight() {
   const body = ts.transpileModule(bodySource, {
     compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None },
   }).outputText;
+  const params = split ? "const forwardLinuxChunk = onChunk; const elevated = { run: runScript };" : "";
   return new Function(`return async function(ctx) {
     const { linuxPreflight, runScript, onChunk, linuxPreflightMessage, linuxPreflightRepairable, tailErroScript } = ctx;
+    ${params}
     ${body}
     return preflight;
   }`)();

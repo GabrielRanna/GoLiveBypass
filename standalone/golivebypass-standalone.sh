@@ -2017,8 +2017,10 @@ ensure_wireguard_module() {
 # Ler campo a campo em vez de dar source: /etc/os-release e shell valido, e um arquivo torto
 # executaria comando neste script, que logo depois chama sudo.
 os_field() {
-    [ -r /etc/os-release ] || return 0
-    sed -n "s/^$1=//p" /etc/os-release | tr -d '"' | head -1
+    # OS_RELEASE_FILE existe para os testes; em uso normal vale /etc/os-release.
+    local file="${OS_RELEASE_FILE:-/etc/os-release}"
+    [ -r "$file" ] || return 0
+    sed -n "s/^$1=//p" "$file" | tr -d '"' | head -1
     return 0
 }
 

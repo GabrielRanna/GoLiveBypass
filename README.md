@@ -876,6 +876,14 @@ GPL-3.0-or-later, mesma licença do Vencord/Equicord. Veja [LICENSE](LICENSE).
 
 ## Agradecimentos
 
+**Obrigado ao [pdl-clay](https://github.com/pdl-clay)** — hoje é ele quem toca o projeto no dia a dia, e foi ele quem construiu a linha 2.0.
+
+O WireGuard por aplicativo que a 2.0 estreou é trabalho dele: no Linux, a GUI AppImage que lança o
+Discord dentro do namespace `discord-vpn`; no Windows, a prova de escopo que garante que só o
+`Discord.exe` e o `Update.exe` entram no filtro do WireSock. Vieram junto a integração Proton
+(sessão persistente, 2FA, seleção de rota por ping e o CAPTCHA do login numa janela oficial), a
+elevação do Linux — a senha do sudo recusada agora se explica ([#345](https://github.com/bezumiya/GoLiveBypass/issues/345), [#346](https://github.com/bezumiya/GoLiveBypass/pull/346)) e, num sistema sem zenity/kdialog nem polkit, quem pergunta é a própria janela ([#353](https://github.com/bezumiya/GoLiveBypass/pull/353)) —, o fallback de alvo manual quando a varredura não reconhece o cliente ([#350](https://github.com/bezumiya/GoLiveBypass/pull/350)), a descoberta do Discord no Windows ([#300](https://github.com/bezumiya/GoLiveBypass/issues/300)), o auto-update com canais estável e beta ([#28](https://github.com/bezumiya/GoLiveBypass/pull/28), [#303](https://github.com/bezumiya/GoLiveBypass/pull/303), [#304](https://github.com/bezumiya/GoLiveBypass/pull/304)), a TUI dos instaladores, a manutenção do macOS ([#342](https://github.com/bezumiya/GoLiveBypass/pull/342), [#343](https://github.com/bezumiya/GoLiveBypass/pull/343)) e a engenharia de release (2.0.x, as betas do plugin e o zip do userplugin). Também foi ele quem provou o caminho do Vesktop, quem levou o transporte WireGuard do plugin para o Linux x64 e quem escreveu o guia de compilar do zero ([#358](https://github.com/bezumiya/GoLiveBypass/pull/358)).
+
 **Obrigado ao [mazxxy](https://github.com/mazxxy)** pela ideia que virou a espinha dorsal do projeto.
 
 Ele foi o primeiro a notar que o `session.setProxy` vale para a sessão inteira e a propor,
@@ -915,15 +923,35 @@ pasta do bypass para o sandbox com `flatpak override`, e documentou cada pegadin
 que um `flatpak update` refaz o deploy inteiro e leva a injeção junto, então é preciso rodar
 o instalador de novo depois de atualizar.
 
-**Obrigado à [StellaThimoty](https://github.com/StellaThimoty) e ao [pdl-clay](https://github.com/pdl-clay)** pelo caminho do Vesktop.
+**Obrigado à [StellaThimoty](https://github.com/StellaThimoty)** pelo caminho do Vesktop.
 
 Ela abriu a issue mostrando que dava para instalar o plugin no Vesktop apontando o "Vencord
-Location" para um build manual — e testou até funcionar. Ele transformou o relato dela no
-passo a passo completo que está no README, com direito à pegadinha do Flatpak.
+Location" para um build manual — e testou até funcionar. O passo a passo que está no README
+nasceu desse relato, com direito à pegadinha do Flatpak.
 
 **Obrigado ao [Victor Mello](https://github.com/victorsvart)** pelo fork [GUI-MacOS](https://github.com/victorsvart/GoLiveBypass-GUI-MacOS).
 
 A interface gráfica existia apenas no Windows, então ele fez a portabilidade da GUI para o macOS.
+
+**Obrigado ao [GabrielRanna](https://github.com/GabrielRanna)** pelo cliente macOS dentro deste repositório (`golive-gui-mac`).
+
+Ele montou a GUI Electron do macOS com split tunnel de verdade — só as faixas de IP do Discord
+passam pela VPN —, helper seguro, conta salva, updater próprio e a guarda de release 0.6.0, que
+falha fechada em vez de publicar artefato duvidoso ([#338](https://github.com/bezumiya/GoLiveBypass/pull/338), [#339](https://github.com/bezumiya/GoLiveBypass/pull/339)).
+
+### Outros contribuidores
+
+Um obrigado também a quem chegou depois e fechou buracos específicos:
+
+- **[luizhc06](https://github.com/luizhc06)** — a varredura do Discord 35x mais rápida e os ajustes de UX no Windows ([#351](https://github.com/bezumiya/GoLiveBypass/pull/351)), o "Sair" que travava com o bypass ativo ([#354](https://github.com/bezumiya/GoLiveBypass/pull/354)) e o guia de falso positivo do antivírus ([#356](https://github.com/bezumiya/GoLiveBypass/pull/356)).
+- **[MatheusRyuki](https://github.com/MatheusRyuki)** — a pergunta única de rota automática ou manual na primeira abertura ([#349](https://github.com/bezumiya/GoLiveBypass/pull/349)) e o guia de contribuição ([#352](https://github.com/bezumiya/GoLiveBypass/pull/352)).
+- **[dsvi-b](https://github.com/dsvi-b)** — as correções do plugin no Linux ([#341](https://github.com/bezumiya/GoLiveBypass/pull/341), [#344](https://github.com/bezumiya/GoLiveBypass/pull/344)): o descritor reutilizado que era fechado e o relançamento do cliente.
+- **[zoeleu](https://github.com/zoeleu)** — o `$HOME` do ambiente em vez de adivinhar `/home/<usuário>` ([#172](https://github.com/bezumiya/GoLiveBypass/pull/172)), a suíte rodando em containers root ([#175](https://github.com/bezumiya/GoLiveBypass/pull/175)) e o menu do instalador com instalações paralelas ([#174](https://github.com/bezumiya/GoLiveBypass/pull/174)).
+- **[lucianoGG](https://github.com/lucianoGG)** — o modo dev com janela de logs ([#42](https://github.com/bezumiya/GoLiveBypass/pull/42)) e a detecção do Discord durante uma atualização com a pasta `app-*` incompleta ([#41](https://github.com/bezumiya/GoLiveBypass/pull/41)).
+- **[Gabriel-Mesq](https://github.com/Gabriel-Mesq)** — a versão instalada na tela e o silenciar dos avisos de atualização ([#93](https://github.com/bezumiya/GoLiveBypass/pull/93)), mais o tratamento de caminhos nulos no instalador ([#107](https://github.com/bezumiya/GoLiveBypass/pull/107)).
+- **[Selixuz](https://github.com/Selixuz)** — a detecção do binário do Discord que quebrava com Canary e PTB ([#269](https://github.com/bezumiya/GoLiveBypass/pull/269)).
+- **[lucasancelmodias](https://github.com/lucasancelmodias)** — o `Set-RunKey` que não apaga mais o startup do usuário ([#117](https://github.com/bezumiya/GoLiveBypass/pull/117)).
+- **[andrelsalvalaggio-ui](https://github.com/andrelsalvalaggio-ui)** — o erro de `PATH` do instalador quando o `$PluginSource` é nulo ([#187](https://github.com/bezumiya/GoLiveBypass/pull/187)).
 
 **Obrigado ao [Claude](https://claude.com/claude-code)** pela mão no código. ❤️
 
@@ -946,4 +974,5 @@ It was written after Brazil's data protection authority (ANPD) [ordered Discord 
 - Made by **bezumiya** — [GitHub](https://github.com/bezumiya/GoLiveBypass), [Twitter](https://twitter.com/obezumiya), Discord `1366453661970071633`.
 - Thanks to **[mazxxy](https://github.com/mazxxy)** for the idea that became the project's backbone: a local SOCKS5 with an embedded PAC routing only the gateway through the proxy ([#3](https://github.com/bezumiya/GoLiveBypass/pull/3), merged for authorship — the lines were later rewritten, but the design is his).
 - Thanks to **[mazxxy](https://github.com/mazxxy)** for the idea this project is built on: he was the first to notice that `session.setProxy` applies to the whole session, and proposed the design still in use — a local SOCKS5 with an embedded PAC routing **only the gateway** through the proxy. Thanks to **[Vithor](https://github.com/Vith0r)** for the installer: he wrote the first GoLiveBypass installer on his own and showed that the whole setup could be automated in a single script. Thanks to **[cleo-dev](https://github.com/cleo-dev)** for the graphical app, built from scratch. Thanks to **[Eduardo Vasconcelos](https://github.com/EduardoVasconceloss)** for the [StreamFix](https://github.com/EduardoVasconceloss/StreamFix) fork: his adversarial reviews found real bugs (verdict read too early, retry ceiling raced, system proxy policy trampled) and he ported the local SOCKS router into the plugin — fixes and improvements adopted here. Thanks to **[gabrigode](https://github.com/gabrigode)** for the Linux installer improvements: Flatpak support for system and user installs, including the sandbox filesystem override. Thanks to **[StellaThimoty](https://github.com/StellaThimoty)** for finding and testing the manual Vesktop path, and to **[pdl-clay](https://github.com/pdl-clay)** for turning it into the step-by-step guide in this README. Thanks to **[Victor Mello](https://github.com/victorsvart)** for the [GUI-MacOS](https://github.com/victorsvart/GoLiveBypass-GUI-MacOS) fork: He ported the GUI app to MacOS. Thanks to **[Claude](https://claude.com/claude-code)** for the hand on the code: much of this was written and debugged alongside it, mostly the bugs that only show up when you measure instead of read.
+- Thanks to **[pdl-clay](https://github.com/pdl-clay)**, who keeps the project running today and built the 2.0 line: the per-app WireGuard GUI (the `discord-vpn` namespace on Linux, the WireSock scope proof on Windows), the Proton integration (session, 2FA, ping-based route selection, CAPTCHA in an official window), Linux/NixOS elevation, the manual target fallback, the Windows Discord discovery, the updater with stable/beta channels, the installer TUI, macOS maintenance, release engineering, the plugin's Linux x64 transport and the build-from-source guide. Thanks as well to **[GabrielRanna](https://github.com/GabrielRanna)** (macOS client in this repo), **[luizhc06](https://github.com/luizhc06)**, **[MatheusRyuki](https://github.com/MatheusRyuki)**, **[dsvi-b](https://github.com/dsvi-b)**, **[zoeleu](https://github.com/zoeleu)**, **[lucianoGG](https://github.com/lucianoGG)**, **[Gabriel-Mesq](https://github.com/Gabriel-Mesq)**, **[Selixuz](https://github.com/Selixuz)**, **[lucasancelmodias](https://github.com/lucasancelmodias)** and **[andrelsalvalaggio-ui](https://github.com/andrelsalvalaggio-ui)** for the fixes credited in the Portuguese section.
 - License: GPL-3.0-or-later.

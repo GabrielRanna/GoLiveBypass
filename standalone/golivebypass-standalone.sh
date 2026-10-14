@@ -790,6 +790,9 @@ ENV_BINARY="$(resolve_binary env || true)"
 # Senha digitada numa janela (zenity/kdialog) para o sudo -S. Cacheada em arquivo
 # temporario para nao repetir a pergunta a cada operacao da injecao (mv, mkdir, cp).
 SUDO_PASS_FILE=""
+# 1 quando o arquivo veio da janela da GUI (GOLIVE_SUDO_PASS_FILE): ele e da GUI,
+# que o apaga no dispose() da operacao. O script so remove o que ele mesmo criou.
+SUDO_PASS_FILE_FROM_GUI=0
 SUDO_ASKPASS_HELPER=""
 SUDO_ASKPASS_EVENT_FILE=""
 SUDO_ASKPASS_RESULT_FILE=""
@@ -877,7 +880,10 @@ elevation_code_detail() {
 cleanup_sudo_pass() {
     cleanup_wireguard_temp
     rollback_activation
-    if [ -n "${SUDO_PASS_FILE:-}" ] && [ -f "${SUDO_PASS_FILE:-}" ]; then
+    # O arquivo da janela da GUI pertence a ela (dispose() no fim da operacao):
+    # apaga-lo aqui faria o spawn seguinte da mesma operacao pedir a senha de novo.
+    if [ "${SUDO_PASS_FILE_FROM_GUI:-0}" -ne 1 ] \
+        && [ -n "${SUDO_PASS_FILE:-}" ] && [ -f "${SUDO_PASS_FILE:-}" ]; then
         rm -f "${SUDO_PASS_FILE:-}" 2>/dev/null || true
     fi
     for askpass_file in "${SUDO_ASKPASS_HELPER:-}" "${SUDO_ASKPASS_EVENT_FILE:-}" "${SUDO_ASKPASS_RESULT_FILE:-}"; do
@@ -886,6 +892,7 @@ cleanup_sudo_pass() {
         fi
     done
     SUDO_PASS_FILE=""
+    SUDO_PASS_FILE_FROM_GUI=0
     SUDO_ASKPASS_HELPER=""
     SUDO_ASKPASS_EVENT_FILE=""
     SUDO_ASKPASS_RESULT_FILE=""
@@ -967,6 +974,7 @@ sudo_pass_get() {
         && [ -f "$GOLIVE_SUDO_PASS_FILE" ] && [ -r "$GOLIVE_SUDO_PASS_FILE" ] \
         && [ -s "$GOLIVE_SUDO_PASS_FILE" ]; then
         SUDO_PASS_FILE="$GOLIVE_SUDO_PASS_FILE"
+        SUDO_PASS_FILE_FROM_GUI=1
         ELEVATION_PROVIDER="gui"
         ELEVATION_RESULT="not_attempted"
         ELEVATION_INPUT_STATE="nonempty"
@@ -974,6 +982,22 @@ sudo_pass_get() {
         elevation_event "prompt.finished" "$(elevation_code_detail 0)" "stderr=empty"
         SUDO_PROMPT_OUTCOME="credential_received"
         return 0
+    fi
+    # Numa operacao da GUI (GOLIVE_SUDO_UI=1) quem pergunta e a janela do app:
+    # o modal dela devolve um arquivo reaproveitado por todos os spawns da
+    # operacao, enquanto zenity/kdialog/pkexec abrem um dialogo por spawn — o
+    # sudo do NixOS (timestamp por tty e, sem terminal, por processo pai) nao
+    # tem como lembrar a escalacao entre processos da GUI, que nao tem tty.
+    # Sem arquivo da janela, o script sinaliza o mesmo evento do sistema sem
+    # provedores e quem responde e a GUI; nenhum dialogo externo e aberto.
+    if [ "${GOLIVE_SUDO_UI:-0}" = "1" ]; then
+        ELEVATION_PROVIDER="none"
+        ELEVATION_RESULT="unavailable"
+        ELEVATION_INPUT_STATE="not_applicable"
+        SUDO_PROMPT_FALLBACK_PKEXEC=0
+        SUDO_PROMPT_OUTCOME="provider_unavailable"
+        elevation_event "prompt.unavailable" "reason=provider_missing"
+        return 1
     fi
     providers="$(sudo_prompt_provider 2>/dev/null || true)"
     if [ -z "$providers" ]; then
@@ -1252,7 +1276,9 @@ ASKPASS_HELPER
     askpass_status=0
     (
         unset LD_LIBRARY_PATH LD_PRELOAD
-        SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" "$SUDO_BIN" -A -k -v >/dev/null 2>"$askpass_stderr"
+        # Sem `-k` pelo mesmo motivo do caminho `-S`: a validacao precisa deixar
+        # o ticket vivo para o resto do spawn (e para o tty, quando existe).
+        SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" "$SUDO_BIN" -A -v >/dev/null 2>"$askpass_stderr"
     ) || askpass_status=$?
     # A primeira linha do stderr do sudo so serve para classificar a causa; ela
     # nunca volta para o log nem para a interface.
@@ -1417,9 +1443,16 @@ sudo_authenticate_once() {
             # `set -eu`: sem o `||`, o script morreria aqui (sem mensagem e sem
             # eventos) em chamadas de elevate fora de contexto de condicao, como
             # `elevate ip netns add`. O status e capturado, nao ignorado.
+            # Validar sem `-k`: `sudo -k -v` ignora (e descarta) o ticket, e o
+            # sudo 1.9 nao grava um novo depois disso — conferido na VM
+            # nixos-26.05 (1.9.17p2): `-S -k -v` aceita a senha e o `sudo -n`
+            # seguinte volta a exigir senha. Sem `-k` a validacao grava o
+            # ticket (tty quando ha terminal; senao o processo pai) e a
+            # escalacao passa a ser lembrada enquanto a politica do sudo
+            # permitir. O arquivo continua sendo reenviado a cada comando.
             sudo_stderr=""
             sudo_status=0
-            sudo_stderr="$("$SUDO_BIN" -S -k -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)" || sudo_status=$?
+            sudo_stderr="$("$SUDO_BIN" -S -v < "$SUDO_PASS_FILE" 2>&1 >/dev/null)" || sudo_status=$?
             if [ "$sudo_status" -eq 0 ]; then
                 sudo_stderr=""
                 ELEVATION_RESULT="accepted"
@@ -1527,16 +1560,22 @@ sudo_has_gui_prompt() {
     have zenity || have kdialog
 }
 
-# Quando a senha veio da janela grafica, `-k -S` a reapresenta silenciosamente a
-# cada chamada. Comandos comuns leem somente o arquivo de senha: isso impede que
-# um `cat` espere para sempre pelo stdin herdado do processo Electron destacado.
-# `tee` e a unica chamada que recebe dados pelo stdin; nela anexamos o conteudo
-# original depois da senha, para o resolv.conf chegar intacto ao comando elevado.
+# Quando a senha veio da janela grafica, ela e reenviada silenciosamente a cada
+# chamada. Comandos comuns leem somente o arquivo de senha (o ticket do sudo,
+# quando existir, e usado primeiro); isso impede que um `cat` espere para sempre
+# pelo stdin herdado do processo Electron destacado. `tee` e a unica chamada que
+# recebe dados pelo stdin: com ticket vivo ela passa direto (`-n`), porque a
+# primeira linha com a senha iria junto para o arquivo de destino; sem ticket,
+# o conteudo original e anexado depois da senha como antes.
 sudo_with_cached_password() {
     if [ "${1:-}" = "tee" ]; then
-        (cat "$SUDO_PASS_FILE"; cat) | "$SUDO_BIN" -S -k -p '' "$@"
+        if "$SUDO_BIN" -n -p '' true 2>/dev/null; then
+            "$SUDO_BIN" -n -p '' "$@"
+        else
+            (cat "$SUDO_PASS_FILE"; cat) | "$SUDO_BIN" -S -k -p '' "$@"
+        fi
     else
-        "$SUDO_BIN" -S -k -p '' "$@" < "$SUDO_PASS_FILE"
+        "$SUDO_BIN" -S -p '' "$@" < "$SUDO_PASS_FILE"
     fi
 }
 
@@ -3773,14 +3812,12 @@ setup_wireguard_netns() {
 
 # Reaplica somente o peer na interface existente. O namespace, a interface e o processo do
 # Discord permanecem vivos; isso permite que a proxima chamada use a nova rota sem derrubar a
-# chamada atual. Se a interface ainda nao existir, o chamador deve usar a instalacao normal.
+# chamada atual. As checagens que nao exigem root (ip/wg/namespace) ficam no chamador, que
+# autoriza a elevacao depois delas para nao pedir senha quando nao ha o que trocar.
 refresh_wireguard_route() {
-    have ip || fail "Comando 'ip' nao encontrado no sistema."
-    have wg || fail "Comando 'wg' (wireguard-tools) nao encontrado."
-    if ! netns_exists; then
-        fail "Namespace WireGuard '$NETNS_NAME' nao esta ativo."
-    fi
-    if ! elevate ip netns exec "$NETNS_NAME" wg show "$WG_IF" >/dev/null 2>&1; then
+    # O stderr fica visivel de proposito: e nele que os eventos de elevacao viajam
+    # (a GUI depende deles para o prompt) e e ele que explica uma recusa real.
+    if ! elevate ip netns exec "$NETNS_NAME" wg show "$WG_IF" >/dev/null; then
         fail "Interface WireGuard '$WG_IF' nao esta ativa."
     fi
 
@@ -4424,6 +4461,14 @@ fi
 
 
 if [ "$MODE" = "refresh" ]; then
+    # Primeiro o que nao exige root: sem namespace ativo nao existe troca de rota,
+    # e pedir a senha so para descobrir isso era o comportamento antigo.
+    have ip || fail "Comando 'ip' nao encontrado no sistema."
+    have wg || fail "Comando 'wg' (wireguard-tools) nao encontrado."
+    netns_exists || fail "Namespace WireGuard '$NETNS_NAME' nao esta ativo."
+    # A troca reaplica peer, enderecos e rotas: autoriza uma vez, como a ativacao,
+    # com os eventos visiveis para a GUI decidir o prompt.
+    authorize_install_elevation || fail "Nao foi possivel autorizar a troca de rota (resultado ${ELEVATION_RESULT})."
     refresh_wireguard_route
     log_wireguard_readiness
     exit 0

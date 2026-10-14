@@ -62,14 +62,14 @@ if [ "$host_tem_wrapper" -eq 0 ]; then
     [[ "$resolvido" == "sudo" ]]
 fi
 
-# 5) Quem executa usa o binario resolvido, nao o nome solto no PATH.
+# 5) Quem executa usa o binario resolvido, nao o nome solto no PATH. As flags de
+# cada chamada mudam com o comportamento (ex.: o `-k` saiu da validacao porque
+# matava o ticket do sudo); o que este teste fixa e a invariante do resolvedor.
 grep -Fq 'SUDO_BIN="$(sudo_bin_resolve)"' "$script"
-grep -Fq '"$SUDO_BIN" -S -k -v' "$script"
-grep -Fq '"$SUDO_BIN" -n true 2>/dev/null' "$script"
-grep -Fq '"$SUDO_BIN" -n "$@"' "$script"
-grep -Fq 'SUDO_ASKPASS="$SUDO_ASKPASS_HELPER" "$SUDO_BIN" -A -k -v' "$script"
-if grep -Eq '(^|[^-"$a-zA-Z_])sudo -S -k -p' "$script"; then
-    printf 'reenvio da senha voltou a chamar o sudo pelo nome\n' >&2
+# Comentários ficam de fora (`# ...`), e `sudo -u` é a queda de privilégio do
+# re-exec, não uma elevação.
+if sed 's/#.*//' "$script" | grep -Eq '(^|[^-"$a-zA-Z_])sudo (-S|-n|-A|-k|-p) '; then
+    printf 'elevacao chamou o sudo pelo nome em vez do binario resolvido\n' >&2
     exit 1
 fi
 

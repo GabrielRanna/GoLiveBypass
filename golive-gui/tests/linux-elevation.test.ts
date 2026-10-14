@@ -42,6 +42,15 @@ type ElevationOptions = {
   teeStdin?: boolean;
   guiPassword?: string;
   guiPasswordFileMissing?: boolean;
+  // Modelo do ticket do sudo observado na VM nixos-26.05 (sudo 1.9.17p2):
+  // `-S -k -v` aceita a senha e NAO deixa ticket utilizavel; `-S -v` deixa.
+  ticketModel?: boolean;
+  // Ticket ja valido antes da chamada (operacao que autenticou num spawn anterior).
+  ticketBefore?: boolean;
+  // Depois da chamada principal, prova que `sudo -n` continua funcionando.
+  probeAfter?: boolean;
+  // Operacao da GUI: GOLIVE_SUDO_UI=1 (a janela do app e a dona do prompt).
+  sudoUi?: boolean;
 };
 type ElevationResult = {
   log: string;
@@ -67,20 +76,40 @@ function runElevation(options: ElevationOptions): ElevationResult {
   write("sudo", [
     'echo "sudo:$*" >> "$LOG"',
     'if [ "$1" = "-n" ] && [ "$2" = "true" ]; then',
+    '  [ -f "$STATE_DIR/ticket" ] && exit 0',
     `  [ "${options.cached ? "1" : "0"}" = 1 ] && exit 0 || exit 1`,
+    "fi",
+    'if [ "$1" = "-n" ]; then',
+    '  # `-n <comando>`: sem ticket o sudo real recusa sem abrir prompt.',
+    '  if [ -f "$STATE_DIR/ticket" ]; then',
+    '    for _arg in "$@"; do',
+    '      if [ "$_arg" = "tee" ]; then',
+    '        rest="$(/usr/bin/cat)"',
+    '        echo "sudo_tee_stdin:$rest" >> "$LOG"',
+    '        exit 0',
+    '      fi',
+    '    done',
+    "    exit 0",
+    "  fi",
+    '  printf \'%s\\n\' "sudo: uma senha é necessária" >&2',
+    "  exit 1",
     "fi",
     'if [ "$1" = "-A" ]; then',
     '  askpass="$("$SUDO_ASKPASS")"',
     "  askpass_status=$?",
     '  [ "$askpass_status" -eq 0 ] || exit 1',
     '  [ -n "$askpass" ] && echo "sudo_askpass:nonempty" >> "$LOG"',
-    `  [ "${options.sudoValidation ?? "accepted"}" = accepted ] && exit 0 || exit 1`,
+    `  [ "${options.sudoValidation ?? "accepted"}" = accepted ] || exit 1`,
+    `  [ "${options.ticketModel ? "1" : "0"}" = 1 ] && : > "$STATE_DIR/ticket"`,
+    "  exit 0",
     "fi",
     'if [ "$1" = "-S" ]; then',
     // tee: a primeira linha do pipe e a senha reenviada; o que vem depois e o
     // stdin original do comando elevado, que precisa chegar intacto.
-    'is_tee=0',
-    'for _arg in "$@"; do case "$_arg" in tee) is_tee=1 ;; esac; done',
+    'is_tee=0; has_k=0; is_validate=0',
+    'for _arg in "$@"; do',
+    '  case "$_arg" in tee) is_tee=1 ;; -k) has_k=1 ;; -v) is_validate=1 ;; esac',
+    "done",
     'if [ "$is_tee" = 1 ]; then',
     '  IFS= read -r tee_pass || true',
     '  rest="$(/usr/bin/cat)"',
@@ -92,38 +121,42 @@ function runElevation(options: ElevationOptions): ElevationResult {
     '  attempts="$STATE_DIR/attempts"',
     '  count=0; [ -f "$attempts" ] && IFS= read -r count < "$attempts" || true',
     '  count=$((count + 1)); printf \'%s\\n\' "$count" > "$attempts"',
+    '  status=0',
     '  case "${SUDO_VALIDATION_MODE:-accepted}" in',
-    "    rejected) exit 1 ;;",
+    "    rejected) status=1 ;;",
     "    incorrect)",
     '      printf \'%s\\n\' "[sudo] senha para pdl: Sinto muito, tente novamente." "sudo: 1 tentativa de senha incorreta" >&2',
-    "      exit 1 ;;",
+    "      status=1 ;;",
     "    not-in-sudoers)",
     '      printf \'%s\\n\' "Sinto muito, usuário pdl não pode executar sudo em nixos-yarara." >&2',
-    "      exit 1 ;;",
+    "      status=1 ;;",
     "    not-in-sudoers-canonical)",
     '      printf \'%s\\n\' "Sorry, user pdl may not run sudo on nixos-yarara." >&2',
-    "      exit 1 ;;",
+    "      status=1 ;;",
     "    tty-required)",
     '      printf \'%s\\n\' "sorry, you must have a tty to run sudo" >&2',
-    "      exit 1 ;;",
+    "      status=1 ;;",
     "    account-blocked)",
     '      printf \'%s\\n\' "Conta ou senha expirou; redefina sua senha e tente novamente" >&2',
-    "      exit 1 ;;",
+    "      status=1 ;;",
     "    pam-error)",
     "      printf '%s\\n' \"sudo: PAM account management error: Authentication service cannot retrieve authentication info\" \"sudo: uma senha é necessária\" >&2",
-    "      exit 1 ;;",
+    "      status=1 ;;",
     // NixOS: /run/wrappers/bin/sudo e o binario setuid; o do systemPackages,
     // que o PATH resolve numa GUI, nao tem o bit e recusa antes de ler a senha.
     // A mensagem e a real do sudo 1.9 (e do sudo-rs).
     "    nixos-suid)",
     '      printf \'%s\\n\' "sudo: /run/current-system/sw/bin/sudo must be owned by uid 0 and have the setuid bit set" >&2',
-    "      exit 1 ;;",
+    "      status=1 ;;",
     "    incorrect-then-accepted)",
-    '      [ "$count" -ge 2 ] && exit 0',
-    '      printf \'%s\\n\' "[sudo] senha para pdl: Sinto muito, tente novamente." "sudo: 1 tentativa de senha incorreta" >&2',
-    "      exit 1 ;;",
-    "    *) exit 0 ;;",
+    '      [ "$count" -ge 2 ] && status=0 || { status=1; printf \'%s\\n\' "[sudo] senha para pdl: Sinto muito, tente novamente." "sudo: 1 tentativa de senha incorreta" >&2; } ;;',
+    "    *) status=0 ;;",
     "  esac",
+    // So uma validacao bem-sucedida sem `-k` grava o ticket.
+    '  if [ "$status" -eq 0 ] && [ "$is_validate" = 1 ] && [ "$has_k" = 0 ] && [ "${TICKET_MODEL:-0}" = 1 ]; then',
+    '    : > "$STATE_DIR/ticket"',
+    "  fi",
+    '  exit "$status"',
     "fi",
     "exit 0",
   ].join("\n"));
@@ -209,9 +242,18 @@ function runElevation(options: ElevationOptions): ElevationResult {
     `NONINTERACTIVE=${options.readonly || options.readonlyElevate ? 1 : 0}`,
     `GOLIVE_SUDO_PASSWORD_ATTEMPTS=${options.attempts ?? 3}`,
     "GOLIVE_GUI=1",
+    // Ticket ja valido antes da chamada (operacao que autenticou num spawn anterior).
+    ...(options.ticketBefore ? [': > "$STATE_DIR/ticket"'] : []),
     "printf '%s\\n' stdout-marker",
     `if ${options.readonlyElevate ? "elevate true" : call}; then rc=0; else rc=$?; fi`,
     'echo "rc:$rc" >> "$LOG"',
+    // Prova que a escalacao continua autorizada depois da chamada (ticket vivo).
+    'if "$SUDO_BIN" -n true 2>/dev/null; then echo "ticket_after:0" >> "$LOG"; else echo "ticket_after:$?" >> "$LOG"; fi',
+    ...(guiPassFile
+      ? [
+          `if [ -f "${guiPassFile}" ]; then echo "gui_file_after:present" >> "$LOG"; else echo "gui_file_after:absent" >> "$LOG"; fi`,
+        ]
+      : []),
     'exit "$rc"',
   ].join("\n");
 
@@ -226,7 +268,9 @@ function runElevation(options: ElevationOptions): ElevationResult {
       TMPDIR: dir,
       TEE_TARGET: path.join(dir, "tee-target"),
       LD_LIBRARY_PATH: "/appimage/lib",
+      TICKET_MODEL: options.ticketModel ? "1" : "0",
       ...(guiPassFile ? { GOLIVE_SUDO_PASS_FILE: guiPassFile } : {}),
+      ...(options.sudoUi ? { GOLIVE_SUDO_UI: "1" } : {}),
     },
     // O stdin original do comando elevado precisa sobreviver ao reenvio da senha.
     input: options.teeStdin ? "stdin-after-password\n" : undefined,
@@ -680,5 +724,71 @@ describe("elevacao Linux no standalone", () => {
     expect(missing.status).toBe(0);
     expect(missing.log).toContain("pkexec:");
     expect(missing.stderr).not.toContain("provider=gui");
+  });
+
+  // Sudo do NixOS (1.9.17p2, medido na VM nixos-26.05): `-S -k -v` aceita a
+  // senha e NAO deixa ticket utilizavel — o `sudo -n` seguinte volta a exigir
+  // senha. Com `-S -v` a escalacao fica valida no resto do spawn (e para o
+  // tty, quando existe terminal); era isso que fazia o app "esquecer" a
+  // autorizacao e pedir a senha em cada operacao.
+  it("validar a senha deixa o ticket vivo no mesmo spawn (NixOS)", () => {
+    const result = runElevation({
+      ticketModel: true,
+      guiPassword: "senha-da-janela",
+      authorize: true,
+      probeAfter: true,
+    });
+    expect(result.status).toBe(0);
+    expect(result.log).toContain("ticket_after:0");
+  });
+
+  // Na GUI (sem tty) a janela do app e a dona do pedido de senha: zenity/kdialog
+  // abririam um dialogo por spawn e o ticket do sudo nao cruza processos sem
+  // terminal. Sem arquivo, o script sinaliza provider_missing para a janela
+  // responder uma vez por operacao.
+  it("GOLIVE_SUDO_UI: sem arquivo da janela sinaliza provider_missing e nao abre zenity", () => {
+    const result = runElevation({ sudoUi: true, prompts: { zenity: "accepted" } });
+    expect(result.status).not.toBe(0);
+    expect(result.log).not.toContain("prompt:zenity");
+    expect(result.stderr).toMatch(
+      /prompt\.unavailable provider=none result=unavailable input=not_applicable reason=provider_missing/,
+    );
+  });
+
+  it("GOLIVE_SUDO_UI: a senha entregue pela janela e aceita sem provedores externos", () => {
+    const result = runElevation({
+      sudoUi: true,
+      prompts: { zenity: "accepted" },
+      guiPassword: "senha-da-janela",
+      authorize: true,
+    });
+    expect(result.status).toBe(0);
+    expect(result.log).not.toContain("prompt:");
+    expect(result.stderr).toMatch(/sudo\.validation provider=gui result=accepted code=0/);
+    expect(`${result.log}\n${result.stdout}\n${result.stderr}`).not.toContain("senha-da-janela");
+  });
+
+  // O arquivo da janela e reaproveitado pelos spawns seguintes da mesma
+  // operacao (preparo + ativacao): o script nao pode apaga-lo ao sair.
+  it("o arquivo de senha da janela sobrevive ao spawn", () => {
+    const result = runElevation({ guiPassword: "senha-da-janela", authorize: true });
+    expect(result.status).toBe(0);
+    expect(result.log).toContain("gui_file_after:present");
+  });
+
+  // Com ticket vivo o reenvio vai por `-n` puro: a linha da senha nao pode
+  // entrar no stdin do tee (ela iria para o arquivo de destino).
+  it("tee com ticket vivo nao mistura a senha no conteudo", () => {
+    const result = runElevation({
+      ticketModel: true,
+      ticketBefore: true,
+      cachedPass: true,
+      teeStdin: true,
+    });
+    expect(result.status).toBe(0);
+    expect(result.log).toContain("sudo_tee_stdin:stdin-after-password");
+    expect(`${result.log}\n${result.stdout}\n${result.stderr}`).not.toContain(
+      "unit-test-sudo-secret",
+    );
   });
 });

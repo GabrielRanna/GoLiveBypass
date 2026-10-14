@@ -2960,19 +2960,24 @@ function createLinuxPasswordFallback(
       forwardChunk(chunk);
       if (onChunk !== forwardChunk) onChunk(chunk);
     };
-    let extraEnv: Record<string, string> | undefined;
-    if (passFile) extraEnv = { GOLIVE_SUDO_PASS_FILE: passFile };
+    // A janela do app e a dona do pedido de senha nesta operacao: o script nao
+    // abre zenity/kdialog/pkexec (um dialogo por spawn) e sinaliza
+    // provider_missing para o modal responder uma unica vez; o arquivo 0600
+    // que ele devolve e reaproveitado pelos demais spawns da operacao
+    // (preparo + ativacao) e apagado no dispose().
+    const extraEnv: Record<string, string> = { GOLIVE_SUDO_UI: "1" };
+    if (passFile) extraEnv.GOLIVE_SUDO_PASS_FILE = passFile;
     let result = await runScript(args, forward, extraEnv);
     if (result.code === 0 || !state.providerMissing) return result;
-    // Sem providers, o script falha antes de qualquer stop_discord — repetir
-    // com a senha da GUI é seguro e resolve sozinho (NixOS enxuto, spins).
+    // Sem a janela respondendo, o script falha antes de qualquer stop_discord —
+    // repetir com a senha da GUI é seguro e resolve sozinho (NixOS enxuto, spins).
     let incorrect = false;
     for (let attempt = 0; attempt < LINUX_GUI_PASSWORD_ATTEMPTS; attempt += 1) {
       state.guiPasswordRejected = false;
       const password = await promptLinuxSudoPassword(incorrect);
       if (password === null) return result;
       const file = storePassword(password);
-      result = await runScript(args, forward, { GOLIVE_SUDO_PASS_FILE: file });
+      result = await runScript(args, forward, { GOLIVE_SUDO_PASS_FILE: file, GOLIVE_SUDO_UI: "1" });
       if (result.code === 0) return result;
       if (!state.guiPasswordRejected) return result;
       incorrect = true;
@@ -4591,9 +4596,21 @@ ipcMain.handle("optimize-proton-route", async (event, options?: ProtonOptimizati
             if (speedTest) {
               await linuxActivate(() => {});
             } else {
-              const refreshed = await runScript(["--refresh-route"]);
-              if (refreshed.code !== 0) {
-                throw new Error(tailErroScript(refreshed.stderr, 4) || "falha ao atualizar a rota WireGuard");
+              // A troca de rota tambem passa pelo fallback de senha: a janela do
+              // app responde uma vez e o arquivo cobre os spawns da operacao
+              // (antes este spawn abria o dialogo do sistema por conta propria).
+              const routeElevationState: LinuxElevationParserState = { pending: "", providerMissing: false, guiPasswordRejected: false };
+              const routePasswordFallback = createLinuxPasswordFallback(
+                routeElevationState,
+                (chunk) => consumeLinuxElevationEvents(chunk, routeElevationState),
+              );
+              try {
+                const refreshed = await routePasswordFallback.run(["--refresh-route"], () => {});
+                if (refreshed.code !== 0) {
+                  throw new Error(tailErroScript(refreshed.stderr, 4) || "falha ao atualizar a rota WireGuard");
+                }
+              } finally {
+                routePasswordFallback.dispose();
               }
             }
           }

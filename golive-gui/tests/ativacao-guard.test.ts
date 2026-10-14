@@ -108,7 +108,9 @@ describe("guarda de ativacao duplicada", () => {
 
   it("inicia o túnel antes do cliente e observa a rota em segundo plano", () => {
     const src = fs.readFileSync(path.resolve(process.cwd(), "electron/main.ts"), "utf8");
-    expect(src).toContain('runScript(["--refresh-route"])');
+    // A troca de rota recarrega pelo script; desde o fallback de senha da GUI o
+    // spawn sai pelo runner da operacao (nao fixamos o nome de quem chama).
+    expect(src).toMatch(/\.run\(\["--refresh-route"\]/);
     expect(src).not.toContain('runScript(["--deactivate"]);\n        await runScript(["--activate"]);');
     expect(src).toContain('withWireSockLifecycle("troca-rota-proton"');
     expect(src).toContain('await killDiscord();');

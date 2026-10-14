@@ -27,7 +27,8 @@ function runHelpers(script: string) {
   return spawnSync("/bin/sh", ["-c", `${functions}\n${script}`], { encoding: "utf8" });
 }
 
-describe("identidade do cliente Linux ao relançar", () => {
+// Depende de /proc, pgrep, find GNU e /bin/sh do Linux.
+describe.skipIf(process.platform !== "linux")("identidade do cliente Linux ao relançar", () => {
   it("escolhe o Flatpak em execução quando o bootstrap anterior só tem o mesmo flavour", () => {
     const result = runHelpers([
       'pgrep() { printf "424242\\n"; }',

@@ -1,8 +1,9 @@
 import path from "path";
+import { memoizeWithTtl, runningImageNames, tasklistHasProcess } from "./wait-condition";
 import fs from "fs";
 import os from "os";
 import crypto from "crypto";
-import { execFile, execFileSync, execSync } from "child_process";
+import { execFile, execFileSync } from "child_process";
 import dns from "dns/promises";
 import https from "https";
 import * as logger from "./logger";
@@ -336,7 +337,7 @@ export function isWireSockPacketFilterDriverInstalled(): boolean {
   if (process.platform !== "win32") return false;
   return WIRESOCK_DRIVER_SERVICE_NAMES.some((name) => {
     try {
-      const output = execSync(`sc.exe query ${name}`, {
+      const output = execFileSync("sc.exe", ["query", name], {
         stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", windowsHide: true,
       });
       return wireSockDriverQueryShowsInstalled(output);
@@ -350,7 +351,7 @@ export function isWireSockRunning(): boolean {
   if (process.platform !== "win32") return false;
   return WIRESOCK_SERVICE_NAMES.some((name) => {
     try {
-      const out = execSync(`sc.exe query ${name}`, {
+      const out = execFileSync("sc.exe", ["query", name], {
         stdio: ["pipe", "pipe", "ignore"],
         encoding: "utf8",
         windowsHide: true,
@@ -367,7 +368,7 @@ export function isWireSockRunning(): boolean {
 function isWireSockProcessAlive(): boolean {
   if (process.platform !== "win32") return false;
   try {
-    const out = execSync('tasklist /FI "IMAGENAME eq wiresock-client.exe"', {
+    const out = execFileSync("tasklist", ["/FI", "IMAGENAME eq wiresock-client.exe"], {
       stdio: ["pipe", "pipe", "ignore"],
       encoding: "utf8",
       windowsHide: true,
@@ -378,15 +379,13 @@ function isWireSockProcessAlive(): boolean {
   }
 }
 
-function isWireSockProcessPidAlive(pid: number): boolean {
+// Assincrono: a espera da ativacao chama isto ate 13 vezes e o execSync antigo (cmd.exe + tasklist,
+// ~400 ms cada) congelava a janela por alguns segundos a cada ativacao.
+async function isWireSockProcessPidAlive(pid: number): Promise<boolean> {
   if (process.platform !== "win32" || !Number.isInteger(pid) || pid <= 0) return false;
   try {
-    const out = execSync('tasklist /FI "PID eq ' + pid + '"', {
-      stdio: ["pipe", "pipe", "ignore"],
-      encoding: "utf8",
-      windowsHide: true,
-    });
-    return new RegExp("wiresock-client\\.exe\\s+" + pid + "\\b", "i").test(out);
+    const out = await execFileText("tasklist", ["/FI", "PID eq " + pid, "/FO", "CSV", "/NH"]);
+    return tasklistHasProcess(out, "wiresock-client.exe", pid);
   } catch {
     return false;
   }
@@ -394,7 +393,7 @@ function isWireSockProcessPidAlive(pid: number): boolean {
 
 async function esperarProcessoWireSock(pid: number, tentativas: number, intervaloMs: number): Promise<boolean> {
   for (let i = 0; i < tentativas; i++) {
-    if (isWireSockProcessPidAlive(pid)) return true;
+    if (await isWireSockProcessPidAlive(pid)) return true;
     await new Promise((r) => setTimeout(r, intervaloMs));
   }
   return isWireSockProcessPidAlive(pid);
@@ -421,7 +420,11 @@ export function parseWireSockCliExternalAddress(output: string): string | undefi
   return match?.[1];
 }
 
-export function findWireSockCli(): string | null {
+// Cada chamada sem cache custa ate 2 `where` sincronos (cmd.exe) na thread principal, e a prontidao
+// e o failover chamam isto a cada 1 a 3 s. A CLI nao some nem aparece no meio de uma sessao.
+export const findWireSockCli = memoizeWithTtl(procurarWireSockCli, 60_000);
+
+function procurarWireSockCli(): string | null {
   const programFiles = [
     process.env.ProgramW6432,
     process.env.ProgramFiles,
@@ -436,7 +439,7 @@ export function findWireSockCli(): string | null {
   }
   for (const name of ["wiresock-connect-cli.exe", "wiresock-cli.exe"]) {
     try {
-      const out = execSync(`where ${name}`, { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+      const out = execFileSync("where.exe", [name], { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
       const firstLine = out.split(/\r?\n/)[0]?.trim();
       if (firstLine && fs.existsSync(firstLine)) return firstLine;
     } catch {}
@@ -568,24 +571,41 @@ function execFileText(file: string, args: string[], timeout = 5000): Promise<str
   });
 }
 
-export async function isWireSockActiveAsync(): Promise<boolean> {
+// Um unico `tasklist /FO CSV` com todos os processos. O amostrador de failover deriva dali, de uma
+// vez, "o Discord esta aberto" e "o WireSock esta vivo", em vez de um tasklist para cada pergunta.
+export async function listRunningImageNamesAsync(): Promise<Set<string> | null> {
+  if (process.platform !== "win32") return null;
+  try {
+    return runningImageNames(await execFileText("tasklist", ["/FO", "CSV", "/NH"]));
+  } catch {
+    return null;
+  }
+}
+
+// `processAlive`: resposta ja conhecida pelo chamador sobre o processo wiresock-client.exe
+// (true = vivo, false = ausente). Sem ela o tasklist e feito aqui.
+export async function isWireSockActiveAsync(options: { processAlive?: boolean } = {}): Promise<boolean> {
   if (process.platform !== "win32") return false;
+  // O processo primeiro: com o tunel ativo (modo direto ou servico) um `tasklist` responde e
+  // evita os dois `sc query`. O resultado e o mesmo "servico rodando OU processo vivo".
+  if (options.processAlive === true) return true;
+  if (options.processAlive === undefined) {
+    try {
+      const output = await execFileText("tasklist", ["/FI", "IMAGENAME eq wiresock-client.exe"]);
+      if (output.toLowerCase().includes("wiresock-client.exe")) return true;
+    } catch {}
+  }
   for (const name of WIRESOCK_SERVICE_NAMES) {
     try {
       const output = await execFileText("sc.exe", ["query", name]);
       if (/STATE\s*:\s*\d+\s+RUNNING/i.test(output)) return true;
     } catch {}
   }
-  try {
-    const output = await execFileText("tasklist", ["/FI", "IMAGENAME eq wiresock-client.exe"]);
-    return output.toLowerCase().includes("wiresock-client.exe");
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 /** Non-blocking counterpart used by the short-interval failover monitor. */
-export async function getWireSockConnectionStatusAsync(): Promise<WireSockConnectionStatus> {
+export async function getWireSockConnectionStatusAsync(options: { activeHint?: boolean } = {}): Promise<WireSockConnectionStatus> {
   if (process.platform !== "win32") return { state: "unknown", verified: false, source: "none" };
   const cli = findWireSockCli();
   if (cli) {
@@ -599,13 +619,13 @@ export async function getWireSockConnectionStatusAsync(): Promise<WireSockConnec
       // serviço. Consulte o processo apenas para distinguir uma falha real de
       // um diagnóstico indisponível; o caller continua tratando o segundo
       // caso como unknown.
-      if (await isWireSockActiveAsync()) {
+      if (options.activeHint ?? await isWireSockActiveAsync()) {
         return { state: "unknown", verified: false, source: "cli", detail: detalheErro(err) };
       }
       return { state: "disconnected", verified: false, source: "none", detail: detalheErro(err) };
     }
   }
-  if (await isWireSockActiveAsync()) {
+  if (options.activeHint ?? await isWireSockActiveAsync()) {
     return { state: "unknown", verified: false, source: "service", detail: "WireSock ativo, mas esta instalacao nao oferece CLI de status" };
   }
   return { state: "disconnected", verified: false, source: "none" };
@@ -629,8 +649,74 @@ export function getWireSockAdapterTraffic(): WireSockAdapterTraffic | null {
   }
 }
 
-export async function getWireSockAdapterTrafficAsync(): Promise<WireSockAdapterTraffic | null> {
+// `netsh interface ipv4 show subinterfaces`: MTU, estado, bytes in, bytes out, nome. O
+// cabecalho vem traduzido, mas as colunas sao fixas; o nome pode ter espacos.
+export function parseNetshInterfaceBytes(output: string, adapter: string): WireSockAdapterTraffic | null {
+  for (const line of output.split(/\r?\n/)) {
+    const m = /^\s*\d+\s+\d+\s+(\d+)\s+(\d+)\s+(.+?)\s*$/.exec(line);
+    if (m && m[3].toLowerCase() === adapter.toLowerCase()) return { adapter, receivedBytes: Number(m[1]), sentBytes: Number(m[2]) };
+  }
+  return null;
+}
+
+// Leitura leve (~90ms, contra ~400ms do PowerShell) para amostrar de poucos em poucos segundos.
+export async function getWireSockAdapterTrafficNetshAsync(adapter = "ProTUN"): Promise<WireSockAdapterTraffic | null> {
   if (process.platform !== "win32") return null;
+  try {
+    return parseNetshInterfaceBytes(await execFileText("netsh", ["interface", "ipv4", "show", "subinterfaces"]), adapter);
+  } catch {
+    return null;
+  }
+}
+
+// O que o card de trafego recebe a cada leitura (null nos contadores = adaptador do tunel ausente).
+export type TunnelStats = { downMbps: number | null; upMbps: number | null; receivedBytes: number | null; sentBytes: number | null; pingMs: number | null };
+
+// Taxa entre duas leituras. "uploadDrop" = upload despencou para menos de 20% da amostra anterior
+// estando acima de 1 Mbps: e a assinatura de uma stream congelando.
+export function trafficSample(
+  previous: WireSockAdapterTraffic,
+  current: WireSockAdapterTraffic,
+  elapsedMs: number,
+  previousUpMbps: number | null,
+): { downMbps: number; upMbps: number; uploadDrop: boolean } {
+  const mbps = (bytes: number) => (bytes > 0 && elapsedMs > 0 ? (bytes * 8) / (elapsedMs * 1000) : 0);
+  const downMbps = mbps(current.receivedBytes - previous.receivedBytes);
+  const upMbps = mbps(current.sentBytes - previous.sentBytes);
+  const uploadDrop = previousUpMbps !== null && previousUpMbps > 1 && upMbps < previousUpMbps * 0.2;
+  return { downMbps, upMbps, uploadDrop };
+}
+
+// Tempo de resposta do servidor da VPN (ping.exe localizado: so o "=NNms"/"<1ms" importa).
+export function parsePingMs(output: string): number | null {
+  const m = /[=<]\s*(\d+)\s*ms/i.exec(output);
+  return m ? Number(m[1]) : null;
+}
+
+export async function pingHostAsync(host: string): Promise<number | null> {
+  if (process.platform !== "win32" || !/^[\w.:-]+$/.test(host)) return null;
+  try {
+    return parsePingMs(await execFileText("ping", ["-n", "1", "-w", "1500", host], 3000));
+  } catch {
+    return null;
+  }
+}
+
+// Sem o adaptador ProTUN o netsh devolve sempre null. O failover (a cada 3 s) pede para lembrar
+// essa ausencia por 30 s e pular o processo; a prontidao nao pede, porque la um adaptador que
+// aparece depois do inicio precisa ser visto na hora.
+let adaptadorAusenteAte = 0;
+
+export async function getWireSockAdapterTrafficAsync(options: { lembrarAusencia?: boolean } = {}): Promise<WireSockAdapterTraffic | null> {
+  if (process.platform !== "win32") return null;
+  if (options.lembrarAusencia && Date.now() < adaptadorAusenteAte) return null;
+  // netsh (~90ms) no lugar de um PowerShell inteiro (~600ms) por leitura: a prontidao le a cada
+  // segundo e o failover a cada 3s. O PowerShell fica so de reserva se o netsh nao rodar.
+  try {
+    const leitura = parseNetshInterfaceBytes(await execFileText("netsh", ["interface", "ipv4", "show", "subinterfaces"]), "ProTUN");
+    if (options.lembrarAusencia && leitura === null) adaptadorAusenteAte = Date.now() + 30_000;
+    return leitura;
+  } catch { /* cai no PowerShell */ }
   try {
     const script = "$a = Get-NetAdapterStatistics -Name 'ProTUN' -ErrorAction Stop; [PSCustomObject]@{adapter='ProTUN';receivedBytes=[int64]$a.ReceivedBytes;sentBytes=[int64]$a.SentBytes} | ConvertTo-Json -Compress";
     const output = (await execFileText("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script])).trim();
@@ -1243,7 +1329,7 @@ export async function recoverWireSockNetwork(): Promise<WireSockRecoveryResult> 
 
 function isServiceRunning(name: string): boolean {
   try {
-    const out = execSync(`sc.exe query ${name}`, { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
+    const out = execFileSync("sc.exe", ["query", name], { encoding: "utf8", stdio: ["pipe", "pipe", "ignore"], windowsHide: true });
     return /STATE\s*:\s*\d+\s+RUNNING/i.test(out);
   } catch {
     return false;

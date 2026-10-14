@@ -9,6 +9,7 @@ vi.mock("node:child_process", () => ({ execFile: vi.fn(), execFileSync: vi.fn() 
 import * as windows from "../../goLiveBypass/vpn-windows";
 import { PluginVpnController } from "../../goLiveBypass/vpn-controller";
 import { VPN_OWNER_KIND } from "../../goLiveBypass/vpn-types";
+import { forcePluginHost } from "./helpers/plugin-host";
 import { inspectWireSock, stopManagedWireSock, stopOwnedWireSock } from "../../goLiveBypass/vpn-windows";
 
 const windowsSource = fs.readFileSync(
@@ -276,17 +277,17 @@ describe("atribuição do WireSock pelo PID do serviço próprio", () => {
 });
 
 describe("recuperação segura para inspeção WireSock desconhecida", () => {
-    const originalPlatform = process.platform;
+    let restoreHost = () => { };
 
     beforeEach(() => {
-        Object.defineProperty(process, "platform", { value: "win32", configurable: true });
+        restoreHost = forcePluginHost("win32");
         vi.mocked(execFileSync).mockReset();
     });
 
     afterEach(() => {
         vi.restoreAllMocks();
         vi.mocked(execFileSync).mockReset();
-        Object.defineProperty(process, "platform", { value: originalPlatform, configurable: true });
+        restoreHost();
     });
 
     const unknown = (): windows.WireSockInspection => ({

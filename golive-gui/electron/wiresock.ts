@@ -1183,24 +1183,12 @@ async function inspectGuiWireSock(configPath: string): Promise<GuiWireSockInspec
   try {
     raw = await execFileWithWindow("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 10_000 });
   } catch {}
-  let inspection = inspectGuiWireSockOwnership(raw, configPath);
-  if (!inspection.reliable) {
-    // A normal GUI cannot read CommandLine from an elevated direct tunnel.
-    // Retry under UAC instead of guessing from its executable name/PID.
-    try {
-      raw = await runElevatedWireSockWorker(resultPath => {
-        const target = `'${resultPath.replace(/'/g, "''")}'`;
-        return `\uFEFF$ErrorActionPreference='Stop'\n${script.replace(/Get-GoLiveWireSockSnapshot \| ConvertTo-Json -Compress -Depth 4$/, `$snapshot = Get-GoLiveWireSockSnapshot | ConvertTo-Json -Compress -Depth 4\n[IO.File]::WriteAllText(${target}, $snapshot, [Text.UTF8Encoding]::new($false))`)}`;
-      });
-      inspection = inspectGuiWireSockOwnership(raw, configPath);
-    } catch (error) {
-      logger.warn("wiresock", "inspecao elevada permaneceu desconhecida", { erro: detalheErro(error) });
-    }
-  }
-  return inspection;
+  // Sem UAC: um app comum nao le a linha de comando de um tunel elevado, entao o resultado pode vir
+  // "nao confiavel". Isso e resolvido em stopWireSockService, sem abrir um segundo pedido de UAC.
+  return inspectGuiWireSockOwnership(raw, configPath);
 }
 
-/** Stops only the GUI's exact profile, with a second ownership check under UAC. */
+/** Stops only the GUI's exact profile; the ownership check is repeated under UAC by the cleanup worker. */
 export async function stopWireSockService(configPath = defaultGuiWireSockConfig()): Promise<WireSockCleanupResult> {
   const empty: WireSockCleanupResult = {
     stopped: true, attempts: 0, resetNetworkLock: false, dnsCleared: false,
@@ -1210,14 +1198,18 @@ export async function stopWireSockService(configPath = defaultGuiWireSockConfig(
   const inspection = await inspectGuiWireSock(configPath);
   const refused = (reason: string): WireSockCleanupResult => ({
     ...empty, stopped: false, servicesResidual: inspection.services,
-    processResidual: inspection.processIds.length > 0, residual: [reason],
+    processResidual: inspection.processIds.length > 0 || !inspection.reliable, residual: [reason],
   });
-  if (!inspection.reliable || (inspection.active && !inspection.owned)) {
+  if (inspection.reliable && inspection.active && !inspection.owned) {
     const result = refused(inspection.reason || "WireSock externo ou desconhecido; limpeza recusada.");
     logger.warn("wiresock", "limpeza recusada para preservar WireSock externo ou desconhecido", { residual: result.residual });
     return result;
   }
-  if (!inspection.active) return empty;
+  // Inspecao "nao confiavel" (comum com o tunel elevado) nao pede mais um UAC so para inspecionar: o
+  // script elevado da limpeza repete a checagem de dono e falha fechada (WIRESOCK_EXTERNAL /
+  // WIRESOCK_INSPECTION_FAILED) sem parar nada alheio. So se pula esse UAC quando da para ver, sem
+  // administrador, que ha WireSock rodando; sem nada rodando nao se pede UAC nenhum.
+  if (inspection.reliable ? !inspection.active : !(await isWireSockActiveAsync())) return empty;
   try {
     const raw = await runElevatedWireSockWorker(resultPath => wireSockCleanupScript(configPath, resultPath));
     const result = JSON.parse(raw);

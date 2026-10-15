@@ -53,10 +53,12 @@ describe("limpeza real da GUI preserva WireSock externo", () => {
   let elevatedSnapshot = "";
   let cleanupOutcome: Record<string, unknown>;
   const workers: string[] = [];
+  let cancelUac = false;
 
   beforeEach(() => {
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
     externalAlive = true;
+    cancelUac = false;
     mutations.length = 0;
     workers.length = 0;
     discoverySnapshot = snapshot([service(String.raw`C:\WireSock\wiresock-client.exe service -config C:\External\vpn.conf`), missing], [{ pid: 4242, commandLine: String.raw`C:\WireSock\wiresock-client.exe service -config C:\External\vpn.conf` }]);
@@ -67,6 +69,9 @@ describe("limpeza real da GUI preserva WireSock externo", () => {
       return externalAlive ? "wiresock-client.exe 4242" : "";
     });
     vi.mocked(execFile).mockImplementation(((file: string, args: string[], _options: unknown, callback: Function) => {
+      // Consultas de leitura (sem admin) que a limpeza faz para saber se ha WireSock rodando.
+      if (file === "tasklist") { callback(null, externalAlive ? "wiresock-client.exe 4242" : "", ""); return {}; }
+      if (file === "sc.exe" && args[0] === "query") { callback(null, externalAlive ? "STATE : 4 RUNNING" : "STATE : 1 STOPPED", ""); return {}; }
       if (file === "sc.exe" || file === "taskkill.exe" || file === "ipconfig.exe") {
         mutations.push(`${file} ${args.join(" ")}`);
         externalAlive = false;
@@ -79,6 +84,7 @@ describe("limpeza real da GUI preserva WireSock externo", () => {
         if (!resultPath) throw new Error("worker sem arquivo de resultado");
         const isCleanup = script.includes("$result = [PSCustomObject]");
         workers.push(isCleanup ? "cleanup" : "inspection");
+        if (cancelUac) { callback(new Error("A operação foi cancelada pelo usuário"), "", ""); return {}; }
         fs.writeFileSync(resultPath, isCleanup ? JSON.stringify(cleanupOutcome) : elevatedSnapshot);
       }
       callback(null, discoverySnapshot, "");
@@ -107,18 +113,41 @@ describe("limpeza real da GUI preserva WireSock externo", () => {
     expect(workers).toEqual([]);
   });
 
-  it("reconsulta processo elevado sem CommandLine antes de iniciar a limpeza própria", async () => {
+  // Antes, um processo elevado sem CommandLine legivel abria um UAC so para inspecionar e outro para
+  // limpar (dois pedidos ao sair). A limpeza elevada ja repete a checagem de dono, entao e um UAC so.
+  it("processo elevado sem CommandLine vai direto para a limpeza elevada: um unico UAC", async () => {
     discoverySnapshot = snapshot([service(null, "Missing", 0), missing], [{ pid: 4242, commandLine: null }]);
-    elevatedSnapshot = snapshot([service(null, "Missing", 0), missing]);
     expect(await stopWireSockService(CONFIG)).toMatchObject({ stopped: true, attempts: 1 });
-    expect(workers).toEqual(["inspection", "cleanup"]);
+    expect(workers).toEqual(["cleanup"]);
     expect(mutations).toEqual([]);
   });
 
-  it("reconsulta ainda desconhecida preserva todos os recursos", async () => {
-    discoverySnapshot = elevatedSnapshot = "{}";
-    expect(await stopWireSockService(CONFIG)).toMatchObject({ stopped: false, resetNetworkLock: false, dnsCleared: false, dnsFlushed: false });
-    expect(workers).toEqual(["inspection"]);
+  it("estado desconhecido com WireSock rodando deixa a limpeza elevada decidir, e ela preserva o que nao e dela", async () => {
+    discoverySnapshot = "{}";
+    // Como o script real: recusa por dono desconhecido antes de parar, resetar lock ou DNS ou limpar o cache.
+    cleanupOutcome = { ...cleanupOutcome, stopped: false, dnsFlushed: false, residual: ["WIRESOCK_INSPECTION_FAILED: configuração do processo desconhecida"] };
+    const result = await stopWireSockService(CONFIG);
+    expect(result).toMatchObject({ stopped: false, resetNetworkLock: false, dnsCleared: false, dnsFlushed: false });
+    expect(result.residual.join(" ")).toContain("WIRESOCK_INSPECTION_FAILED");
+    expect(workers).toEqual(["cleanup"]);
+    expect(mutations).toEqual([]);
+  });
+
+  it("estado desconhecido sem nenhum WireSock rodando nao pede UAC", async () => {
+    discoverySnapshot = "{}";
+    externalAlive = false;
+    expect(await stopWireSockService(CONFIG)).toMatchObject({ stopped: true, attempts: 0 });
+    expect(workers).toEqual([]);
+    expect(mutations).toEqual([]);
+  });
+
+  it("UAC cancelado na limpeza nao confirma a restauracao e mantem o processo como residual", async () => {
+    discoverySnapshot = "{}";
+    cancelUac = true;
+    const result = await stopWireSockService(CONFIG);
+    expect(result).toMatchObject({ stopped: false, processResidual: true });
+    expect(result.residual.join(" ")).toMatch(/cancelada/);
+    expect(workers).toEqual(["cleanup"]);
     expect(mutations).toEqual([]);
   });
 

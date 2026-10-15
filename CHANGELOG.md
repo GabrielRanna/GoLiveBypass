@@ -6,6 +6,16 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Windows: sair, desativar e reiniciar o bypass pedem um UAC em vez de dois
+
+Ao parar o túnel, o app abria um PowerShell elevado só para **inspecionar** de quem era o `wiresock-client` (um app comum não lê a linha de comando de um processo elevado) e outro, em seguida, para **limpar**: dois pedidos de UAC por operação. O script elevado da limpeza já repete a mesma checagem de dono e falha fechada (`WIRESOCK_EXTERNAL` e `WIRESOCK_INSPECTION_FAILED`, sem parar nada alheio), então a inspeção elevada era redundante. Agora, quando a inspeção sem administrador não é conclusiva mas dá para ver que há WireSock rodando, o app vai direto para a limpeza elevada. Sem nenhum WireSock rodando, não pede UAC.
+
+- Se o UAC for cancelado, a limpeza continua sem ser confirmada e o processo fica como residual (antes ficava `processResidual: false`, o que escondia que o túnel seguia vivo).
+- WireSock externo ou misto, quando a inspeção sem administrador já o identifica, continua sendo recusado antes de qualquer UAC.
+- Vale para Sair, desativar, "Restaurar internet" e a limpeza do túnel anterior ao reiniciar o bypass (que pedia três UAC e passa a pedir dois).
+
+**Verificado:** os testes de `wiresock-cleanup` (que antes cravavam `["inspection", "cleanup"]`) agora cravam um único worker elevado em cada caso, mais os novos: desconhecido com WireSock rodando, desconhecido sem nada rodando e UAC cancelado. **Não verificado:** a recusa do script PowerShell elevado diante de um WireSock externo de verdade, que depende de uma instalação alheia; ela repete a lógica TypeScript que antes decidia sozinha.
+
 ### Windows: varredura do Discord 35x mais rápida, menos processos em segundo plano e melhorias na janela
 
 **Desempenho (medido no Windows 11, WireSock 3.4.8, Electron 43.4.1):**

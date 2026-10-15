@@ -6,6 +6,19 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Windows: Sair, Desativar e Restaurar internet sem UAC (o único pedido é o da ativação)
+
+O `wiresock-client` roda elevado e um app comum não consegue encerrá-lo, então parar o túnel exigia um UAC no Sair. Agora o worker elevado da **ativação** (que já pede o UAC) não termina depois de subir o túnel: ele fica vivo como **supervisor** e para o próprio túnel quando o app manda (arquivo de sinal em `wiresock-stop.flag`, na pasta do app) ou quando o app fecha, mesmo que tenha caído, com 3 checagens seguidas sem o PID (cerca de 1,5 s) pra não parar por engano. O app lê o resultado no mesmo formato da limpeza e só o aceita se nenhum WireSock continuar rodando.
+
+- **Mesma proteção:** o supervisor só para o túnel do perfil da GUI, com a mesma checagem de dono do script de limpeza (`WIRESOCK_EXTERNAL` e `WIRESOCK_INSPECTION_FAILED`, sem tocar em WireSock alheio). Se o túnel dele já tinha saído sozinho (por exemplo, uma nova ativação o trocou), o supervisor só encerra, para não derrubar o túnel novo, que usa o mesmo perfil.
+- **Reserva:** sem supervisor (túnel de uma sessão antiga, ou supervisor que já morreu) ou se ele não responder em 20 s, o app volta a usar a limpeza elevada, com **um** UAC (mudança anterior deste bloco).
+- **Sem túnel órfão:** fechar o app à força também para o túnel, porque o supervisor percebe que o app sumiu.
+- Vale para Sair, desativação adiada, Restaurar internet e o primeiro passo do Reiniciar bypass.
+
+**Segurança, para o mantenedor revisar:** um PowerShell elevado fica vivo enquanto o túnel dura, e o app comum fala com ele por um arquivo de sinal numa pasta do usuário. Esse arquivo só dispara a parada do próprio túnel (não passa comando nem caminho); quem controla a pasta do usuário já pode encerrar o app e o processo de usuário, e a parada continua exigindo o mesmo perfil.
+
+**Verificado:** testes do script gerado (fica vivo, sinal, 3 checagens, dono, formato do resultado, não derruba túnel novo) e da parada no app (sinal e resultado, supervisor morto, resultado que não bate com o sistema, sem resposta no prazo), mais a análise sintática do PowerShell gerado. **Não verificado:** o supervisor com UAC de verdade no Windows de outra pessoa e o caso de PID reaproveitado (o supervisor só não pararia sozinho).
+
 ### Windows: sair, desativar e reiniciar o bypass pedem um UAC em vez de dois
 
 Ao parar o túnel, o app abria um PowerShell elevado só para **inspecionar** de quem era o `wiresock-client` (um app comum não lê a linha de comando de um processo elevado) e outro, em seguida, para **limpar**: dois pedidos de UAC por operação. O script elevado da limpeza já repete a mesma checagem de dono e falha fechada (`WIRESOCK_EXTERNAL` e `WIRESOCK_INSPECTION_FAILED`, sem parar nada alheio), então a inspeção elevada era redundante. Agora, quando a inspeção sem administrador não é conclusiva mas dá para ver que há WireSock rodando, o app vai direto para a limpeza elevada. Sem nenhum WireSock rodando, não pede UAC.

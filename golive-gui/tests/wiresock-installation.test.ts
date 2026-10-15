@@ -181,7 +181,7 @@ describe("ativação extraída do fluxo real", () => {
         elevatedPowerShellFileArgs, readWireSockResult, classifyWireSockDirectResult, detalheErro,
         esperarProcessoWireSock, mayUseServiceCompatibility, classifyWireSockActivationFailure,
         stopWireSockService, WIRESOCK_SERVICE_NAMES, isServiceRunning, limparDnsDoAdaptadorWireSock,
-        formatAllowedApps, execFileWithWindow } = ctx;
+        formatAllowedApps, execFileWithWindow, setTunnelSupervisor } = ctx;
       ${bodyOf("applyWireSockProfile")}
     }`)();
   }
@@ -215,6 +215,7 @@ describe("ativação extraída do fluxo real", () => {
       WIRESOCK_SERVICE_NAMES: ["wiresock-client-service", "wiresock-pro-client-service"],
       isServiceRunning: () => false,
       limparDnsDoAdaptadorWireSock: async () => {},
+      setTunnelSupervisor: () => {},
       execFileWithWindow: async () => {
         elevados++;
         throw wireSockExecError(

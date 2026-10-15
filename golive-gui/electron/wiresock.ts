@@ -91,7 +91,7 @@ export interface WireSockActivationFailure {
 }
 
 export type WireSockDirectResult =
-  | { kind: "running"; pid: number; detail: string }
+  | { kind: "running"; pid: number; supervisor?: number; detail: string }
   | { kind: "unsupported"; code: string; detail: string }
   | { kind: "failed"; code: string; detail: string };
 
@@ -107,9 +107,9 @@ export function classifyWireSockDirectResult(detail: string): WireSockDirectResu
   if (/^(?:GOLIVE_WIRESOCK_DIRECT_ERROR:\s*)?DIRECT_EXITED:\s*codigo=0\b/i.test(normalized)) {
     return { kind: "failed", code: "WIRESOCK_DIRECT_EXITED_0", detail: normalized };
   }
-  const running = normalized.match(/^DIRECT_RUNNING:\s*pid=(\d+)\s*$/i);
+  const running = normalized.match(/^DIRECT_RUNNING:\s*pid=(\d+)(?:\s+supervisor=(\d+))?\s*$/i);
   if (running) {
-    return { kind: "running", pid: Number(running[1]), detail: normalized };
+    return { kind: "running", pid: Number(running[1]), ...(running[2] ? { supervisor: Number(running[2]) } : {}), detail: normalized };
   }
   if (/\b(?:DIRECT_UNSUPPORTED|RUN_NOT_SUPPORTED)\b|(?:unknown|unrecognized)\s+command\s*[:=]?\s*['"]?run\b|\brun['"]?\s+(?:is\s+)?(?:not supported|unsupported)|comando\s+desconhecido\s*[:=]?\s*['"]?run\b/i.test(normalized)) {
     return { kind: "unsupported", code: "WIRESOCK_DIRECT_UNSUPPORTED", detail: normalized };
@@ -877,6 +877,8 @@ async function applyWireSockProfile(installDir: string, rawConf: string, allowed
   const serviceResultPath = path.join(tempDir, "service-result.txt");
   const directScriptPath = path.join(tempDir, "activate-direct.ps1");
   const directResultPath = path.join(tempDir, "direct-result.txt");
+  // O tempDir e apagado no fim da ativacao; o sinal de parada do supervisor precisa de uma pasta estavel.
+  const stopFlagPath = path.join(installDir, "wiresock-stop.flag");
   const operationId = logger.createOperationId("wiresock-activation");
   const directAttemptId = logger.createOperationId("wiresock-direct");
   let activationMode: "service" | "direct" = "direct";
@@ -887,7 +889,7 @@ async function applyWireSockProfile(installDir: string, rawConf: string, allowed
     // process; it does not prove that the WFP filter captured Discord.
     fs.writeFileSync(
       directScriptPath,
-      wireSockDirectScript(wsExe, targetConf, directResultPath),
+      wireSockDirectScript(wsExe, targetConf, directResultPath, { guiPid: process.pid, stopFlagPath }),
       { encoding: "utf8", mode: 0o600 },
     );
     logger.logEvent("info", "wiresock", "activation.attempt", {
@@ -927,6 +929,11 @@ async function applyWireSockProfile(installDir: string, rawConf: string, allowed
     });
     const directStarted = directResult.kind === "running" &&
       await esperarProcessoWireSock(directResult.pid, 12, 250);
+    const supervisor = directStarted && directResult.kind === "running" && directResult.supervisor
+      ? { pid: directResult.supervisor, stopFlagPath }
+      : null;
+    setTunnelSupervisor(supervisor);
+    if (supervisor) logger.info("wiresock", "supervisor.ativo", { pid: supervisor.pid });
     const directFailure = directResult.detail || "o processo direto não permaneceu ativo";
     if (!directStarted) {
       if (!mayUseServiceCompatibility(directResult)) {
@@ -1188,6 +1195,81 @@ async function inspectGuiWireSock(configPath: string): Promise<GuiWireSockInspec
   return inspectGuiWireSockOwnership(raw, configPath);
 }
 
+function parseCleanupResult(raw: string): WireSockCleanupResult {
+  const result = JSON.parse(raw);
+  for (const field of ["stopped", "resetNetworkLock", "dnsCleared", "dnsFlushed", "processResidual"]) {
+    if (typeof result[field] !== "boolean") throw new Error("WIRESOCK_INSPECTION_FAILED: resultado de limpeza incompleto");
+  }
+  if (!Number.isSafeInteger(result.attempts) || result.attempts < 0 ||
+    !Array.isArray(result.servicesResidual) || !result.servicesResidual.every((value: unknown) => typeof value === "string") ||
+    !Array.isArray(result.residual) || !result.residual.every((value: unknown) => typeof value === "string") ||
+    (result.stopped && (result.processResidual || result.servicesResidual.length || result.residual.length))) {
+    throw new Error("WIRESOCK_INSPECTION_FAILED: resultado de limpeza incoerente");
+  }
+  return result as WireSockCleanupResult;
+}
+
+// Worker elevado que a ativacao deixou vivo ao lado do tunel (ver wireSockSupervisorPowerShell): ele
+// para o proprio tunel quando recebe o sinal, sem um novo UAC. null = nao ha (tunel de uma sessao
+// antiga, ou o supervisor ja morreu), e a parada cai na limpeza elevada, com UAC.
+let tunnelSupervisor: { pid: number; stopFlagPath: string } | null = null;
+const SUPERVISOR_STOP_TIMEOUT_MS = 20_000;
+
+export function setTunnelSupervisor(supervisor: { pid: number; stopFlagPath: string } | null): void {
+  tunnelSupervisor = supervisor;
+}
+
+async function isSupervisorAlive(pid: number): Promise<boolean> {
+  try {
+    const out = await execFileText("tasklist", ["/FI", "PID eq " + pid, "/FO", "CSV", "/NH"]);
+    return tasklistHasProcess(out, "powershell.exe", pid);
+  } catch {
+    return false;
+  }
+}
+
+/** Pede a parada ao supervisor e le o resultado dele. null = nao deu certo, o chamador segue para o UAC. */
+async function stopViaSupervisor(): Promise<WireSockCleanupResult | null> {
+  const supervisor = tunnelSupervisor;
+  if (!supervisor) return null;
+  if (!(await isSupervisorAlive(supervisor.pid))) {
+    tunnelSupervisor = null;
+    return null;
+  }
+  const resultPath = supervisor.stopFlagPath + ".result";
+  try {
+    fs.rmSync(resultPath, { force: true });
+    fs.writeFileSync(supervisor.stopFlagPath, "stop", { mode: 0o600 });
+  } catch (error) {
+    logger.warn("wiresock", "supervisor.sinal.falhou", { erro: detalheErro(error) });
+    return null;
+  }
+  const deadline = Date.now() + SUPERVISOR_STOP_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    let raw = "";
+    try { raw = fs.readFileSync(resultPath, "utf8"); } catch {}
+    if (raw) {
+      try {
+        const result = parseCleanupResult(raw);
+        // O resultado vem de um arquivo em pasta do usuario: so vale se nada do WireSock continua rodando.
+        if (result.stopped && await isWireSockActiveAsync()) {
+          logger.warn("wiresock", "supervisor.resultado.divergente", { acao: "usando a limpeza elevada" });
+          return null;
+        }
+        tunnelSupervisor = null;
+        try { fs.rmSync(resultPath, { force: true }); } catch {}
+        logger.logEvent(result.stopped ? "info" : "warn", "wiresock", "cleanup.result", { phase: "cleanup", via: "supervisor" }, result as unknown as logger.LogContext);
+        return result;
+      } catch {
+        // Arquivo ainda sendo escrito: tenta de novo.
+      }
+    }
+    await esperar(250);
+  }
+  logger.warn("wiresock", "supervisor.sem-resposta", { prazo_ms: SUPERVISOR_STOP_TIMEOUT_MS, acao: "usando a limpeza elevada" });
+  return null;
+}
+
 /** Stops only the GUI's exact profile; the ownership check is repeated under UAC by the cleanup worker. */
 export async function stopWireSockService(configPath = defaultGuiWireSockConfig()): Promise<WireSockCleanupResult> {
   const empty: WireSockCleanupResult = {
@@ -1195,6 +1277,9 @@ export async function stopWireSockService(configPath = defaultGuiWireSockConfig(
     dnsFlushed: false, servicesResidual: [], processResidual: false, residual: [],
   };
   if (process.platform !== "win32") return empty;
+  // Sem UAC: o supervisor elevado que a ativacao deixou vivo para o proprio tunel.
+  const viaSupervisor = await stopViaSupervisor();
+  if (viaSupervisor) return viaSupervisor;
   const inspection = await inspectGuiWireSock(configPath);
   const refused = (reason: string): WireSockCleanupResult => ({
     ...empty, stopped: false, servicesResidual: inspection.services,
@@ -1212,18 +1297,9 @@ export async function stopWireSockService(configPath = defaultGuiWireSockConfig(
   if (inspection.reliable ? !inspection.active : !(await isWireSockActiveAsync())) return empty;
   try {
     const raw = await runElevatedWireSockWorker(resultPath => wireSockCleanupScript(configPath, resultPath));
-    const result = JSON.parse(raw);
-    for (const field of ["stopped", "resetNetworkLock", "dnsCleared", "dnsFlushed", "processResidual"]) {
-      if (typeof result[field] !== "boolean") throw new Error("WIRESOCK_INSPECTION_FAILED: resultado de limpeza incompleto");
-    }
-    if (!Number.isSafeInteger(result.attempts) || result.attempts < 0 ||
-      !Array.isArray(result.servicesResidual) || !result.servicesResidual.every((value: unknown) => typeof value === "string") ||
-      !Array.isArray(result.residual) || !result.residual.every((value: unknown) => typeof value === "string") ||
-      (result.stopped && (result.processResidual || result.servicesResidual.length || result.residual.length))) {
-      throw new Error("WIRESOCK_INSPECTION_FAILED: resultado de limpeza incoerente");
-    }
-    logger.logEvent(result.stopped ? "info" : "warn", "wiresock", "cleanup.result", { phase: "cleanup" }, result);
-    return result as WireSockCleanupResult;
+    const result = parseCleanupResult(raw);
+    logger.logEvent(result.stopped ? "info" : "warn", "wiresock", "cleanup.result", { phase: "cleanup" }, result as unknown as logger.LogContext);
+    return result;
   } catch (error) {
     const result = refused(detalheErro(error));
     logger.warn("wiresock", "limpeza propria nao foi confirmada", { residual: result.residual });

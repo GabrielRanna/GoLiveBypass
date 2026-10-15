@@ -879,6 +879,11 @@ async function applyWireSockProfile(installDir: string, rawConf: string, allowed
   const directResultPath = path.join(tempDir, "direct-result.txt");
   // O tempDir e apagado no fim da ativacao; o sinal de parada do supervisor precisa de uma pasta estavel.
   const stopFlagPath = path.join(installDir, "wiresock-stop.flag");
+  // Um par de sinal/resultado sobra quando o worker elevado morre no meio (o wrapper o mata no
+  // timeout) ou quando a ativacao cai no modo servico, que nao gera script com supervisor: sem
+  // ninguem vigiando o arquivo, nenhum supervisor o leria, mas ele fica na pasta do app e aparece
+  // em relatorio de bug. Toda ativacao comeca sem sinal velho.
+  limparSinalDoSupervisor(stopFlagPath);
   const operationId = logger.createOperationId("wiresock-activation");
   const directAttemptId = logger.createOperationId("wiresock-direct");
   let activationMode: "service" | "direct" = "direct";
@@ -1219,6 +1224,13 @@ export function setTunnelSupervisor(supervisor: { pid: number; stopFlagPath: str
   tunnelSupervisor = supervisor;
 }
 
+/** Apaga o par sinal/resultado da parada pelo supervisor (sobra de worker morto ou de outra sessao). */
+export function limparSinalDoSupervisor(stopFlagPath: string): void {
+  for (const file of [stopFlagPath, stopFlagPath + ".result"]) {
+    try { fs.rmSync(file, { force: true }); } catch {}
+  }
+}
+
 async function isSupervisorAlive(pid: number): Promise<boolean> {
   try {
     const out = await execFileText("tasklist", ["/FI", "PID eq " + pid, "/FO", "CSV", "/NH"]);
@@ -1257,7 +1269,8 @@ async function stopViaSupervisor(): Promise<WireSockCleanupResult | null> {
           return null;
         }
         tunnelSupervisor = null;
-        try { fs.rmSync(resultPath, { force: true }); } catch {}
+        // O supervisor remove o sinal ao sair; se ele nao conseguir (arquivo em uso), o app garante.
+        limparSinalDoSupervisor(supervisor.stopFlagPath);
         logger.logEvent(result.stopped ? "info" : "warn", "wiresock", "cleanup.result", { phase: "cleanup", via: "supervisor" }, result as unknown as logger.LogContext);
         return result;
       } catch {

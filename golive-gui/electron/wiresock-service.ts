@@ -108,8 +108,14 @@ try {
  * it routes only the configured applications for the logged-in user and avoids
  * inheriting a stale global Windows service profile.
  */
-export function wireSockDirectScript(executable: string, config: string, resultPath: string): string {
-  for (const value of [executable, config, resultPath]) {
+export function wireSockDirectScript(
+  executable: string,
+  config: string,
+  resultPath: string,
+  supervisor?: { guiPid: number; stopFlagPath: string },
+): string {
+  if (supervisor && !Number.isSafeInteger(supervisor.guiPid)) throw new Error("PID do app inválido");
+  for (const value of [executable, config, resultPath, ...(supervisor ? [supervisor.stopFlagPath] : [])]) {
     if (!value || /["\r\n\0]/.test(value)) throw new Error("Caminho WireSock inválido");
   }
   const literal = (value: string) => `'${value.replace(/'/g, "''")}'`;
@@ -117,7 +123,7 @@ export function wireSockDirectScript(executable: string, config: string, resultP
 $resultPath = ${literal(resultPath)}
 $stdoutPath = ${literal(resultPath + '.stdout')}
 $stderrPath = ${literal(resultPath + '.stderr')}
-function Complete-WireSock([int]$code, [string]$detail) {
+${supervisor ? `$stopFlag = ${literal(supervisor.stopFlagPath)}\n$guiPid = ${supervisor.guiPid}\n` : ""}function Complete-WireSock([int]$code, [string]$detail, [bool]$leave = $true) {
   $payload = "$code\n$detail"
   try {
     [IO.File]::WriteAllText(($resultPath + '.tmp'), $payload, [Text.UTF8Encoding]::new($false))
@@ -127,7 +133,7 @@ function Complete-WireSock([int]$code, [string]$detail) {
     # do arquivo falhar, grava no destino final antes de sair.
     try { [IO.File]::WriteAllText($resultPath, $payload, [Text.UTF8Encoding]::new($false)) } catch {}
   }
-  exit $code
+  if ($leave) { exit $code }
 }
 function Read-Captured([string]$path) {
   try {
@@ -143,7 +149,7 @@ try {
   $null = Stop-GoLiveWireSock
   Start-Sleep -Milliseconds 500
   if ((Get-GoLiveWireSockOwnership).active) { throw 'WIRESOCK_INSPECTION_FAILED: outra instância iniciou durante a ativação' }
-  Remove-Item -LiteralPath $resultPath, $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $resultPath, $stdoutPath, $stderrPath${supervisor ? ", $stopFlag, ($stopFlag + '.result')" : ""} -Force -ErrorAction SilentlyContinue
   $arguments = @('run', '-config', ('"' + ${literal(config)} + '"'), '-log-level', 'info', '-network-lock', 'disabled')
   $child = Start-Process -FilePath ${literal(executable)} -ArgumentList $arguments -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden -PassThru -ErrorAction Stop
   # Cache the native handle before Refresh: Windows PowerShell otherwise loses
@@ -157,7 +163,7 @@ try {
     $stderr = Read-Captured $stderrPath
     throw "DIRECT_EXITED: codigo=$($child.ExitCode) stdout=$stdout stderr=$stderr"
   }
-  Complete-WireSock 0 "DIRECT_RUNNING: pid=$($child.Id)"
+  ${supervisor ? 'Complete-WireSock 0 "DIRECT_RUNNING: pid=$($child.Id) supervisor=$PID" $false' : 'Complete-WireSock 0 "DIRECT_RUNNING: pid=$($child.Id)"'}
 } catch {
   $stdout = Read-Captured $stdoutPath
   $stderr = Read-Captured $stderrPath
@@ -165,7 +171,36 @@ try {
   if ($stdout -or $stderr) { $detail += " stdout=$stdout stderr=$stderr" }
   [Console]::Error.WriteLine($detail)
   Complete-WireSock 1 $detail
-}`;
+}${supervisor ? wireSockSupervisorPowerShell() : ""}`;
+}
+
+/**
+ * Depois de subir o tunel, o worker elevado da ativacao nao sai: ele fica vivo (ja esta elevado, entao
+ * nao precisa de outro UAC) e para o proprio tunel quando o app pede (arquivo de sinal) ou quando o
+ * app fecha, mesmo que tenha caido. So para o que e da GUI, com a mesma checagem de dono da limpeza.
+ * shortcut: o app so e dado como fechado apos 3 checagens seguidas sem o PID (1,5 s) e o PID nao e
+ * comparado com o horario de inicio; se o Windows reaproveitar o PID, o supervisor so nao para sozinho.
+ */
+function wireSockSupervisorPowerShell(): string {
+  return `
+$guiMissing = 0
+$tunnelGone = $false
+try {
+  while ($true) {
+    Start-Sleep -Milliseconds 500
+    if (Test-Path -LiteralPath $stopFlag) { break }
+    $child.Refresh()
+    if ($child.HasExited) { $tunnelGone = $true; break }
+    if (Get-Process -Id $guiPid -ErrorAction SilentlyContinue) { $guiMissing = 0 } else { $guiMissing++ }
+    if ($guiMissing -ge 3) { break }
+  }
+} catch {}
+# O tunel que este supervisor cuidava ja saiu (por exemplo, uma nova ativacao o trocou): nao ha nada
+# para parar, e parar "por perfil" agora poderia derrubar o tunel novo, que usa o mesmo perfil.
+if ($tunnelGone) { exit 0 }
+${wireSockStopAndReportPowerShell("($stopFlag + '.result')")}
+Remove-Item -LiteralPath $stopFlag -Force -ErrorAction SilentlyContinue
+exit 0`;
 }
 
 /** Cleans only an instance whose exact GUI config is revalidated under UAC. */
@@ -176,7 +211,19 @@ export function wireSockCleanupScript(config: string, resultPath: string): strin
   const literal = (value: string) => `'${value.replace(/'/g, "''")}'`;
   return `\uFEFF$ErrorActionPreference='Stop'
 ${wireSockOwnershipPowerShell(config)}
-$result = [PSCustomObject]@{ stopped=$false; attempts=0; resetNetworkLock=$false; dnsCleared=$false; dnsFlushed=$false; servicesResidual=@(); processResidual=$false; residual=@() }
+${wireSockStopAndReportPowerShell(literal(resultPath))}
+if (-not $result.stopped) { exit 1 }
+`;
+}
+
+/**
+ * Para so o tunel cuja configuracao exata e a da GUI (Get-GoLiveWireSockOwnership falha fechada para
+ * qualquer WireSock externo ou desconhecido) e grava o resultado em JSON no caminho dado. Usado pelo
+ * script de limpeza elevado e pelo supervisor que fica vivo depois da ativacao. Exige que
+ * wireSockOwnershipPowerShell ja tenha sido incluido antes.
+ */
+function wireSockStopAndReportPowerShell(resultLiteral: string): string {
+  return `$result = [PSCustomObject]@{ stopped=$false; attempts=0; resetNetworkLock=$false; dnsCleared=$false; dnsFlushed=$false; servicesResidual=@(); processResidual=$false; residual=@() }
 try {
   $initial = Get-GoLiveWireSockOwnership
   $result.attempts = 1
@@ -194,9 +241,7 @@ try {
   $result.residual = @($_.Exception.Message)
   $result.stopped = $false
 }
-[IO.File]::WriteAllText(${literal(resultPath)}, ($result | ConvertTo-Json -Compress -Depth 4), [Text.UTF8Encoding]::new($false))
-if (-not $result.stopped) { exit 1 }
-`;
+[IO.File]::WriteAllText(${resultLiteral}, ($result | ConvertTo-Json -Compress -Depth 4), [Text.UTF8Encoding]::new($false))`;
 }
 
 /**

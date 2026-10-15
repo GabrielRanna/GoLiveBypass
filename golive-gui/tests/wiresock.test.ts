@@ -232,12 +232,12 @@ describe("WireSock no Windows", () => {
 
   it("prioriza o modo direto oficial e não usa fallback genérico do serviço", () => {
     const src = fs.readFileSync(path.resolve(process.cwd(), "electron/wiresock.ts"), "utf8");
-    expect(src).toContain("wireSockDirectScript(wsExe, targetConf, directResultPath)");
+    expect(src).toContain("wireSockDirectScript(wsExe, targetConf, directResultPath, { guiPid: process.pid, stopFlagPath })");
     expect(src).toContain("classifyWireSockDirectResult");
     expect(src).toContain("mayUseServiceCompatibility(directResult)");
     expect(src).toContain("activation.compatibility_fallback");
     expect(src).toContain("wireSockServiceScript(wsExe, targetConf, serviceResultPath)");
-    expect(src.indexOf("wireSockDirectScript(wsExe, targetConf, directResultPath)")).toBeLessThan(
+    expect(src.indexOf("wireSockDirectScript(wsExe, targetConf, directResultPath, { guiPid: process.pid, stopFlagPath })")).toBeLessThan(
       src.indexOf("wireSockServiceScript(wsExe, targetConf, serviceResultPath)"),
     );
     expect(src).toContain('directResult.kind === "running"');

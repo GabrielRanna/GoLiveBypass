@@ -10,6 +10,11 @@
  * instalador (que nao escreveu nada), e nao tem como a interface saber que a
  * chamada "funcionou" sem efeito.
  *
+ * Atualizacao: o Electron 43 aceita `path`, `args` e `name` no Windows e grava o valor da Run key
+ * dentro do proprio processo, sem abrir o reg.exe (setStartup confere o valor gravado e, se ele nao
+ * sair igual ao esperado, cai no reg.exe descrito abaixo). O reg.exe como processo filho com a linha
+ * `reg add ... Run ... --hidden` foi barrado pelo Microsoft Defender (#361).
+ *
  * Workaround: no Windows, escrever direto em HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run
  * via reg.exe. O reg.exe ja vem com o Windows, nao exige elevacao (HKCU e do
  * usuario), e o caminho do exe e o `process.execPath` (que no portable e o .exe
@@ -24,6 +29,7 @@ import { app } from "electron";
 import path from "path";
 import fs from "fs";
 import { execFileSync } from "child_process";
+import * as logger from "./logger";
 
 const IS_WINDOWS = process.platform === "win32";
 const IS_LINUX = process.platform === "linux";
@@ -111,6 +117,23 @@ function listOwnRunEntries(): RunEntry[] {
   return entries;
 }
 
+// O Electron grava o valor da Run key dentro do proprio processo. O `reg.exe add ... Run ... --hidden`
+// aberto como processo filho ja foi barrado pelo Microsoft Defender como Trojan:Win32/Commando.A!ml
+// (#361), entao ele fica so de reserva: se o valor nao aparecer exatamente como esperado, o
+// chamador cai no reg.exe.
+function gravarRunPeloElectron(executable: string, value: string): boolean {
+  try {
+    app.setLoginItemSettings({ openAtLogin: true, path: executable, args: ["--hidden"], name: ENTRY_NAME });
+    const ok = listOwnRunEntries().some((entry) => entry.name === ENTRY_NAME && entry.data === value);
+    if (ok) logger.info("autostart", "run.gravado", { via: "electron" });
+    else logger.warn("autostart", "run.electron.valor-diferente", { acao: "usando o reg.exe" });
+    return ok;
+  } catch (error) {
+    logger.warn("autostart", "run.electron.falhou", { erro: error instanceof Error ? error.message : String(error), acao: "usando o reg.exe" });
+    return false;
+  }
+}
+
 function deleteRunValue(name: string): void {
   try {
     execFileSync("reg.exe", [
@@ -129,7 +152,7 @@ function deleteRunValue(name: string): void {
 
 /**
  * Marca o app para iniciar com o login do usuario.
- * - Windows: HKCU\...\Run via reg.exe (funciona em portable)
+ * - Windows: HKCU\...\Run via app.setLoginItemSettings (reg.exe so de reserva)
  * - macOS: app.setLoginItemSettings (funciona em dmg/zip)
  * - Linux: ~/.config/autostart/golivebypass.desktop
  *
@@ -150,21 +173,24 @@ export function setStartup(enabled: boolean): StartupResult {
       // o registro. O prefixo " so serve se o valor comecar com aspas;
       // aqui o caminho e o valor inteiro do registro.
       const value = `\"${executable}\" --hidden`;
-      try {
-        execFileSync("reg.exe", [
-          "add",
-          RUN_KEY,
-          "/v", ENTRY_NAME,
-          "/t", "REG_SZ",
-          "/d", value,
-          "/f",
-        ], { stdio: "ignore", windowsHide: true });
-      } catch (error) {
-        // Sem HKCU: usuario sem perfil movel, ou sessao sem permissao (raro
-        // mas pode acontecer em kiosk). Silencioso -- a UI nao foi projetada
-        // para mostrar erro, e o usuario pode re-tentar.
-        console.error("falha ao adicionar entrada de Run:", error);
-        return { success: false, error: "O Windows recusou a criação da inicialização automática." };
+      if (!gravarRunPeloElectron(executable, value)) {
+        try {
+          execFileSync("reg.exe", [
+            "add",
+            RUN_KEY,
+            "/v", ENTRY_NAME,
+            "/t", "REG_SZ",
+            "/d", value,
+            "/f",
+          ], { stdio: "ignore", windowsHide: true });
+          logger.info("autostart", "run.gravado", { via: "reg.exe" });
+        } catch (error) {
+          // Sem HKCU: usuario sem perfil movel, ou sessao sem permissao (raro
+          // mas pode acontecer em kiosk). Silencioso -- a UI nao foi projetada
+          // para mostrar erro, e o usuario pode re-tentar.
+          console.error("falha ao adicionar entrada de Run:", error);
+          return { success: false, error: "O Windows recusou a criação da inicialização automática." };
+        }
       }
       // Normaliza: com a entrada canonica no lugar, entrada legada do mesmo
       // app sobrando iniciaria uma segunda copia no login.

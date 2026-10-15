@@ -6,6 +6,27 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Windows: "Iniciar com o Windows" grava a Run key pelo Electron, sem abrir o `reg.exe add`
+
+O Microsoft Defender barrou, numa máquina de teste, o `reg.exe add HKCU...Run /v GoLiveBypass ... --hidden` que o app abria como processo filho, com a detecção `Trojan:Win32/Commando.A!ml` ([#361](https://github.com/bezumiya/GoLiveBypass/issues/361)). O app agora grava o valor com `app.setLoginItemSettings({ openAtLogin, path, args: ["--hidden"], name })`, que o Electron 43 aceita no Windows e executa dentro do próprio processo. O valor gravado é conferido (`"exe" --hidden`, exatamente); se não sair igual, o `reg.exe add` de antes entra como reserva, então o toggle não perde função. Desligar e ler o estado continuam como estavam. O log do app registra qual caminho gravou (`[autostart] run.gravado | via=electron` ou `via=reg.exe`), o que ajuda a diagnosticar numa máquina que acuse.
+
+**Verificado:** testes com o registro simulado (Electron grava certo, não grava e grava errado) e `tsc`. **Não verificado:** que o Defender deixe de acusar. Isso só dá pra saber na máquina que acusou, e uma gravação de persistência pode continuar sendo observada mesmo sem o `reg.exe`. A assinatura do `.exe` segue sendo o que resolve de vez.
+
+### Windows: Sair, Desativar e Restaurar internet sem UAC (o único pedido é o da ativação)
+
+O `wiresock-client` roda elevado e um app comum não consegue encerrá-lo, então parar o túnel exigia um UAC no Sair. Agora o worker elevado da **ativação** (que já pede o UAC) não termina depois de subir o túnel: ele fica vivo como **supervisor** e para o próprio túnel quando o app manda (arquivo de sinal em `wiresock-stop.flag`, na pasta do app) ou quando o app fecha, mesmo que tenha caído, com 3 checagens seguidas sem o PID (cerca de 1,5 s) pra não parar por engano. O app lê o resultado no mesmo formato da limpeza e só o aceita se nenhum WireSock continuar rodando.
+
+- **Mesma proteção:** o supervisor só para o túnel do perfil da GUI, com a mesma checagem de dono do script de limpeza (`WIRESOCK_EXTERNAL` e `WIRESOCK_INSPECTION_FAILED`, sem tocar em WireSock alheio). Se o túnel dele já tinha saído sozinho (por exemplo, uma nova ativação o trocou), o supervisor só encerra, para não derrubar o túnel novo, que usa o mesmo perfil.
+- **Reserva com um UAC:** sem supervisor (túnel de uma sessão antiga, ou supervisor que já morreu) ou se ele não responder em 20 s, o app volta a usar a limpeza elevada, que antes abria **dois** PowerShell elevados por operação (um só para inspecionar de quem era o `wiresock-client`, porque um app comum não lê a linha de comando de um processo elevado, e outro para limpar). O script elevado da limpeza já repete a mesma checagem de dono e falha fechada, então a inspeção elevada foi removida: sobra **um** UAC. Se nenhum WireSock estiver rodando, não pede UAC; WireSock externo ou misto que a leitura sem administrador já identifica continua recusado antes de qualquer UAC.
+- Se o UAC da limpeza for cancelado, ela continua sem ser confirmada e o processo fica como residual (antes ficava `processResidual: false`, o que escondia que o túnel seguia vivo). O primeiro passo do Reiniciar bypass pedia três UAC e cai para um quando precisa dessa reserva.
+- **Sem túnel órfão:** fechar o app à força também para o túnel, porque o supervisor percebe que o app sumiu.
+- Vale para Sair, desativação adiada, Restaurar internet e o primeiro passo do Reiniciar bypass.
+- **Escopo:** só a GUI no Windows. O plugin Vencord/Equicord e o standalone têm transporte próprio e seguem como estavam (um pedido de administrador por operação elevada); Linux e macOS não são afetados, porque o código novo é só do Windows.
+
+**Segurança, para o mantenedor revisar:** um PowerShell elevado fica vivo enquanto o túnel dura, e o app comum fala com ele por um arquivo de sinal numa pasta do usuário. Esse arquivo só dispara a parada do próprio túnel (não passa comando nem caminho); quem controla a pasta do usuário já pode encerrar o app e o processo de usuário, e a parada continua exigindo o mesmo perfil.
+
+**Verificado:** testes do script gerado (fica vivo, sinal, 3 checagens, dono, formato do resultado, não derruba túnel novo) e da parada no app (sinal e resultado, supervisor morto, resultado que não bate com o sistema, sem resposta no prazo), mais a análise sintática do PowerShell gerado. **Não verificado:** o supervisor com UAC de verdade no Windows de outra pessoa e o caso de PID reaproveitado (o supervisor só não pararia sozinho).
+
 ### Windows: varredura do Discord 35x mais rápida, menos processos em segundo plano e melhorias na janela
 
 **Desempenho (medido no Windows 11, WireSock 3.4.8, Electron 43.4.1):**

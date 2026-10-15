@@ -14,6 +14,10 @@ const reg = vi.hoisted(() => ({
   entries: new Map<string, string>(),
   deleteWorks: true,
   commands: [] as string[][],
+  // Como o Electron se comporta ao gravar a Run key: "certo" grava `"exe" --hidden`, "nada" nao grava
+  // nada (o setLoginItemSettings nao falha, so nao tem efeito) e "errado" grava o valor sem as aspas.
+  electron: "certo" as "certo" | "nada" | "errado",
+  loginCalls: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("child_process", () => ({
@@ -49,7 +53,12 @@ vi.mock("electron", () => ({
   app: {
     getPath: () => "/tmp",
     getLoginItemSettings: () => ({ openAtLogin: false, wasOpenedAtLogin: false }),
-    setLoginItemSettings: vi.fn(),
+    setLoginItemSettings: vi.fn((settings: { openAtLogin: boolean; path: string; args: string[]; name: string }) => {
+      reg.loginCalls.push(settings);
+      if (reg.electron === "nada") return;
+      const quoted = reg.electron === "certo" ? `"${settings.path}"` : settings.path;
+      reg.entries.set(settings.name, `${quoted} ${settings.args.join(" ")}`);
+    }),
   },
 }));
 
@@ -68,6 +77,8 @@ afterEach(() => {
   reg.entries.clear();
   reg.deleteWorks = true;
   reg.commands.length = 0;
+  reg.electron = "certo";
+  reg.loginCalls.length = 0;
 });
 
 describe("autostart Windows (registro)", () => {
@@ -119,5 +130,66 @@ describe("autostart Windows (registro)", () => {
     } finally {
       delete process.env.PORTABLE_EXECUTABLE_FILE;
     }
+  });
+});
+
+// #361: o Defender barrou o `reg.exe add ... Run ... --hidden` aberto como processo filho. A gravacao
+// passa a ser feita pelo Electron, dentro do proprio processo, e o reg.exe fica so de reserva.
+describe("autostart Windows: gravacao pelo Electron, sem o reg.exe add", () => {
+  async function ligarComExeReal() {
+    const dir = mkdtempSync(join(tmpdir(), "glb-startup-"));
+    const exe = join(dir, "GoLiveBypass-2.0.10-beta-10.exe");
+    writeFileSync(exe, "");
+    process.env.PORTABLE_EXECUTABLE_FILE = exe;
+    try {
+      const startup = await loadStartup();
+      return { exe, result: startup.setStartup(true) };
+    } finally {
+      delete process.env.PORTABLE_EXECUTABLE_FILE;
+    }
+  }
+
+  it("liga pelo Electron com o caminho, o --hidden e o nome certos, e nao abre o reg.exe add", async () => {
+    const { exe, result } = await ligarComExeReal();
+    expect(result.success).toBe(true);
+    expect(reg.loginCalls).toEqual([{ openAtLogin: true, path: exe, args: ["--hidden"], name: "GoLiveBypass" }]);
+    expect(reg.commands.some((args) => args[0] === "add")).toBe(false);
+    expect(reg.entries.get("GoLiveBypass")).toBe(`"${exe}" --hidden`);
+    expect((await import("../electron/logger")).getRecent()).toContain("[autostart] run.gravado | via=electron");
+  });
+
+  it("se o Electron nao gravar nada, o reg.exe grava o valor e o toggle continua funcionando", async () => {
+    reg.electron = "nada";
+    const { exe, result } = await ligarComExeReal();
+    expect(result.success).toBe(true);
+    expect(reg.commands.filter((args) => args[0] === "add")).toHaveLength(1);
+    expect(reg.entries.get("GoLiveBypass")).toBe(`"${exe}" --hidden`);
+    const log = (await import("../electron/logger")).getRecent();
+    expect(log).toContain("[autostart] run.electron.valor-diferente");
+    expect(log).toContain("[autostart] run.gravado | via=reg.exe");
+  });
+
+  it("se o Electron gravar o valor diferente do esperado, o reg.exe corrige", async () => {
+    reg.electron = "errado";
+    const { exe, result } = await ligarComExeReal();
+    expect(result.success).toBe(true);
+    expect(reg.commands.filter((args) => args[0] === "add")).toHaveLength(1);
+    expect(reg.entries.get("GoLiveBypass")).toBe(`"${exe}" --hidden`);
+  });
+
+  it("a cada abertura a entrada existente e reescrita pelo Electron, sem reg.exe add", async () => {
+    reg.entries.set("GoLiveBypass", '"C:/velho/GoLiveBypass-2.0.9.exe" --hidden');
+    const dir = mkdtempSync(join(tmpdir(), "glb-startup-"));
+    const exe = join(dir, "GoLiveBypass-2.0.10-beta-10.exe");
+    writeFileSync(exe, "");
+    process.env.PORTABLE_EXECUTABLE_FILE = exe;
+    try {
+      const startup = await loadStartup();
+      startup.syncStartupEntry();
+    } finally {
+      delete process.env.PORTABLE_EXECUTABLE_FILE;
+    }
+    expect(reg.entries.get("GoLiveBypass")).toBe(`"${exe}" --hidden`);
+    expect(reg.commands.some((args) => args[0] === "add")).toBe(false);
   });
 });

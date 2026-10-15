@@ -6,6 +6,12 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Windows: "Iniciar com o Windows" grava a Run key pelo Electron, sem abrir o `reg.exe add`
+
+O Microsoft Defender barrou, numa máquina de teste, o `reg.exe add HKCU...Run /v GoLiveBypass ... --hidden` que o app abria como processo filho, com a detecção `Trojan:Win32/Commando.A!ml` ([#361](https://github.com/bezumiya/GoLiveBypass/issues/361)). O app agora grava o valor com `app.setLoginItemSettings({ openAtLogin, path, args: ["--hidden"], name })`, que o Electron 43 aceita no Windows e executa dentro do próprio processo. O valor gravado é conferido (`"exe" --hidden`, exatamente); se não sair igual, o `reg.exe add` de antes entra como reserva, então o toggle não perde função. Desligar e ler o estado continuam como estavam. O log do app registra qual caminho gravou (`[autostart] run.gravado | via=electron` ou `via=reg.exe`), o que ajuda a diagnosticar numa máquina que acuse.
+
+**Verificado:** testes com o registro simulado (Electron grava certo, não grava e grava errado) e `tsc`. **Não verificado:** que o Defender deixe de acusar. Isso só dá pra saber na máquina que acusou, e uma gravação de persistência pode continuar sendo observada mesmo sem o `reg.exe`. A assinatura do `.exe` segue sendo o que resolve de vez.
+
 ### Windows: Sair, Desativar e Restaurar internet sem UAC (o único pedido é o da ativação)
 
 O `wiresock-client` roda elevado e um app comum não consegue encerrá-lo, então parar o túnel exigia um UAC no Sair. Agora o worker elevado da **ativação** (que já pede o UAC) não termina depois de subir o túnel: ele fica vivo como **supervisor** e para o próprio túnel quando o app manda (arquivo de sinal em `wiresock-stop.flag`, na pasta do app) ou quando o app fecha, mesmo que tenha caído, com 3 checagens seguidas sem o PID (cerca de 1,5 s) pra não parar por engano. O app lê o resultado no mesmo formato da limpeza e só o aceita se nenhum WireSock continuar rodando.

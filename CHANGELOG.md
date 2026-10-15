@@ -17,23 +17,14 @@ O Microsoft Defender barrou, numa máquina de teste, o `reg.exe add HKCU...Run /
 O `wiresock-client` roda elevado e um app comum não consegue encerrá-lo, então parar o túnel exigia um UAC no Sair. Agora o worker elevado da **ativação** (que já pede o UAC) não termina depois de subir o túnel: ele fica vivo como **supervisor** e para o próprio túnel quando o app manda (arquivo de sinal em `wiresock-stop.flag`, na pasta do app) ou quando o app fecha, mesmo que tenha caído, com 3 checagens seguidas sem o PID (cerca de 1,5 s) pra não parar por engano. O app lê o resultado no mesmo formato da limpeza e só o aceita se nenhum WireSock continuar rodando.
 
 - **Mesma proteção:** o supervisor só para o túnel do perfil da GUI, com a mesma checagem de dono do script de limpeza (`WIRESOCK_EXTERNAL` e `WIRESOCK_INSPECTION_FAILED`, sem tocar em WireSock alheio). Se o túnel dele já tinha saído sozinho (por exemplo, uma nova ativação o trocou), o supervisor só encerra, para não derrubar o túnel novo, que usa o mesmo perfil.
-- **Reserva:** sem supervisor (túnel de uma sessão antiga, ou supervisor que já morreu) ou se ele não responder em 20 s, o app volta a usar a limpeza elevada, com **um** UAC (mudança anterior deste bloco).
+- **Reserva com um UAC:** sem supervisor (túnel de uma sessão antiga, ou supervisor que já morreu) ou se ele não responder em 20 s, o app volta a usar a limpeza elevada, que antes abria **dois** PowerShell elevados por operação (um só para inspecionar de quem era o `wiresock-client`, porque um app comum não lê a linha de comando de um processo elevado, e outro para limpar). O script elevado da limpeza já repete a mesma checagem de dono e falha fechada, então a inspeção elevada foi removida: sobra **um** UAC. Se nenhum WireSock estiver rodando, não pede UAC; WireSock externo ou misto que a leitura sem administrador já identifica continua recusado antes de qualquer UAC.
+- Se o UAC da limpeza for cancelado, ela continua sem ser confirmada e o processo fica como residual (antes ficava `processResidual: false`, o que escondia que o túnel seguia vivo). O primeiro passo do Reiniciar bypass pedia três UAC e cai para um quando precisa dessa reserva.
 - **Sem túnel órfão:** fechar o app à força também para o túnel, porque o supervisor percebe que o app sumiu.
 - Vale para Sair, desativação adiada, Restaurar internet e o primeiro passo do Reiniciar bypass.
 
 **Segurança, para o mantenedor revisar:** um PowerShell elevado fica vivo enquanto o túnel dura, e o app comum fala com ele por um arquivo de sinal numa pasta do usuário. Esse arquivo só dispara a parada do próprio túnel (não passa comando nem caminho); quem controla a pasta do usuário já pode encerrar o app e o processo de usuário, e a parada continua exigindo o mesmo perfil.
 
 **Verificado:** testes do script gerado (fica vivo, sinal, 3 checagens, dono, formato do resultado, não derruba túnel novo) e da parada no app (sinal e resultado, supervisor morto, resultado que não bate com o sistema, sem resposta no prazo), mais a análise sintática do PowerShell gerado. **Não verificado:** o supervisor com UAC de verdade no Windows de outra pessoa e o caso de PID reaproveitado (o supervisor só não pararia sozinho).
-
-### Windows: sair, desativar e reiniciar o bypass pedem um UAC em vez de dois
-
-Ao parar o túnel, o app abria um PowerShell elevado só para **inspecionar** de quem era o `wiresock-client` (um app comum não lê a linha de comando de um processo elevado) e outro, em seguida, para **limpar**: dois pedidos de UAC por operação. O script elevado da limpeza já repete a mesma checagem de dono e falha fechada (`WIRESOCK_EXTERNAL` e `WIRESOCK_INSPECTION_FAILED`, sem parar nada alheio), então a inspeção elevada era redundante. Agora, quando a inspeção sem administrador não é conclusiva mas dá para ver que há WireSock rodando, o app vai direto para a limpeza elevada. Sem nenhum WireSock rodando, não pede UAC.
-
-- Se o UAC for cancelado, a limpeza continua sem ser confirmada e o processo fica como residual (antes ficava `processResidual: false`, o que escondia que o túnel seguia vivo).
-- WireSock externo ou misto, quando a inspeção sem administrador já o identifica, continua sendo recusado antes de qualquer UAC.
-- Vale para Sair, desativar, "Restaurar internet" e a limpeza do túnel anterior ao reiniciar o bypass (que pedia três UAC e passa a pedir dois).
-
-**Verificado:** os testes de `wiresock-cleanup` (que antes cravavam `["inspection", "cleanup"]`) agora cravam um único worker elevado em cada caso, mais os novos: desconhecido com WireSock rodando, desconhecido sem nada rodando e UAC cancelado. **Não verificado:** a recusa do script PowerShell elevado diante de um WireSock externo de verdade, que depende de uma instalação alheia; ela repete a lógica TypeScript que antes decidia sozinha.
 
 ### Windows: varredura do Discord 35x mais rápida, menos processos em segundo plano e melhorias na janela
 

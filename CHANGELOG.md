@@ -21,6 +21,7 @@ O `wiresock-client` roda elevado e um app comum não consegue encerrá-lo, entã
 - Se o UAC da limpeza for cancelado, ela continua sem ser confirmada e o processo fica como residual (antes ficava `processResidual: false`, o que escondia que o túnel seguia vivo). O primeiro passo do Reiniciar bypass pedia três UAC e cai para um quando precisa dessa reserva.
 - **Sem túnel órfão:** fechar o app à força também para o túnel, porque o supervisor percebe que o app sumiu.
 - Vale para Sair, desativação adiada, Restaurar internet e o primeiro passo do Reiniciar bypass.
+- **Escopo:** só a GUI no Windows. O plugin Vencord/Equicord e o standalone têm transporte próprio e seguem como estavam (um pedido de administrador por operação elevada); Linux e macOS não são afetados, porque o código novo é só do Windows.
 
 **Segurança, para o mantenedor revisar:** um PowerShell elevado fica vivo enquanto o túnel dura, e o app comum fala com ele por um arquivo de sinal numa pasta do usuário. Esse arquivo só dispara a parada do próprio túnel (não passa comando nem caminho); quem controla a pasta do usuário já pode encerrar o app e o processo de usuário, e a parada continua exigindo o mesmo perfil.
 

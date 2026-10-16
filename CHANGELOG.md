@@ -97,6 +97,13 @@ Cobertura: `traffic-log.test.ts`, `qualidade-de-vida.test.ts`, `wait-condition.t
 
 **Fora do escopo (declarado):** o **plugin Vencord/Equicord**, o **standalone**, o **Linux** e o **macOS** não foram portados nem testados. Atenção: o renderer e o `electron/main.ts` são compartilhados, então a **janela redimensionável** e o **modo desenvolvedor no app empacotado** valem também no Linux e no macOS, sem teste nessas plataformas. Lendo o código do plugin: ele não usa a varredura de registro que levava 35 s (tem a própria detecção e já agrupa as consultas CIM em `vpn-windows.ts`), mas a taxa de processos dele não foi medida.
 
+### Plugin Vencord/Equicord: o lock de atualização não fecha mais um descritor já liberado
+
+- Porte do [#341](https://github.com/bezumiya/GoLiveBypass/pull/341) feito na preparação desta estável (**não passou por beta**): o lock do updater guardava o descritor do arquivo e o `releasePluginUpdateLock` o fechava **de novo** — a aquisição já havia fechado. Nesse intervalo o número pode pertencer ao SQLite, ao logger ou a um socket do Wayland/Chromium do próprio cliente dentro do Discord, e o segundo `closeSync` derrubava recurso alheio. A linha já registrou `Crashing due to FD ownership violation` no Chromium durante a beta-3 sem causa confirmada; esta é uma causa plausível, não uma confirmação. O lock passa a guardar só o token e a liberação apenas remove o arquivo.
+- Junto veio o `XAUTHORITY` na lista de ambiente preservado no relançamento Linux (X11/XWayland). O `--env=CHAVE=valor` do `netns-launcher` já separava nome e valor nesta linha; o que faltava era essa chave chegar ao cliente relançado.
+- Cobertura: `tests/test-plugin-update-lock.mjs` (o descritor reutilizado continua aberto depois da liberação, locks aninhados só removem o arquivo na última, lock de outro dono preservado) e `tests/test-plugin-netns-environment.mjs` (parser do launcher com argv gravável, `XAUTHORITY` preservado, `SECRET`/valor com quebra de linha fora do ambiente e o binário embutido conferido por SHA-256). O workflow `plugin-startup-regressions.yml` roda os dois junto do contrato do archive a cada mudança em `goLiveBypass/`.
+- Escopo: só o plugin Vencord/Equicord (Windows e Linux); a GUI e o standalone têm caminhos de atualização próprios e não usam esse lock. Limite: o crash de FD não foi reproduzido ponta a ponta — a prova é comportamental (descritor reutilizado mantido aberto).
+
 ## [2.0.10-beta-10] - 2026-10-14
 
 ### Linux: a autorização do sudo passa a ser lembrada e a senha é pedida uma vez por operação

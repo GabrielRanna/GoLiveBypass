@@ -258,7 +258,7 @@ function readWireSockSnapshotInProcessAsync(script: string, names: readonly stri
     const { promise, resolve } = Promise.withResolvers<WireSockSnapshot | null>();
     try {
         execFile("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
-            encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], windowsHide: true, timeout: 8000,
+            encoding: "utf8", windowsHide: true, timeout: 8000,
         }, (error, stdout) => {
             if (error || !stdout) {
                 resolve(null);

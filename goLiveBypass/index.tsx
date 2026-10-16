@@ -15,7 +15,7 @@ import { useAwaiter } from "@utils/react";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import type { RenderModalProps } from "@vencord/discord-types";
 import { findStoreLazy } from "@webpack";
-import { Button, closeModal as closeDiscordModal, Constants, MaskedLink, Modal, openModal, React, RestAPI, SearchableSelect, showToast, TextArea, TextInput, Toasts, useEffect, UserStore, useState } from "@webpack/common";
+import { Button, closeModal as closeDiscordModal, Constants, MaskedLink, Modal, openModal, React, RestAPI, SearchableSelect, showToast, TextArea, TextInput, useEffect, UserStore, useState } from "@webpack/common";
 
 import {
     formatProtonRoutePing,
@@ -85,7 +85,8 @@ interface PluginUpdateNative {
     restartDiscord?: () => Promise<{ success: boolean; error?: string }>;
 }
 
-const Native = VencordNative?.pluginHelpers?.GoLiveBypass as unknown as (PluginNative<typeof import("./native")> & PluginUpdateNative) | undefined;
+type PluginIpcExports = Omit<typeof import("./native"), "findLinuxNetnsLauncher">;
+const Native = VencordNative?.pluginHelpers?.GoLiveBypass as unknown as (PluginNative<PluginIpcExports> & PluginUpdateNative) | undefined;
 
 const logger = new Logger("GoLiveBypass");
 
@@ -233,15 +234,15 @@ function dismissPluginUpdateToast(version: string): void {
 function reloadForPreparedPluginUpdate(): void {
     const restart = Native?.restartDiscord;
     if (typeof restart !== "function") {
-        showToast("Reinicie o Discord manualmente para aplicar a atualização do GoLiveBypass.", Toasts.Type.FAILURE);
+        showToast("Reinicie o Discord manualmente para aplicar a atualização do GoLiveBypass.", "failure");
         return;
     }
     void restart().then(result => {
         if (result?.success === false) {
-            showToast(`GoLiveBypass não conseguiu reiniciar o Discord: ${result.error || "veja o log"}`, Toasts.Type.FAILURE);
+            showToast(`GoLiveBypass não conseguiu reiniciar o Discord: ${result.error || "veja o log"}`, "failure");
         }
     }).catch(error => {
-        showToast(`GoLiveBypass não conseguiu reiniciar o Discord: ${error instanceof Error ? error.message : String(error)}`, Toasts.Type.FAILURE);
+        showToast(`GoLiveBypass não conseguiu reiniciar o Discord: ${error instanceof Error ? error.message : String(error)}`, "failure");
     });
 }
 
@@ -346,8 +347,8 @@ function notifyPluginUpdateFailure(current: unknown, channel: unknown, error: un
     lastSuppressedUpdateErrorKey = null;
     if (context.key === lastNotifiedUpdateErrorKey) return;
     lastNotifiedUpdateErrorKey = context.key;
-    showToast("Atualização do GoLiveBypass", Toasts.Type.CUSTOM, {
-        position: Toasts.Position.BOTTOM,
+    showToast("Atualização do GoLiveBypass", "custom", {
+        position: 1 /* Discord ToastPosition.BOTTOM */,
         duration: 15_000,
         component: <PluginUpdateFailureToast currentVersion={context.currentVersion} channel={context.channel} error={context.detail} lifecycleGeneration={pluginLifecycleGeneration} />,
     });
@@ -361,8 +362,8 @@ function notifyPendingPluginUpdate(current: unknown, version: unknown, channel: 
     const deferredUntil = Number(settings.store.updateDeferredUntil);
     if (deferredVersion === version && Number.isFinite(deferredUntil) && deferredUntil > Date.now()) return;
     lastNotifiedPendingVersion = version;
-    showToast("Atualização do GoLiveBypass", Toasts.Type.CUSTOM, {
-        position: Toasts.Position.BOTTOM,
+    showToast("Atualização do GoLiveBypass", "custom", {
+        position: 1 /* Discord ToastPosition.BOTTOM */,
         duration: 15_000,
         component: <PluginUpdateToast currentVersion={currentVersion} availableVersion={version} channel={normalizedChannel} lifecycleGeneration={pluginLifecycleGeneration} />,
     });
@@ -1160,7 +1161,7 @@ function PluginOnboardingModal({ modalProps, onClosed }: { modalProps: RenderMod
             if (result && result.success === false) {
                 showToast(
                     `GoLiveBypass não conseguiu ativar a VPN: ${result.error || result.message || "veja o log"}`,
-                    Toasts.Type.FAILURE
+                    "failure"
                 );
             }
         }).catch(activationError => {
@@ -1962,7 +1963,7 @@ function PluginUpdateSettings() {
                     failureContext?.detail || detail,
                 );
                 setState({ label: `v${currentVersion} · atualização falhou`, tone: "warning", available: false });
-                showToast(`GoLiveBypass não conseguiu atualizar: ${detail}`, Toasts.Type.FAILURE);
+                showToast(`GoLiveBypass não conseguiu atualizar: ${detail}`, "failure");
             }
         } finally {
             if (operationId === operationIdRef.current) operationBusyRef.current = false;
@@ -2090,6 +2091,7 @@ const settings = definePluginSettings({
 
 interface PluginVpnStatus {
     state: VpnState | string;
+    managedConflict?: boolean;
     platform?: VpnPlatform | string;
     architecture?: string;
     owned?: boolean;
@@ -2212,10 +2214,10 @@ function VpnPanel() {
             const result = await operation() as { success?: boolean; error?: string; message?: string };
             if (!mountedRef.current) return;
             if (result.success === false) throw new Error(result.error || result.message || "Operação VPN recusada.");
-            if (successMessage) showToast(successMessage, Toasts.Type.SUCCESS);
+            if (successMessage) showToast(successMessage, "success");
             await refresh();
         } catch (error) {
-            if (mountedRef.current) showToast(`GoLiveBypass: ${error instanceof Error ? error.message : String(error)}`, Toasts.Type.FAILURE);
+            if (mountedRef.current) showToast(`GoLiveBypass: ${error instanceof Error ? error.message : String(error)}`, "failure");
         } finally {
             if (mountedRef.current) setBusy(false);
         }
@@ -2235,10 +2237,10 @@ function VpnPanel() {
                 throw new Error(result.error || "Não foi possível importar a configuração WireGuard.");
             }
             settings.store.customConfigPath = result.path;
-            showToast("Configuração WireGuard importada.", Toasts.Type.SUCCESS);
+            showToast("Configuração WireGuard importada.", "success");
             await refresh();
         } catch (error) {
-            if (mountedRef.current) showToast(`GoLiveBypass: ${error instanceof Error ? error.message : String(error)}`, Toasts.Type.FAILURE);
+            if (mountedRef.current) showToast(`GoLiveBypass: ${error instanceof Error ? error.message : String(error)}`, "failure");
         } finally {
             if (mountedRef.current) setBusy(false);
         }
@@ -2272,7 +2274,7 @@ function VpnPanel() {
                 result.persisted === false
                     ? "Sessão Proton ativa nesta execução do Discord; esta máquina não guarda a sessão e o login será pedido de novo ao reiniciar."
                     : "Sessão Proton salva na pasta privada do plugin.",
-                Toasts.Type.SUCCESS
+                "success"
             );
             await refresh();
         } catch (error) {
@@ -2325,7 +2327,7 @@ function VpnPanel() {
                 status?.active
                     ? "Rota Proton preparada e aplicada na sessão ativa do Discord."
                     : "Rota Proton preparada. Use \"Ativar agora\" para aplicar a rota; o Discord será reiniciado.",
-                Toasts.Type.SUCCESS
+                "success"
             );
             await refresh();
             await routeSelection.refresh();
@@ -2342,7 +2344,7 @@ function VpnPanel() {
 
     useEffect(() => {
         if (!routeSelection.appliedServer) return;
-        showToast(`Rota Proton aplicada: ${routeSelection.appliedServer}.`, Toasts.Type.SUCCESS);
+        showToast(`Rota Proton aplicada: ${routeSelection.appliedServer}.`, "success");
         void refresh();
     }, [routeSelection.appliedServer]);
 
@@ -2553,7 +2555,7 @@ function forceRegion() {
     if (typeof store.getPreferredRegion !== "function"
         || typeof store.getPreferredRegions !== "function"
         || typeof store.shouldIncludePreferredRegion !== "function") {
-        showToast("GoLiveBypass could not find Discord's region picker, so your call region is untouched.", Toasts.Type.FAILURE);
+        showToast("GoLiveBypass could not find Discord's region picker, so your call region is untouched.", "failure");
         return;
     }
 
@@ -2769,7 +2771,7 @@ function pollStreamClaimOnce() {
         record("stream.guard | UI afirma transmissao, mas nenhuma conexao nativa apareceu em 30s; possivel erro 2001, sem acao automatica");
         showToast(
             "GoLiveBypass: Discord says you're streaming, but no native Live connection appeared (possible error 2001). Stop the false Live, reload with Ctrl+R, then start it again.",
-            Toasts.Type.FAILURE
+            "failure"
         );
     } else if (previousStatus.startsWith("failed") && decision.status === "healthy") {
         record("stream.guard | conexao nativa apareceu depois do aviso; estado recuperado");
@@ -3131,7 +3133,7 @@ export default definePlugin({
             void Native.enableAutomatic().then(result => {
                 if (!isLifecycleCurrent()) return;
                 if (result?.success === false && !result.suppressed)
-                    showToast(`GoLiveBypass não conseguiu ativar a VPN: ${result.error || result.message || "veja o log"}`, Toasts.Type.FAILURE);
+                    showToast(`GoLiveBypass não conseguiu ativar a VPN: ${result.error || result.message || "veja o log"}`, "failure");
             }).catch(error => {
                 if (isLifecycleCurrent()) recordRendererError("Failed to reach the desktop process", error);
             });

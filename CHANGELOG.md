@@ -6,6 +6,8 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [2.0.10] - 2026-10-15
+
 ### Windows: "Iniciar com o Windows" grava a Run key pelo Electron, sem abrir o `reg.exe add`
 
 O Microsoft Defender barrou, numa máquina de teste, o `reg.exe add HKCU...Run /v GoLiveBypass ... --hidden` que o app abria como processo filho, com a detecção `Trojan:Win32/Commando.A!ml` ([#361](https://github.com/bezumiya/GoLiveBypass/issues/361)). O app agora grava o valor com `app.setLoginItemSettings({ openAtLogin, path, args: ["--hidden"], name })`, que o Electron 43 aceita no Windows e executa dentro do próprio processo. O valor gravado é conferido (`"exe" --hidden`, exatamente); se não sair igual, o `reg.exe add` de antes entra como reserva, então o toggle não perde função. Desligar e ler o estado continuam como estavam. O log do app registra qual caminho gravou (`[autostart] run.gravado | via=electron` ou `via=reg.exe`), o que ajuda a diagnosticar numa máquina que acuse.

@@ -3,6 +3,8 @@ import path from "path";
 import {
   buildWindowsDiscoveryPowerShell,
   collectWindowsDiscoveryPowerShell,
+  WindowsDiscoveryCollectionError,
+  collectWindowsDiscoveryPowerShellAsync,
   collectWindowsDiscoverySnapshot,
   createWindowsDiscoveryCache,
   flavourFromExecutableName,
@@ -105,6 +107,63 @@ function shortcutDeps(
 }
 
 describe("discovery Windows puro", () => {
+  it("preserva timeout do runner com codigo estavel e detalhe sanitizado", async () => {
+    const erro = Object.assign(
+      new Error("Command failed: C:\\Users\\segredo\\AppData\\Local\\Temp\\runner.js"),
+      { code: "ETIMEDOUT", killed: true },
+    );
+
+    let capturado: unknown;
+    try {
+      await collectWindowsDiscoveryPowerShellAsync(async () => {
+        throw erro;
+      });
+    } catch (error) {
+      capturado = error;
+    }
+
+    expect(capturado).toBeInstanceOf(WindowsDiscoveryCollectionError);
+    expect((capturado as WindowsDiscoveryCollectionError).errorCode).toBe("POWERSHELL_TIMEOUT");
+    const detalhe = (capturado as WindowsDiscoveryCollectionError).errorDetail;
+    expect(detalhe).toBeTruthy();
+    expect(detalhe.length).toBeLessThanOrEqual(96);
+    expect(detalhe).not.toContain("C:\\Users\\segredo");
+    expect(detalhe).not.toContain("runner.js");
+    expect(detalhe).not.toContain(" at ");
+  });
+  it("classifica saída não-zero como exit sem vazar caminho", async () => {
+    const erro = Object.assign(new Error("Command failed C:\\Users\\segredo\\powershell.ps1"), { code: 7 });
+
+    await expect(collectWindowsDiscoveryPowerShellAsync(async () => {
+      throw erro;
+    })).rejects.toMatchObject({
+      errorCode: "POWERSHELL_EXIT",
+      errorDetail: "Command failed [path]",
+    });
+  });
+
+
+  it("preserva candidatos de filesystem quando PowerShell sai com codigo nao-zero", () => {
+    const root = "C:\\Program Files";
+    const executable = `${root}\\Discord\\app-1.0.10\\Discord.exe`;
+    const fs = fakeFs([executable]);
+    const install: WindowsDiscordInstall = {
+      appDir: path.win32.dirname(executable),
+      resources: path.win32.join(path.win32.dirname(executable), "resources"),
+      exePath: executable,
+    };
+    const snapshot = collectWindowsDiscoverySnapshot({ ProgramFiles: root }, {
+      ...registryDeps(fs, [install]),
+      collectPowerShell: () => {
+        throw Object.assign(new Error("PowerShell exit 1"), { code: 1 });
+      },
+    }, 123);
+
+    expect(snapshot.installs).toHaveLength(1);
+    expect(snapshot.installs[0]).toMatchObject({ source: "root", flavour: "Discord", exePath: executable });
+    expect(snapshot.sourceFailure).toContain("POWERSHELL_EXIT");
+  });
+
   it("gera roots Windows determinísticos, deduplica envs e não bloqueia sem LOCALAPPDATA", () => {
     const env: WindowsDiscoveryEnvironment = {
       LOCALAPPDATA: "C:\\Users\\A\\AppData\\Local",
@@ -343,11 +402,37 @@ describe("discovery Windows puro", () => {
     expect(invocation?.args).not.toContain("-Command");
     const encoded = invocation?.args[3] ?? "";
     expect(Buffer.from(encoded, "base64").toString("utf16le")).toBe(buildWindowsDiscoveryPowerShell());
-    expect(buildWindowsDiscoveryPowerShell()).toContain("Get-CimInstance Win32_Process");
+    expect(buildWindowsDiscoveryPowerShell()).toContain("FROM Win32_Process WHERE Name = 'Discord.exe'");
     expect(buildWindowsDiscoveryPowerShell()).toContain("Select-Object -First 65");
     expect(buildWindowsDiscoveryPowerShell()).toContain("$processStatus = 'partial'");
     expect(buildWindowsDiscoveryPowerShell()).toContain("Select-Object -First 129");
-    expect(buildWindowsDiscoveryPowerShell()).toContain("HKLM:\\Software\\WOW6432Node\\Classes");
+    expect(buildWindowsDiscoveryPowerShell()).toContain("$wow + 'Classes'");
+    // O registro vai por RegistryKey (.NET): o provider do PowerShell levava ~35s nesta varredura.
+    expect(buildWindowsDiscoveryPowerShell()).toContain("[Microsoft.Win32.Registry]::LocalMachine");
+    expect(buildWindowsDiscoveryPowerShell()).not.toMatch(/Get-ItemProperty|Get-ChildItem|Get-CimInstance|Test-Path/);
+  });
+
+  it("coleta o mesmo JSON pelo runner assincrono, com os mesmos erros mapeados", async () => {
+    let invocation: { file: string; args: readonly string[] } | undefined;
+    const raw = JSON.stringify({
+      schema: 1,
+      process: { status: "empty", rows: [], truncated: false },
+      registry: { status: "partial", rows: [], truncated: true, errorCode: "UNINSTALL_LIMIT" },
+    });
+    const parsed = await collectWindowsDiscoveryPowerShellAsync(async (file, args) => {
+      invocation = { file, args };
+      return raw;
+    });
+
+    expect(parsed.registry).toMatchObject({ status: "partial", truncated: true, errorCode: "UNINSTALL_LIMIT" });
+    expect(invocation?.file).toBe("powershell.exe");
+    const encoded = invocation?.args[3] ?? "";
+    expect(Buffer.from(encoded, "base64").toString("utf16le")).toBe(buildWindowsDiscoveryPowerShell());
+
+    await expect(collectWindowsDiscoveryPowerShellAsync(async () => {
+      throw new Error("caminho privado");
+    })).rejects.toThrow("POWERSHELL_EXIT");
+    await expect(collectWindowsDiscoveryPowerShellAsync(async () => "{}")).rejects.toThrow("JSON_INVALID");
   });
 
   it("mapeia falha catastrófica e JSON inválido para erros sem expor exceção", () => {
@@ -538,6 +623,23 @@ describe("discovery Windows puro", () => {
     expect(validateWindowsProcessExecutable(exe, "Discord", fs)).toBe(exe);
   });
 
+  it("aceita Serein plano sem resources; Electron continua exigindo a marca", () => {
+    const serein = "C:\\Users\\a\\AppData\\Local\\Programs\\Serein\\serein.exe";
+    expect(flavourFromExecutableName("Serein.exe")).toBe("Serein");
+    expect(validateWindowsProcessExecutable(serein, "Serein", fakeFs([serein]))).toBe(serein);
+    // mesma ausencia de resources continua rejeitando o Electron (Vesktop sem app-*/resources)
+    const vesktop = "C:\\Apps\\Vesktop\\Vesktop.exe";
+    expect(validateWindowsProcessExecutable(vesktop, "Vesktop", fakeFs([vesktop]))).toBeNull();
+  });
+
+  it("handleProcessRows reconhece sessão do Serein sem pasta resources", () => {
+    const exe = "C:\\Users\\a\\AppData\\Local\\Programs\\Serein\\serein.exe";
+    const fs = fakeFs([exe]);
+    const candidates = handleProcessRows([{ name: "serein.exe", pid: 42, path: exe }], fs);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({ flavour: "Serein", source: "process", exePath: exe });
+  });
+
   it("rejeita args sem aspas mesmo quando o último argumento termina em .exe", () => {
     const command = "C:\\Discord\\Update.exe --processStart Discord.exe";
     expect(parseWindowsDiscoveryCommand(command)).toEqual({
@@ -685,5 +787,112 @@ describe("discovery Windows puro", () => {
     cache.read({ forceRefresh: true });
     expect(collectCalls).toBe(1);
     expect(seenEnv).not.toHaveProperty("LOCALAPPDATA");
+  });
+
+  it("readAsync entrega o snapshot sem chamar a coleta sincrona e respeita o TTL", async () => {
+    let nowMs = 0;
+    let syncCalls = 0;
+    let asyncCalls = 0;
+    const cache = createWindowsDiscoveryCache({
+      platform: () => "win32",
+      nowMs: () => nowMs,
+      readEnv: () => ({}),
+      rootsForEnv: () => [],
+      collectFresh: () => {
+        syncCalls += 1;
+        throw new Error("a variante sincrona nao pode rodar no caminho assincrono");
+      },
+      collectFreshAsync: async () => {
+        asyncCalls += 1;
+        return emptySnapshot(nowMs);
+      },
+    });
+
+    await expect(cache.readAsync()).resolves.toMatchObject({ stale: false });
+    expect(asyncCalls).toBe(1);
+    expect(syncCalls).toBe(0);
+
+    nowMs = 3_999;
+    await cache.readAsync();
+    expect(asyncCalls).toBe(1);
+
+    nowMs = 4_000;
+    await cache.readAsync();
+    expect(asyncCalls).toBe(2);
+    expect(syncCalls).toBe(0);
+  });
+
+  it("readAsync compartilha uma unica coleta entre chamadas concorrentes", async () => {
+    let nowMs = 0;
+    let calls = 0;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const cache = createWindowsDiscoveryCache({
+      platform: () => "win32",
+      nowMs: () => nowMs,
+      readEnv: () => ({}),
+      rootsForEnv: () => [],
+      collectFresh: () => emptySnapshot(),
+      collectFreshAsync: async () => {
+        calls += 1;
+        await pending;
+        return emptySnapshot(nowMs);
+      },
+    });
+
+    const first = cache.readAsync();
+    const second = cache.readAsync();
+    release();
+    await expect(first).resolves.toMatchObject({ stale: false });
+    await expect(second).resolves.toMatchObject({ stale: false });
+    expect(calls).toBe(1);
+
+    // Depois do settle, uma nova leitura fora do TTL volta a coletar.
+    nowMs = 4_001;
+    await cache.readAsync();
+    expect(calls).toBe(2);
+  });
+
+  it("readAsync mantem o contrato antigo quando nao ha coletor assincrono injetado", async () => {
+    let calls = 0;
+    const cache = createWindowsDiscoveryCache({
+      platform: () => "win32",
+      nowMs: () => 0,
+      readEnv: () => ({}),
+      rootsForEnv: () => [],
+      collectFresh: () => { calls += 1; return emptySnapshot(); },
+    });
+
+    await expect(cache.readAsync({ forceRefresh: true })).resolves.toMatchObject({ stale: false });
+    expect(calls).toBe(1);
+  });
+
+  it("readAsync propaga falha sem stale e usa snapshot anterior dentro da janela stale", async () => {
+    let nowMs = 0;
+    let calls = 0;
+    let fail = false;
+    const cache = createWindowsDiscoveryCache({
+      platform: () => "win32",
+      nowMs: () => nowMs,
+      readEnv: () => ({}),
+      rootsForEnv: () => [],
+      collectFresh: () => emptySnapshot(),
+      collectFreshAsync: async () => {
+        calls += 1;
+        if (fail) throw new Error("fonte indisponivel");
+        return emptySnapshot(nowMs);
+      },
+    });
+
+    await cache.readAsync();
+    expect(calls).toBe(1);
+
+    fail = true;
+    nowMs = 4_001;
+    await expect(cache.readAsync({ allowStale: true })).resolves.toMatchObject({ stale: true });
+
+    fail = false;
+    nowMs = 8_000;
+    await expect(cache.readAsync({ allowStale: true })).resolves.toMatchObject({ stale: false });
   });
 });

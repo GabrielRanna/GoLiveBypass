@@ -34,8 +34,8 @@ describe("runtime Proton empacotado", () => {
     };
     const candidates = protonConfgenCandidates(context);
     expect(candidates[0]).toContain("resources");
-    expect(candidates).toContain("/app/resources/extra/proton-confgen/proton-confgen.exe");
-    expect(candidates).toContain("/app/extra/proton-confgen/proton-confgen.exe");
+    expect(candidates).toContain(path.normalize("/app/resources/extra/proton-confgen/proton-confgen.exe"));
+    expect(candidates).toContain(path.normalize("/app/extra/proton-confgen/proton-confgen.exe"));
   });
 
   it("encontra o helper no primeiro layout que realmente existe", () => {

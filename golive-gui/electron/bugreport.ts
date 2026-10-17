@@ -1,5 +1,5 @@
 // Cliente do report de bugs: coleta logs (GUI + standalone injetado no Discord),
-// redige em camadas e envia para https://api.skyplaceia.com/bugs/v1/reports.
+// redige em camadas e envia para https://bugs.golivebypass.dev/bugs/v1/reports.
 //
 // Garantias de privacidade (testadas em tests/redact.test.ts):
 //   L1 - padroes regex: credenciais em URL, headers de auth, tokens Discord, query do gateway
@@ -19,8 +19,8 @@ import {
   type SegredosConhecidos,
 } from "./redact";
 
-const BUG_API_URL = "https://api.skyplaceia.com/bugs/v1/reports";
-const BUG_BLOCK_STATUS_URL = "https://api.skyplaceia.com/bugs/v1/block-status";
+const BUG_API_URL = "https://bugs.golivebypass.dev/bugs/v1/reports";
+const BUG_BLOCK_STATUS_URL = "https://bugs.golivebypass.dev/bugs/v1/block-status";
 // Token compartilhado da API de bugs. Extraivel por design (app distribuido);
 // o escopo dele e so criar issue num repo publico, com rate limit por IP.
 const BUG_API_TOKEN = "c3d0bff691ecc3ddc6f6ca10037b9ac967c62547e681d3749204e50800504511";

@@ -266,63 +266,65 @@ const EMBEDDED_LINUX_ASSETS: Record<EmbeddedLinuxAssetName, EmbeddedLinuxAsset> 
         ].join(""),
     },
     "netns-launcher": {
-        sha256: "fa926157aa14e441bea04411f1dde99a05e33c83f84519429ce90205f3d85660",
+        sha256: "df2d1496a59de778e5dda7fbf6be9f2c80ae9fe15cf03cd8e2485466e526e8c3",
         gzipBase64: [
-            "H4sIAAAAAAAC/+1bfXQbVXZ/kmxHsRNLSZzgfBEtKGn4sCwlwWubZJEdOxmDCSEOgU3pKrI0tmcra1TNyDhZygqUcBAirHfbUranPQ2lC+wBzgHObjZQ1nEw",
-            "caCn3TUsCym7lJQDW4lQEmAbQtig3vvmjfRmokl6un+0PYfx8dy5v3fvffd9v7lv9O3u3g12m43ol518jSA3VhukfJDheV9JBLBWMhvuHrKM1ABfxckFSdBA",
-            "j9qJgTqZnIPpETcD3EEDXcJgndo4Wk34K2ig0ixioLp92wXyC84mBsrrYRlPL9X4001BA/2AlavRYdSzMz3nxazcvqCBTrMC6VSvlyr2r9trdAQN1MvkvJw8",
-            "r3eMVdixJUEDDZpqy5yfh5XPszRopEzOY8qv7z01+j/JbzPTG1us8WOLgwa6lsmtNeV3I+jVkP/+pTfzFpafVfs59X5pN/Yz1Glg/XTjppvIyMb9j773T8of",
-            "XPH2v6xY0fLkdUvvTB75xHXxGSHzgVPIVf/FlYQIeyZUe3FayLzonCz5UbzqXkgqLr8P7q5lQXhCfgiTCseKcC2/C3nMtjBN+V3IozeFCconkUc3Ck9R/pvI",
-            "o3uFfZTvRx6HRGGM8tuRx6oqpCm/BfkZyCcofy3y2ByFHZTvRH4m8psp3458LfJByq9Cvg55P+UvRx5HV8FD+UuQx1FTcFN+EfL1yBPKz0XehfzJL5CvRd5N",
-            "y095O/JzaPkpf+YK4OfS8lP+Y+Tn0fJT/n3kG2j5Kf8O8vNp+Sn/JvILaPkp/yryF9HyU/4fkW+k5af8C8gvpOWn/HPIL6Llp/wzyC+m5QdeuPMDAcZCpljt",
-            "uv8RAIXcNqeQ/WvvSgCF7CfCnlddu58C3LW/dvfLrt0/QJHsE14/JGfPCtk3hOxWr/OeWd58Bo1lTi+7rS+91utTrxdykJC+3V70qR3Yk0aFgzW0g3xeFGzT",
-            "xxe4lqWx0wiuhz9NzhcyL9iEtmm1D7LZ+ye/CKa/WDXyXubf3s4UOtKfLRw5JuSYRzkt6/wPzhaLB4XGIDlCsGryV0EHOXAH2rvzRSzPpK5x/DUh9y23sFf1",
-            "NuZ3QK8CT54BpBGRJflNGrIPEM/4N8Bcb/ZH3lYsW5U33wEl6spVeTuexd64Z+IA+tvl6p44UKU9vNSVfaknOyXsrZoccC3bTceHkHOn25tSs9K7bE2pmvQu",
-            "O1Gv6cgcsgmZCWdX2z+n3s6//ztwPVZ2fVc1ahnL15vT3CishAoDtTte7tjbYevNPu8NAtqRPdKWv722N6exx58Qctc5AxPP3Q5Gx3GmEPbe7vV0ZXu9zi4s",
-            "SONZLAhw64rQb13f+RRGZ2atl6hXCLmru7LQeAO/Q4lZXqiLi/I9jDnoWRgkmVa7a0+3jdkcx4kvMEF1+rEJbgGR7OE9E657vgIy4zhBZo/kfwIWANvzMGDZ",
-            "E/mXgGUu3lt28XmvB2j+W5DI/HLALDGOdVtKrD9LDe3+UzCUf/pz5tdjul9PYjugL6f0pKFFQYI5/xmkdLd95Lr/RdC8NnflJ8/hDDL+GmSPCgJ4ddfnaDt1",
-            "q5A5XDO+jvbrE/m3AOzJTmCHXS+0HVa/hlaFbP74AuyHs9NnQqoz874/fWbmbZdCk9p62yaUra797uwrWm8FndQvUfQdFH0rf/YMVNKvyo2912Hd2Hp7FlZD",
-            "qXuhX2VP0DYULvuwF5vxIfBNyB5G3x7thX75nI06faQnM2Xr2Zuw5afPoMAJlE3BIzYxbXbX7o+gKxdk6Ev5GDpEFqJDuOQWvongzQBmT+TcQnYy2wD9BTLK",
-            "NXgPprFx5xU2FlEFdgD5ECpPL9SqGGfPQLE7MPEsCVaRwKvjh6CY+fuofdYKs0EEBAKvPotNPj4JAqWmjZxhTebXhHevRh9/Bbf8S5+Bjb9vLPk4BWAu5m2E",
-            "9jkLSVgBQ0KuNYcjeAn4enCM5fc3KHi7d0kXTXr6DG3g1aD2uva4Mt8ED9BEtfnd8NDRNqW25Ldjbv7FmBtdtW4BIwdPgsXCpi+whIFT+YuwUBM0E/VvC1/F",
-            "eSF7Goc9eCFkp/KPYvoQmCgshrQBnz4ZuJYRXFMD/9GTfeUbQvYdIfPuyc1bsUZeFo4c8VfD8jn/0uWE/LasgvKTZXbsQN4PlbYO7+o8OgNh8WceRKB4bGBs",
-            "EhfhgbLCOJW/80NKsieFQx9eIxw67RBsU8IrX6hzShZmMAtmfcw/ve6n4BRJzbtJyL6X3wWNOFX9OCC2P5ocqyR//N4yD/uHVuFIl7dRy6ioVqevIakZgQnY",
-            "RrROCtlbvSuF7Oe9WdXr78meyr/1KVTxq3R6FrJvZ93P1dI+3eV15v/uU5w1sP9np3I2aL1WXFIahbY31UvS7SS1VMh+LBx635Nq6Mi2CDkwfADbrxfa3n/8",
-            "uxTQnveUnwsqFGZgjPO/D7zJ3wxZ5VrzE6cxx3XPetGFN/9QyB4a90MvDEwUNkCKVla6PzLsiL68vry+vP6vXM0xqb9lTXMs2hST4qnRptHWlqaWNT5F9q0q",
-            "vccu496D2QsSfVtCvO3j3JLz2X8a/udWwGst8F0W+L9a4Fdb4Ccs8BUW+DILPGSBL7DAhyxw2QJ/yAK3WeA+C/xTC/wFC7zTAu+1wN+wwL9vgQdt5ZgBf71k",
-            "Ie+ywFMW+LQFvsYCf8wC32qB32eBfw/+5xB4XQwEDXENosQTSSmuDpCBpCgSRVQHpSiJxMRwUoyPII8kFVeGAEA2ruA9BUKpOAy9P6YqSTmVAFxNxqOpBJHi",
-            "kg4NimriNhSGtJgYJ8NyKq4SOQGPoRAM4UhIUcNJNTQcluJEHBUjkKUaFZNJMsDcAsXIUBIJoHIS1CRFjqxaDYpJVU7FwFdZETEjET0PRyKiQl2JDCdAGJTi",
-            "cigmR8KqJMepi5iA4ugWuoCTRgvZ2NvTuT60yhdYU3osP60uP67yXVWGWyGHwWE5zkoR0qYYB0RhHPSvmlH9r8bAEVMq/tlAp8jFgf78uw/U4Aw206ZhDZI0",
-            "GyOJDYz/EU2vIhczPrVImol2L2P8AZpuJ1exANHRZq39a1iMSL+OcfgCvuOw/lLN5prS5dfwGVzsifYrDrfzcS0Or+LwRg7n46MeDufjZys5fAbvDoc7ObyV",
-            "w2fy45zDazlc4PA6Dt/M4bM4/BYOn83hOzi8np9nOdzF4QkOd3P4KIfP4fA0h/Pj/R4On8fhYxzewOEPcvh8Dt/H4Rfx8xGHN3L4Uxy+kMMPcPgiDp/g8MX8",
-            "PMvh/AI9zeFLOfwoh19sWIfshvkvjjNXUyycikeGxGS7Z7mC/7UknBxMDYtxVVY8Unxk8qGYFJUV0tSkiLGBpqgYg3mCROThcDwqe8IpBSRF0pxMxZupwebl",
-            "CmkW1UiJa06Kihwb8UXk+ACJhIel+JDsAdWuTX2ewSRYET1RESY7UNMUefmmJphr15HwcL+E+XjE0URs8smIpMpl30rlkYfRlCceHhaVRDgimszHJx+WPQOy",
-            "5EnIijL55IgY8yTFYXlETHpkj14NHlUcTsjJyYeSkm64gl64PymhVikrCznwORlOeuIGyQpyMeoD1ghM8SNhrUwV5BQxEUaD0DR02VCwIiMxWjeV5GFdiFmJ",
-            "VyxXIiZFwiZfUIkvaCX/peEEVdMbysL/RJIVYDCZAhQtp5QUq2xru0xaSSViIvZMWHcVi3bBXhkHFfRdik3+cFACxXAUep0ECx2seCPQl9k+DoRkXBqheGiK",
-            "KcupCyhXque4FJFoBZRqF8bbYsfVa9lcPf3vxSIGffcVisXTdFNbLN6CczTQGNCTQHFfs+9ksfhr5p8+J9l2bSG2Ubdt8awZzjG2huE8sO/DYnEFDczOcCPm",
-            "h//nAavmzpW6cP6GvOnZVL17Q33jta6625xpcs2iqy9f7b2EMD30IQg+PEzt1Qe/Xlvv7KjrzjiE++32G2snr/1ZZ1137WQ3ErjTeW4f5gc6l6NOR707Y99e",
-            "j+vMZsQxPV8s9qEzG+ungzdlqkN3V9mVSWEqDKYByVQLk52Z6rurRu932NVaSBB+1l1343fsN9T+vLPOsd+mQcLPu+vK5zh+tibiOY49TSaqDOeJNgNvN/FV",
-            "bB2xMX397NL+//y9L1HHzukY1ctbZFRfm9eyc0d9Tb51lsbra5N+jrbYdM5XWqN8xvNcPf0/vyjS+crjLu+L6L5hXnn/RHmWru8tbmCO6nsKfe2cbyqfvifL",
-            "s/2Y3l777MZxou999LU5PT9owFvnG/f5AqMzTflDHJOW52iDJl9kvF6vJxn/YEPwf6W99XNn8zXC2vduRh9g9BFG9zM6xejrjP6G0VOM1lRpdAGjKxhtYXQD",
-            "o9sYHWB0hNG7GX2A0UcY3c/oFKOvM/obRk8xWlPN8md0RXW5vBvXr2/3rITRe5kn0AIvHgHPKv+qFn9roM2zcosY9QhhlSU0rbqMdGxrX5MIrIb3ly3b2mGH",
-            "Epfig57BSMSsSzq3tYfjcblfildM3nhzu3/0q9EW/1Utqzw+X7OyU4mKCaUZIizN4X6pKS6roi9C+ja3ryZ969sDZP2G9tbzCG7obfefJ3ljB5jY3NO+hvR1",
-            "t/uJ1Ac3gwv4NglyNBf2TE2yZ4MsvIapUqQpKcILn+aj34xROyaM2jNhbOy42WDY2OG1rQ4HSt+X7K8tjy+zzGGWdvg8Mvr8tMVhLaPPWdFZ1jLTLI+ROmuZ",
-            "7Ux/+6zfT0b39ebz+Kz7Ks06/3yhfdfyUfGc8U7T5p7zHcdcC/lL6RxZRdKs/A8z/EqG+5kfl3PfdVSycx2T1+tTv65nOKkz4jsYHjThI9T/hcQZMK5Pd9Hn",
-            "htK6ol8/ZHYSJjs/pvLzSuuUfr1m4f9bVN5Nfr3k3HqvJH+cys8/Z379LYtq6d+16NcMG8pfVFqX9GuprXK8qc0Cv9YCH7TAd1vgf2mB/8SOfaaRHPMb/Xzc",
-            "Qv6nFvg03Xs2kndNdt6wkP/AAreBP3Pt1aWxXKpPe2X5RRb4lRb4NRb4VgtctMB3WuA5C/whC/zHdq3ezPX/goX8Ly3wgr1yHPY04HPs9WRlo9F+tQPjI/XE",
-            "w3A9xtTgQH8WEnfAKL/Qge1SRSZqjfu4f6D+VJXm+RV6GMxR2c9uZp+Y7N/o0Oz42XrexzLYZmFHssB3WeD4gcEceyPJm+r5+xbyT1jghyzwo7R+7KV1qnSe",
-            "YSF/0mERX44k1YBPhjgprPkhNTxoisTASgsvvYoYgmDsQFiKheDVWwkPij5JSYZ9flTvh8BuHExAWBieFFVMhtThEIR94/BiHApF5dBgTO4Px0JRVU4qoXBq",
-            "FCM2CQzdRMFCRYnQAGwfQuFkMrwzhHGLnRD+hrf+UDQ1PLwTVDguhBsNgyj4JMajtFAbtnRc3x3q3tQFsd9Q19c3dVzfsx5g2LOFugWWKnRtIaGNvTd0dvSG",
-            "btiwoa97a2hrR2dvd+icWHaQCyxjOD7IB53PiZcHuei0OdBt0NQC9QaIxcFNYjTIHyyHv7Xov9ELMRpWw6W4viFNPzUwKmBNs/C/IYEGacxOQajfCLHTCSOI",
-            "PSjIBexZNN/kDBwLmNW0U4lzagIOLUxVjYXUqpodJRjSByo4ZToIABOKHBqCIEtMJKGeGyAhKsVDEEGMQh3G4RaNheheM6yKIW3vGUpIpYMMk+1+RWHu0JMS",
-            "7ZjGIINnKgZAOwkx2dl6/XrWW7VDHHNV0DMWA1g+zDGaQlw7sTHZwNMbA0R8ys5hNdwPFLo5pUP6E30JGIynfP0pCc5yYRLwUcM+VRyFO+07gMCYTxAqNxRW",
-            "hogvujMONjWqJrUUCG0qeMTDMyFIg0oOoyB7SsTAblKmvdgnDrGRPhRNljnOLQiaJcSkupNBHZ09TTiH+cpzguak/gz5QNA3Ak7IKr1p+Wm5QSMSiPQOY1SP",
-            "+Ng7GDWskHIl+MKqmpT6U4j+/tdi01lM+bts4/fYxPTdMn9ua+PiGvp6sNZBDPETK/29Jv0dTH+Hw/gdufn7Zzd3Lsrr6+upn62nl8+orK9f7SZ9fR92KwsU",
-            "zb6A/0GmX4qblb6/J4b4EDF970+4uMspiKHo+nrcyOM21r/TRPVrC4sZ2U1xJcFtDBjNZHk7TfGd7aa4nx6nEuYZ41JW/vezmJCur8eBHmyo/J283URlFmPS",
-            "eT3OdLSh/B5VyX/9uoO1id0U12qdb4xrmetPL/89TL/TFCdLzzfG1ZwslmbW/56p/fX9pYcJDDvOfX/lr78y6Zd/N2D8vYBV/3vMpD/N9KeZvtt2/vyfMY3/",
-            "8u8djO1npX/YpF/+nYXx9xVW/v+CnX86THFX/XcNTov8dfo2Oyd1mOKy+mHfhfSPm866S79nudg4/8w06bm592Ebp6+fnx9dVnm+Mef/mUlff3/OM/3TF9C3",
-            "24z6+nvVMU/l+jaPX6dNs+Uwnee/66nsv7k9Z7P8/SZc1/dZ5K/TBRb6c79y/vlHp8ttxnN+940sJnaJxnfZzt//bBZnHo9dyh5qyt2pocL4n2n6TqKkfxmb",
-            "fqvOX/9zLPQfb2LfgV1g/v0v8GsOmug2AAA=",
+            "H4sIAAAAAAAC/+1cDXAUx5Xu/ZFYhGAXjGzxE7PBiy071iIBxgiiIMEKBp/ABOSUnSNeVrsjae3VzmZmVkjEhzdZ4Ngssp3kypdzxT5yjn1OzqlypSgfIT4i",
+            "LMD2nX9wUqa4OLEVxz+zxj/Y5s9A2Huvp2fVM+xA6uqqUnWlplZv3jfvvX79Mz093f24t619hdPhIEZyka8Q5DK1Ot/C8Ce+XBIBbBHxwt9Z5GpSCbybk7NS",
+            "wWWmnlI+ut6TDLfSmcRMHRx1E/t0ptpMiW9Ur4LjrXSgykx5PZqfn+EWqlWYKa+HdXO4XucPN5upn5WzxWXWczK9EaY30myhDjM16tPNfjuYPSsNEDN1W/Xm",
+            "MHkLtbanNb/nmZyVWqvLyG/9O2rsf5PfWqa36xqdt9IFxEyN/DqY3hlWcCvdSczUyO+roFdJ/vJkdKd1LD+7dm9wmqmD83cqey5WrrmNnA40rfvHJ5dMfrTu",
+            "yBSl7j++e9djL/55biLeuXDB3ESsPhFPpvvr+xctrF+4IKhIwXm038zm+h0zTHNBvOnT/MxL+X8AflPK4Fts8E9s8JU2uMdRHr/DMdpH+DTPxs6XbHCnjf2o",
+            "jfxsGzxhgys2eJUNvtsGd9jgi21wn025XrORX2ODv2+DP2yDp23a5XUb+Rk2+IAN/icbfKtNvi028r+ywW+3wR9jbW9ND9jIPwi/yWQ6Ia3m8YEoyZQcT6pd",
+            "JBxW1Ej07nC05+5wVySeIIqodsdjJJoQI7KY7EMeSTqp9ACAbFLBv2kQSifhUb6bqshSOqWQeDJuXHaLamoTCimqnBCTpFdKJ1UipeAyHIahIIoZy2q4NxJP",
+            "ErFfjEJWakyUZdJVci3aHwl3xZORRHyziHaiPTISEJJkuB1XpOi8+WBHVqV0AlyWFBHzFbEAkWhUVBSq1ZsCYVBKSuGEFI2ocSlJNslxldpM4m1UQl/RLxyR",
+            "FpKV7auWLQ/PCzYuKF2OXs0L3lS6nj8Kz19Ewqs6VoehFOCCoopyx+rlCSkpdkQ6EyL40N0rJVmxw7poWUEc+FwwprrpuFrBrvR/OlfJIaTMlZu9QRwgX+sY",
+            "Hd//4XsPVuIIO5thU+PxiZhDPePT0+Pj0crNjN9N5V1kOeP3UN5J1jjM7wWjX6Wm6fSoBfczXGsx4wY/tFSnlcagz9LzHM6/zw5z+FUcfpTD+RfGCIebnk/2",
+            "XFRYnyvm1zjuHUf95nAXP85xOD+/q+XwCg73c/g4Dq/jcA+HN3D4eA5fxOFVvPscPoHDBQ6v5vC1HD6RH4c4fBKHb+RwL4f3cLiPw1McPpnD+zmcH78yHH4F",
+            "h+/g8Kn8+MfhNRz+Qw6/ksN3cXgthz/B4dM4/CkOn87hezh8BocPcfgX+P7M4Vfz/ZnDZ/H9mcO/SMbSWBpLfPrMe/VZIfuBR8hX7J8Lw9u2IdVZPCxkD3iG",
+            "6f3iTf8JcHHOi/DXO6sFrpDvwVuFkSKkOc8ij0N84TDl9yKPr6DCEOV/gTwO9YWnKP8z5HGIL+yi/L8gj0N74QHKP4Q8vmYKGcp/H3l8fAspyn8XeRzaCxsp",
+            "/x3kcUgvrKX8ZuRxKC+0UF5GHofwQgPl70Ieh+6Cn/KdyOOQXfBR/uvI41BdIJRfhzwO0YXjF5C/BXkfLT/llyE/mZaf8ouRn0LLT/l5yF9By0/5G5CfSstP",
+            "+dnI19DyU3468lfS8lN+CvJX0fJTvgr5Wlp+yjuRn0bLT/mzQeCn0/JT/lPkZ9DyA29tf+HbH/TA+zwm5N1z6pDPbQ3UAdA4lC1WeO/DTtCeezKwFqD2fNIj",
+            "wHWLH8VOrt72oXfrEQfe/0lAAKzN+7RI2ra+rQ4IuR8FFgGSO9ee+1i7A7IVsmdmbbqjNXM+qK5vzdxTUQyqfwN9zbsVvz+EX1fSrnSu2J57v92hHZvWFfTO",
+            "2qr75330tFwjZJ91CE2HVdn7dNXgN3/bkrkwr++d7B/fzBZaM59P6xsR8nqGQl53rz2vu9Se113Xbvsz+DDYfAO083P0PaYtH4fiemFjwpf00nu33Qs9c88W",
+            "WjEHsGKGhfzf+YRBNVCrfRU6JTwePwCkFpGZ2lJAWnMHsRybwX+44RcGb3q9GuvkmcBGUG99poLW4O7A7ejGG+DGtqE92PtD3raRPXQC5Q0dbGss5kIBTyg3",
+            "0j6YOEi6Rsu/Op8me7E3g+EHqOHT2hPn0Upabs0ecKwe3FK1KnvQE2r6U/q3WvI8LaZcXSrmhkos5qVrpz2vu9ee150uvI0tVhLWhQp7AIRctjzUlnv3lsHQ",
+            "SXLM551F0AchO4T5qxkh78ssrk8fy2x21KffyWx2kvSbcMN7XxRqp3UwFHBAKaubjnoH19HqWu1pHNqH0xxh8J4AVF3NC/CcanEoRHMRnjjv/YPQvbL3BDxE",
+            "nQ2VS7RHzmHJ1Rpt2zla0K9AQbOLnN5tU9EeGtmH077GIW23XhO3gUBuGBpox6fg/j6c2OWe066iFejd1gbmc29qdectztTcOgHJMwE/sNp/nyv580UY1/a5",
+            "CXdzg25q60wwpX18lmbaYHi1BfLUbtFdxV6Bed4FWFvTCe99G0BjTT5xkuyt1Js3MAGb92PthbO0eW+HZq3c10x0MIRWcsM4Pi9d1XRQXdye045diZ1/YuZs",
+            "WPVk32/InB2/6RpoC3hSjiqN3qd9uVf1RwTk06+h6Fso+gdN0N18tsroJYXXoF8ecoETimOvQ89xVfaQQ7vzLOLNWEABavjYAa1a132M6uIaWuGfQFc7+Xmx",
+            "mHszlPcLuYPaUV3GAeUJ5URS2AQSv8bPEu3C5/TOzRP0urgTbjQW2xqHfkla3KTxN1AJ1WBYu1k30MLEbqYPr17hVBgoFf4jDPtalS68XBfeuhPqt1ABGvkN",
+            "gVpo3F9hlnhjB9ZyflEeH9wjuo7EMjgCjRjKxwIzQ7n3tLv06l8Luvfrl23aKTDSNJyepDUD0tp0ALLBh6t4hpp5fgJWBn0F7gRLmqbDgfGlOkrrvTEMggXs",
+            "3o3FxlPafr0ypjPHvwUVXGhHQTZ6GmOtMb6WxmE2mhhjjFYLhlZvK6pSa2YpUePYlfftIjiGQ1d+zcP11knYTMODy4vNj8D9TdLeDHi9r9XpAWNFeGq2wP3W",
+            "3IFtQ/1C7jkh9zthcLeuKEKRoHKgZ6Wv186codUyJw8PszAYOojVKuQOaQ/oBfoEmrCQhf6qvaJXhAeLLSPw8uliUa+SY+91eWeF9PlH44ercq/eKeTeErJv",
+            "H1/bAU3c+AKoRcBcsWbGdYSc4N4Hg81NdUgq5iFpOqPWwNTlwrX61GV8ccQ7K4Nyw4yC/Hgqf5MTyfUXhNxxYf9HS4X9Z1yC45Dw6gV1Khh4iRnwFEd0vwx9",
+            "9C/T/Ifr8NN+/m1Ctvln19K35DvqRCHf/DjgxZofAqThEHeoYjcAjm8Mj/o7jJMmbjxHe4VukDX8y35Qx718Q4FaaLXnQgH67SdAo1ZAm6avAjDfEaiFF9VU",
+            "KpkegCla3bCQ2wDjZu4zIQeDpJY6BT3rN0IervH95Mv59DdHzh3QQqdwjKsOQDvlHdB4c9GeT1jSEfCoMzOLIQsh94mwv+BPT8rN3+OgzwrYPrZDJ9+mpJDG",
+            "YRbz1H5yCovQQtYLuXPa6ZPwuC3SUqcxj+afYl3mfve3Qm4/VPs/V2BHLJwA+dJcszS7HEtjaSyNpbH010oOmJYlcUeiPhFJJ6M9orzYP0fBXxWJyN3pXjGp",
+            "Soo/nuwb/nEiHpMUUl+viImu+piYgCV/4KJSsisu9zaTqNQbScYkfyStgJJI5srp5Fxqe+4chcwV1WiJmyuLipToC6IuiUZ648keyQ+qoTXr/d0yWBH9MRH2",
+            "NUBNV+Tl6+thO6WZSHfrTvZ2xjE7v9ifSgz/PBpXpVFvCUlKvWjLn4z0ikoqEhUt9pPDj0r+LinuT0mKMvzzPjHhl8VeqU+U/ZLfqBK/KvamJHn4x3JcYvVW",
+            "Ri/SKcdRq5SVjRx4K0dkf9IkWUYuQX3AKoHtnL5ITLKxp4ipCBqEZqJbRArWZDRBa6WcPGz6JOzEy5YrlYhHIxZfUIkvaDn/470pqmY0kY3/KZkVoFtOA4qW",
+            "00qaVba9XSatpFMJEXsp7K0pNu2C3TIJKuh7PDH80+44KEZi0O1g60iG7aw+SWHtKoGQhPteUDw0xZSl9GWUy9VzMh6N0woo1W5ZOfYAUUlZTESSw/8aoY8d",
+            "fT5nuJYsYHsfmQ+KRVx52/hRsfh73JM5USyuRQrTL9y/3AVzrCFWDmNt37F5HXH0+xwzqsd5HnDoOO7r7ABdnMmS0DifcS4E8/FBHodx+jfJt2JS7S3eCZs8",
+            "GbJ0+pIb5gfo9s6N8NuAs0PI8xmqP6lhoGqSp3VCW9bp3DC8LOtsqxpeNqFt+Jask+0N4LfSUZC/kS53TPJlnV+fhAt4Ku4XwO+eD4vFzfgRvHLS8ZbYoLt9",
+            "e2XHzop12XHObw4Lh4QXhZc2QwZwLztue+XOikG3s/1+530u573srvCy8Erb9spBN7AvtRlC97nud7pE1/ChF196+ZUUj6Ibb73hqnCRM3QPqpI7F9OA+zrH",
+            "ijT52J6QwQ859L2y9s90/loyemYHdrM8briie10uXyVx1Tpho8aH+AQAyCXv6XteDayd8fyHM0OG3NzeloM4KO8o5Wnm3Wy/yMH0jb06x9grbiyNpbE0lsbS",
+            "WPp/n4zzQ8Z5IeP9X8suqi0HVo2zKgl2KMM4s2GcS5phORdrnN0wzifNtNw/eaFI563Pu0bPBWFaNG70/BCm467R85OYHmH+GWdtjDMlNZbyGWeGtKX83Avm",
+            "vk7zvNeYNxlnm26vMuOZ8Wa/jzI63pI/rFpLfBEvMN7PBIuMN+r5OOOPMMOfM971V+4Xxvlxa1rI+sEKRr/GaBejfYxuZ/RBRh9n9GlGDzF6hNF3GT3FaCU7",
+            "tHQlo9cyupDRFYx+jdEuRvsY3c7og4w+zujTjB5i9Aij7042l9M4J7dy+fLF/jqYIV/vb1wIxxAb/fMa5i1sWNTYcLl1Epxjf3LR/vl4eu+Ki869X2EjH6B9",
+            "tppk2IP2DMPrGd7CHrAbyejxunJ2VjP5p2rN+K0MH7HgnQz3TzPj/dT/6cTTah4vttLrmtJzbqR/Y3ZSFjv/TuWnlsYNIx2x8X+EyvvIicDFdV1O/iMqf+VF",
+            "/fg0/estxQEYqcqB8rWlccJIfpvz1F++xPn0cnifDZ6zwR+2Odf8hhPxaWSkxYz/0sbOf9ngb9jgx+m502nkuMX+aRv5amd5HHe+pzgnlt4TRrrORn6xDd5u",
+            "g3fb4Jtt8Ptt8F02+G4b/JAN/nunXm/WdinYyJ+3wX2u8u0+C/DJzmmlcclINyKOJ0X95jiWJS70ZzrxtZrl36L5VpfitYw1CYwrKudPB7NDLHY2unQ7htJm",
+            "9qIWbez02+A5G/xHrLzWfviETf08a2PnNRv8fRvc4S5/3n+mG/tzlfmQLaTZ7vJ2Frht4gDWR2W1MSjB2fRIZzysRroty+nBKIHVSkUMw+F4DA8Iw5qpEukW",
+            "g3FFjgQbCKh3whH25HqwMXrsPaz2hqN4nl0BwzEp3J2QOiOJcEyVZCUcSffjYnsKF+BjYKKsBB77j4cjshwZCOOK8wDpkmFZMRxL9/YOgArHhTHowCQKTonJ",
+            "2HparBXrWle3hdvWhPDEfeiONa2rVy0HGF6h4TaB3RVC60h4Zfuty1rbw7euWLG+rSPc0bqsvS18UYxBC3/U3xrF0MKFBFjjDVr40AE9bMIEsUAEE3apWAIW",
+            "jtEyGpugx2mYDNAYB7NJMRZRI6XYDNM9I+LDrIDtwEI4TDfo4rtZ1BJJwvtGQzfMBWYBKGYQ+14LF3rB4jIsfkKYh1VNDzqx+INl1duHhYGY7neVccAaohGO",
+            "KVK4B9bQMXxj1a1wIxZPhmGHKAZVmYwZwSYWG52KwrKlwS16RI1JBsNgTIAerWKxAy1u9FzbWBE9Esfal2iEjAkcjcyxZMLH2JhvoYoemWMxj1E6JogElYFe",
+            "NdIJFJ4TSnuMq6SkisHuZDrYmY5D7B+MI0GodlFOEYr2RJQeEowNJMGCTlVZvwObWApG6vBMGO7hJgMKsqtUQkWL4GpQFfvhL+2xQVmiPT0o9rCxoicmj3Lg",
+            "IKMl92DjJCXK6gCDWpetqsfhMDg6uuimjWvwAHb+ouCepNI/uid6rtADCGz39eJGyP/F988M9u1nfC/axccSS/yokYJsbmzo28UrE0u8cuk7C7+F4FvQ0De+",
+            "j593lY/L9ZCL498mcPkb38/HLfHVFSxvj+U7VmDfoE7L97hBH3Fc2v+17FvX0De+bw26wuK/00K/wb6dDd74fjboRlLef8LFZbo5e8b3u0GP2tSfUf4+dm+Z",
+            "ZT3AoMb6gZvpWPUzfGxtmfjxGZfpP9+y6Pt9ZnrYUT6e2KDbrflPMdOEpcKsc6qdFn1jHm/QiZfx//uW/m8N8H7YssBhbb+HLPp28dt2+T9h0T96jZn6HZfO",
+            "/xfwO8H1P2sceIpcWn+vdfywiVu303/Jom8XL29X/tdZ/JjLsj5nxJl7bPI36HsszsxlWb87+hfqf8b6jsuynlT6fwoc5vU+j6X/nmftZ+gb8YpDc3Vad5n8",
+            "HQ6zvvFdrzH9M5fRr7LoG991Iw1mP+3aD+OwPfw6HvsOOG6jb23PGpa/dZnJ0J9h8/7gqbPc92WjThvYg/0FtgZqHb/G26xBttzM1sXclx7/J9vo//0SnV59",
+            "mffH/wDUNQQraEQAAA==",
         ].join(""),
     },
 };
@@ -339,6 +341,13 @@ function isUsableEmbeddedLinuxExecutable(filePath: string, sha256: string): bool
     } catch {
         return false;
     }
+}
+export function embeddedLinuxAssetSha256(name: EmbeddedLinuxAssetName): string {
+    return EMBEDDED_LINUX_ASSETS[name].sha256;
+}
+
+export function isValidEmbeddedLinuxAsset(name: EmbeddedLinuxAssetName, filePath: string): boolean {
+    return isUsableEmbeddedLinuxExecutable(filePath, EMBEDDED_LINUX_ASSETS[name].sha256);
 }
 
 function ensureEmbeddedLinuxRuntimeDirectory(directory: string): string {
@@ -1356,16 +1365,23 @@ export async function generateOptimalProtonConfig(
         const args = ["-username", requestedUsername, "-session-file", sessionFileToUse, "-output", staging, "-json", "-ipv6", "-exclude-countries", "BR"];
         if (options.autoPing !== false) args.push("-auto-ping");
         if (options.speedTest) {
+            // A prova HTTPS do Discord é diagnóstica: não pode reprovar uma rota que já formou o túnel e mediu tráfego.
             args.push("-speed-test", "-progress-json");
-            if (process.platform === "win32") args.push("-require-discord");
         }
         if (options.freeOnly !== false) args.push("-free-only");
         if (options.country?.trim()) args.push("-countries", options.country.trim());
 
         try {
+            // Os eventos "preparing" da verificação rápida nomeiam cada finalista
+            // testada: a sonda estendida de diagnóstico usa a primeira delas.
+            const probedServers: string[] = [];
+            const onProgress: RunConfgenOptions["onProgress"] = progress => {
+                if (progress.phase === "preparing" && progress.server && !probedServers.includes(progress.server)) probedServers.push(progress.server);
+                options.onProgress?.(progress);
+            };
             const result = options.speedTest
-                ? await runIsolatedSpeedSelection(args, options.signal, options.onProgress, options.log, dataDir)
-                : await runConfgen({ args, timeoutMs: 60_000, signal: options.signal, runtimeDirectory: dataDir, onProgress: options.onProgress, log: options.log });
+                ? await runIsolatedSpeedSelection(args, options.signal, onProgress, options.log, dataDir)
+                : await runConfgen({ args, timeoutMs: 60_000, signal: options.signal, runtimeDirectory: dataDir, onProgress, log: options.log });
             const measured = !options.speedTest || (finitePositive(result.json?.downloadMbps) && finitePositive(result.json?.uploadMbps));
             if (result.code === 0 && result.json?.success === true && measured && fs.existsSync(staging)) {
                 if (options.signal?.aborted) throw abortError();
@@ -1391,7 +1407,27 @@ export async function generateOptimalProtonConfig(
                     confFile: output,
                 };
             }
-            return { success: false, error: safeDiagnosticDetail(result.json?.error || result.stderr || "Falha ao gerar a configuração Proton.") };
+            const helperError = result.json && typeof result.json.error === "string" ? result.json.error : "";
+            let failure = safeDiagnosticDetail(helperError || result.stderr || "Falha ao gerar a configuração Proton.");
+            if (options.speedTest && !options.signal?.aborted && probedServers.length > 0 &&
+                helperError.includes("nenhum candidato respondeu pelo túnel")) {
+                // O helper só devolve o erro agregado quando descarta as doze
+                // finalistas — igual para falha de handshake, DNS, TLS ou HTTP.
+                // A sonda estendida separa as etapas para a falha não virar um
+                // descarte silencioso de todas as rotas.
+                const diagnosis = await diagnoseSpeedPreflightFailure({
+                    dataDir,
+                    sessionFile: sessionFileToUse,
+                    username: requestedUsername,
+                    server: probedServers[0],
+                    freeOnly: options.freeOnly,
+                    country: options.country,
+                    signal: options.signal,
+                    log: options.log,
+                });
+                if (diagnosis) failure = safeDiagnosticDetail(`${failure} · ${diagnosis}`, 700);
+            }
+            return { success: false, error: failure };
         } catch (error) {
             if (error instanceof Error && error.name === "AbortError") throw error;
             options.log?.("error", "falha ao gerar configuração Proton", { erro: logError(error) });
@@ -1403,6 +1439,48 @@ export async function generateOptimalProtonConfig(
     };
 
     return withProtonSession(dataDir, availability, (tempFile, commitIfUpdated) => runGeneration(tempFile, commitIfUpdated));
+}
+
+type SpeedPreflightDiagnosisOptions = {
+    dataDir: string;
+    sessionFile: string;
+    username: string;
+    server: string;
+    freeOnly?: boolean;
+    country?: string;
+    signal?: AbortSignal;
+    log?: RunConfgenOptions["log"];
+};
+
+/**
+ * Quando a verificação rápida descarta todas as finalistas, o helper devolve só
+ * o erro agregado — igual para falha de handshake, DNS, TLS ou HTTP. Esta sonda
+ * estendida (15 s do `-manual-probe`, contra os 6 s da verificação rápida) roda
+ * na finalista que respondeu ao ping e devolve a etapa que falhou; se ela
+ * responder pelo túnel, o descarte veio do limite de tempo e a rota continua
+ * aplicável pela seleção manual. O staging sai no finally: nenhuma troca de
+ * perfil acontece aqui.
+ */
+async function diagnoseSpeedPreflightFailure(options: SpeedPreflightDiagnosisOptions): Promise<string | null> {
+    const staging = path.join(options.dataDir, `.wireguard.conf.diagnostico-${randomUUID()}.tmp`);
+    const args = ["-username", options.username, "-session-file", options.sessionFile, "-server", options.server, "-output", staging, "-json", "-ipv6", "-manual-probe", "-exclude-countries", "BR"];
+    if (options.freeOnly !== false) args.push("-free-only");
+    if (options.country?.trim()) args.push("-countries", options.country.trim());
+    options.log?.("info", "sonda estendida da verificação rápida", { servidor: options.server });
+    try {
+        const result = await runConfgen({ args, timeoutMs: 45_000, runtimeDirectory: options.dataDir, signal: options.signal, log: options.log });
+        const json = result.json;
+        if (result.code === 0 && json?.success === true && json?.manual === true && json?.preflight === "success") {
+            return `sonda estendida (15 s) em ${options.server}: a rota respondeu pelo túnel — o limite de 6 s expirou nesta rede; escolha essa rota na seleção manual para aplicá-la.`;
+        }
+        return `sonda estendida (15 s) em ${options.server}: ${safeDiagnosticDetail(json?.error || result.stderr || "sem detalhe do helper", 200)}`;
+    } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return null;
+        options.log?.("warn", "sonda estendida da verificação rápida falhou", { erro: logError(error) });
+        return `sonda estendida (15 s) em ${options.server}: helper indisponível (${safeDiagnosticDetail(error, 120)})`;
+    } finally {
+        try { fs.rmSync(staging, { force: true }); } catch {}
+    }
 }
 
 export interface ProtonRouteCatalogEntry {

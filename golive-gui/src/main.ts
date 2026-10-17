@@ -6,6 +6,7 @@ import {
   type ManualTargetKind,
 } from './manual-target-selection';
 import { protonMeasurementText } from './proton-measurement';
+import { decideProtonSession, type ProtonSessionVerdict } from './proton-session';
 import { renderProtonCountryFlag } from './proton-flags';
 import { ProtonRouteSelect, type ProtonRouteOption } from './proton-route-select';
 import {
@@ -47,6 +48,10 @@ declare global {
       activate: () => Promise<void>;
       deactivate: () => Promise<void>;
       restoreInternet: () => Promise<{ ok: boolean; error?: string; residual?: string[]; dnsOk?: boolean; httpsOk?: boolean }>;
+      restartBypass: () => Promise<{ ok: boolean; error?: string }>;
+      checkUpdates: () => Promise<{ ok: boolean; error?: string; updateReady?: boolean; jaVerificando?: boolean }>;
+      getCompactWindow: () => Promise<boolean>;
+      setCompactWindow: (enabled: boolean) => Promise<boolean>;
       getStatus: () => Promise<string>;
       getLinuxPreflight: () => Promise<{
         ok: boolean;
@@ -54,6 +59,8 @@ declare global {
         archLike: boolean;
         dependencies: { missing: string[]; required: string[] };
         repairable?: boolean;
+        message?: string;
+        kernel?: { wireguard: string; running: string; modulesInstalled: boolean; userspace: boolean };
         elevation: { available: boolean; method: string };
         netns: { available: boolean };
         discord: {
@@ -111,6 +118,7 @@ declare global {
       onRefreshStartup: (callback: () => void) => void;
       onRefreshAutoUpdate: (callback: () => void) => void;
       onRefreshStatus: (callback: () => void) => void;
+      onTunnelStats: (callback: (stats: { downMbps: number | null; upMbps: number | null; receivedBytes: number | null; sentBytes: number | null; pingMs: number | null } | null) => void) => void;
       resizeWindow: (height: number) => void;
       importWgConf: () => Promise<{ success: boolean; fileName?: string; path?: string; error?: string } | null>;
       importWgConfFile: (filePath: string) => Promise<{ success: boolean; fileName?: string; path?: string; error?: string } | null>;
@@ -137,7 +145,7 @@ declare global {
       }>;
       getVpnMode: () => Promise<'proton' | 'custom'>;
       setVpnMode: (mode: 'proton' | 'custom') => Promise<string>;
-      checkProtonSession: (username?: string) => Promise<{ valid: boolean; username?: string; expiresIn?: string; error?: string }>;
+      checkProtonSession: (username?: string) => Promise<{ valid: boolean; username?: string; expiresIn?: string; code?: string; retryable?: boolean; error?: string }>;
       loginProton: (payload: { username: string; password?: string; twoFactorCode?: string }) => Promise<{ success: boolean; code?: string; message?: string; error?: string; retryable?: boolean }>;
       onProtonCaptchaStatus: (callback: (status: string) => void) => void;
       logoutProton: () => Promise<boolean>;
@@ -181,6 +189,8 @@ declare global {
         autoPing: boolean;
         autoFailover: boolean;
         routePreference?: 'auto' | 'manual';
+        /** Perfil Proton ja gerado no disco (username + wireguard.conf). */
+        profileReady?: boolean;
         routePreferencePrompt?: boolean;
         lastServer?: any;
       }>;
@@ -233,8 +243,8 @@ function applyPlatformCopy() {
   const closeHint = document.getElementById('closeHint');
   if (closeHint) {
     closeHint.textContent = isMac
-      ? 'Fechar a janela esconde o app na barra de menus, junto do relógio — para reverter tudo, saia pelo ícone de lá.'
-      : 'Fechar a janela esconde o app na bandeja, junto do relógio — para reverter tudo, saia pelo ícone de lá.';
+      ? 'Fechar a janela só esconde o app na barra de menus, perto do relógio. Para desligar tudo na hora, use Sair no ícone de lá.'
+      : 'Fechar a janela só esconde o app na bandeja, perto do relógio. Para desligar tudo na hora, use Sair no ícone de lá.';
   }
 }
 
@@ -274,10 +284,13 @@ const linuxPreflightCommand = document.getElementById('linuxPreflightCommand') a
 const toggleBtn = document.getElementById('toggleBtn') as HTMLButtonElement;
 const btnText = document.getElementById('btnText')!;
 const restoreInternetBtn = document.getElementById('restoreInternetBtn') as HTMLButtonElement | null;
+const restartBypassBtn = document.getElementById('restartBypassBtn') as HTMLButtonElement | null;
+const checkUpdatesBtn = document.getElementById('checkUpdatesBtn') as HTMLButtonElement | null;
 let hasSelectedConf = false;
 const appVersionEl = document.getElementById('appVersion');
 const startupToggle = document.getElementById('startupToggle') as HTMLInputElement;
 const autoUpdateToggle = document.getElementById('autoUpdateToggle') as HTMLInputElement | null;
+const compactWindowToggle = document.getElementById('compactWindowToggle') as HTMLInputElement | null;
 const autoFailoverToggle = document.getElementById('autoFailoverToggle') as HTMLInputElement | null;
 const updateChannelRow = document.getElementById('updateChannelRow') as HTMLElement | null;
 const updateChannelToggle = document.getElementById('updateChannelToggle') as HTMLInputElement | null;
@@ -413,6 +426,7 @@ function openSettingsDialog() {
   syncThemeOptions();
   void refreshAutoFailover();
   void refreshProtonRoutePreference();
+  void window.api.getCompactWindow().then((on) => { if (compactWindowToggle) compactWindowToggle.checked = on; }).catch(() => {});
   settingsDialog.hidden = false;
   settingsClose?.focus();
 }
@@ -426,6 +440,16 @@ settingsBtn?.addEventListener('click', openSettingsDialog);
 settingsBackdrop?.addEventListener('click', closeSettingsDialog);
 settingsClose?.addEventListener('click', closeSettingsDialog);
 
+const guideDialog = document.getElementById('guideDialog') as HTMLElement | null;
+const guideClose = document.getElementById('guideClose') as HTMLButtonElement | null;
+document.getElementById('guideBtn')?.addEventListener('click', () => {
+  if (!guideDialog) return;
+  guideDialog.hidden = false;
+  guideClose?.focus();
+});
+document.getElementById('guideBackdrop')?.addEventListener('click', () => { if (guideDialog) guideDialog.hidden = true; });
+guideClose?.addEventListener('click', () => { if (guideDialog) guideDialog.hidden = true; });
+
 document.querySelectorAll<HTMLButtonElement>('.theme-opt[data-theme-opt]').forEach((opt) => {
   opt.addEventListener('click', () => {
     applyTheme(opt.dataset.themeOpt === 'light' ? 'light' : 'dark');
@@ -437,11 +461,18 @@ document.querySelectorAll<HTMLButtonElement>('.theme-opt[data-theme-opt]').forEa
 
 // O warning do bypass ativo faz o conteudo crescer; a janela e fixa, entao reportamos a altura
 // necessaria para o main process redimensionar e nada ficar cortado.
+let fitWindowScheduled = false;
 function fitWindowToContent() {
+  // Rajadas de chamadas (fim de progresso, troca de estado, abertura de dialogo)
+  // nao podem empilhar varios rAF duplos: um agendamento pendente ja mede a
+  // altura final depois do layout.
+  if (fitWindowScheduled) return;
+  fitWindowScheduled = true;
   // Espera o layout apos hidden/details: sem rAF a medicao ainda ve a altura antiga
   // (Personalizado expandia e a janela nunca encolhia ao voltar para Tor/Gratuitas).
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      fitWindowScheduled = false;
       const container = document.querySelector('.container') as HTMLElement | null;
       if (!container) return;
       const height = Math.ceil(container.getBoundingClientRect().height + 1);
@@ -459,6 +490,7 @@ async function updateStatus() {
     statusIndicator.className = 'status-indicator';
     statusTag.className = 'status-tag';
     toggleBtn.classList.remove('loading', 'deactivate');
+    toggleBtn.title = '';
 
     if (status === 'ACTIVE') {
       statusText.innerText = 'GoLiveBypass está Ativo';
@@ -504,21 +536,44 @@ async function updateStatus() {
       const canPrepare = linuxPreflight.repairable === true;
       statusText.innerText = canPrepare
         ? `Dependências do Linux ausentes: ${missing.join(', ')}. Serão preparadas ao ativar.`
-        : (linuxPreflight.errors[0] || 'Ambiente Linux não está pronto');
+        : (linuxPreflight.message || linuxPreflight.errors[0] || 'Ambiente Linux não está pronto');
       statusTag.textContent = canPrepare ? 'Preparação necessária' : 'Corrija antes de ativar';
       statusTag.classList.add(canPrepare ? 'tag--warn' : 'tag--danger');
       toggleBtn.disabled = !canPrepare || !hasSelectedConf;
       btnText.innerText = canPrepare ? (hasSelectedConf ? 'Preparar e ativar' : 'Selecione uma Configuração') : 'Não Disponível';
       statusCard.hidden = false;
       if (linuxPreflightCommand) {
+        // Sem comando de instalacao nao ha o que executar: a mensagem do status ja diz o
+        // que fazer (ex.: reiniciar apos uma atualizacao de kernel).
         linuxPreflightCommand.textContent = linuxPreflight.installCommand
           ? `Comando: ${linuxPreflight.installCommand}`
-          : 'Verifique sudo/pkexec, iproute2 e o suporte a namespaces.';
-        linuxPreflightCommand.hidden = false;
+          : '';
+        linuxPreflightCommand.hidden = !linuxPreflight.installCommand;
+      }
+    } else if (isLinux && linuxPreflight?.kernel?.wireguard === 'missing' && linuxPreflight.kernel.userspace) {
+      // Sem módulo do kernel, o device sai no espaço do usuário: o usuário precisa saber por
+      // que o túnel funciona aqui e que isso não depende do módulo do kernel.
+      statusText.innerText = 'Discord pronto. Este kernel não tem o módulo WireGuard, então o túnel é de usuário (wireguard-go).';
+      statusTag.textContent = 'Pronto (usuário)';
+      statusTag.classList.add('tag--ok');
+      statusCard.hidden = false;
+      if (linuxPreflightCommand) linuxPreflightCommand.hidden = true;
+      if (!hasSelectedConf) {
+        toggleBtn.disabled = true;
+        toggleBtn.title = currentVpnMode === 'proton'
+          ? 'Conecte sua conta ProtonVPN para ativar'
+          : 'Importe uma configuração WireGuard (.conf) para ativar';
+        btnText.innerText = 'Selecione uma Configuração';
+      } else {
+        toggleBtn.disabled = false;
+        btnText.innerText = 'Ativar Bypass';
       }
     } else {
       if (!hasSelectedConf) {
         toggleBtn.disabled = true;
+        toggleBtn.title = currentVpnMode === 'proton'
+          ? 'Conecte sua conta ProtonVPN para ativar'
+          : 'Importe uma configuração WireGuard (.conf) para ativar';
         btnText.innerText = 'Selecione uma Configuração';
         statusText.innerText = currentVpnMode === 'proton'
           ? 'Conecte sua conta ProtonVPN abaixo para ativar'
@@ -547,7 +602,12 @@ async function updateStatus() {
   if (restoreInternetBtn) {
     restoreInternetBtn.hidden = window.api.platform !== 'win32' || currentState === 'ACTIVE';
   }
-  if (protonOptimizationInFlight || protonManualSelectionInFlight) toggleBtn.disabled = true;
+  if (restartBypassBtn) restartBypassBtn.hidden = window.api.platform !== 'win32' || currentState !== 'ACTIVE';
+  if (checkUpdatesBtn) checkUpdatesBtn.hidden = window.api.platform !== 'win32';
+  if (protonOptimizationInFlight || protonManualSelectionInFlight) {
+    toggleBtn.disabled = true;
+    toggleBtn.title = protonOptimizationInFlight ? 'Otimização de rota em andamento' : 'Aplicando a rota escolhida';
+  }
   // O botao de alvo manual ocupa o lugar da mensagem de "Discord nao encontrado" no Linux.
   syncManualTargetUi();
   // Depois de mudar o estado, ajusta a janela ao novo tamanho do conteudo.
@@ -621,6 +681,71 @@ restoreInternetBtn?.addEventListener('click', async () => {
     restoreInternetBtn.textContent = original || 'Restaurar internet';
     restoreInternetBtn.disabled = false;
   }
+});
+
+// Botao temporariamente ocupado: mostra o progresso e devolve o texto original no fim.
+async function runQuickAction(btn: HTMLButtonElement, busyText: string, action: () => Promise<string | null>) {
+  if (btn.disabled) return;
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = busyText;
+  try {
+    const done = await action();
+    if (done) {
+      btn.textContent = done;
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  } catch (err) {
+    alert(err instanceof Error ? err.message : String(err));
+  } finally {
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+}
+
+restartBypassBtn?.addEventListener('click', () => {
+  if (protonOptimizationInFlight || protonManualSelectionInFlight) return;
+  void runQuickAction(restartBypassBtn, 'Reiniciando…', async () => {
+    const result = await window.api.restartBypass();
+    await updateStatus();
+    if (!result.ok) throw new Error('Não foi possível reiniciar o bypass: ' + (result.error || 'erro desconhecido'));
+    return 'Reiniciado';
+  });
+});
+
+// Janela compacta: o main troca a largura e trava (ou destrava) o tamanho; a altura segue o conteudo.
+compactWindowToggle?.addEventListener('change', async () => {
+  if (!compactWindowToggle) return;
+  try {
+    await window.api.setCompactWindow(compactWindowToggle.checked);
+    fitWindowToContent();
+  } catch {
+    compactWindowToggle.checked = !compactWindowToggle.checked;
+  }
+});
+
+// Botao de icone: o feedback vai no tooltip (data-tip) e o icone gira enquanto procura.
+checkUpdatesBtn?.addEventListener('click', async () => {
+  if (checkUpdatesBtn.disabled) return;
+  const original = checkUpdatesBtn.dataset.tip ?? 'Checar updates';
+  checkUpdatesBtn.disabled = true;
+  checkUpdatesBtn.classList.add('is-busy');
+  checkUpdatesBtn.dataset.tip = 'Procurando…';
+  let resultado = original;
+  try {
+    const result = await window.api.checkUpdates();
+    resultado = !result.ok
+      ? (result.error || 'Não foi possível checar')
+      : result.jaVerificando ? 'Já está procurando, aguarde'
+      : result.updateReady ? 'Update pronto, veja a bandeja' : 'Você está na versão mais nova';
+  } catch {
+    resultado = 'Não foi possível checar';
+  }
+  checkUpdatesBtn.classList.remove('is-busy');
+  checkUpdatesBtn.dataset.tip = resultado;
+  await new Promise((r) => setTimeout(r, 3000));
+  checkUpdatesBtn.dataset.tip = original;
+  checkUpdatesBtn.disabled = false;
 });
 
 // Inicialização
@@ -731,6 +856,10 @@ const protonCloseMeasurementBtn = document.getElementById('protonCloseMeasuremen
 
 let currentVpnMode: 'proton' | 'custom' = 'proton';
 let isProtonAuthenticated = false;
+/** Perfil Proton no disco (username + wireguard.conf): o que a ativacao consome. */
+let protonProfileReady = false;
+const PROTON_SESSION_RETRY_MS = 20_000;
+let protonSessionRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let protonStateGeneration = 0;
 let protonOptimizationInFlight = false;
 let protonOptimizationRequestId = '';
@@ -760,7 +889,7 @@ let protonRouteDiscoveryRenderScheduled = false;
 let protonMeasurementDialogLastFocus: HTMLElement | null = null;
 
 function formatMbps(value?: number): string {
-  return Number.isFinite(value) && value! > 0 ? `${value!.toFixed(1)} Mbps` : '—';
+  return Number.isFinite(value) && value! > 0 ? `${value!.toFixed(1)} Mbps` : '-';
 }
 
 function formatProtonServerName(value?: string): string {
@@ -1054,7 +1183,7 @@ function updateMeasurementProgress(event: ProtonOptimizationProgress) {
       } else {
         if (status) status.textContent = event.status === 'success' ? 'Medido' : event.status === 'failed' ? 'Não foi possível medir' : 'Testando…';
         if (metrics) metrics.innerHTML = event.status === 'success'
-          ? `↓ ${formatMbps(event.downloadMbps)} · ↑ ${formatMbps(event.uploadMbps)} · ${event.pingMs ?? '—'} ms`
+          ? `↓ ${formatMbps(event.downloadMbps)} · ↑ ${formatMbps(event.uploadMbps)} · ${event.pingMs ?? '-'} ms`
           : event.status === 'failed' ? 'Tente novamente para medir esta rota' : '<i aria-hidden="true"></i>';
       }
       metrics?.classList.toggle('proton-measurement__metrics--pending', event.status === 'testing');
@@ -1407,6 +1536,22 @@ protonRoutePreferenceOptions.forEach((option) => {
 
 tabProton?.addEventListener('click', () => switchVpnMode('proton'));
 tabCustom?.addEventListener('click', () => switchVpnMode('custom'));
+// Reconfere a sessao depois de uma verificacao que falhou por rede/helper: o estado
+// "nao verificado" nao pode virar permanente no painel.
+function clearProtonSessionRetry() {
+  if (protonSessionRetryTimer === null) return;
+  clearTimeout(protonSessionRetryTimer);
+  protonSessionRetryTimer = null;
+}
+
+function scheduleProtonSessionRetry() {
+  if (protonSessionRetryTimer !== null) return;
+  protonSessionRetryTimer = setTimeout(() => {
+    protonSessionRetryTimer = null;
+    void refreshProtonState();
+  }, PROTON_SESSION_RETRY_MS);
+}
+
 async function refreshProtonState(forcePlan = false) {
   const generation = ++protonStateGeneration;
   try {
@@ -1427,12 +1572,30 @@ async function refreshProtonState(forcePlan = false) {
       : null;
     if (autoFailoverToggle) autoFailoverToggle.checked = s.autoFailover !== false;
     if (protonCountrySelect) renderProtonMeasuredRouteOptions();
+    protonProfileReady = s.profileReady === true;
 
     if (s.username) {
       if (protonUsername) protonUsername.value = s.username;
-      const chk = await window.api.checkProtonSession(s.username);
-      if (generation !== protonStateGeneration) return;
-      if (chk.valid) {
+      let verdict: ProtonSessionVerdict = 'unverified';
+      try {
+        const chk = await window.api.checkProtonSession(s.username);
+        if (generation !== protonStateGeneration) return;
+        verdict = decideProtonSession(chk);
+        if (verdict === 'unverified') {
+          // Verificacao indisponivel agora (rede/helper): a conta e o perfil seguem
+          // como estavam e o botao de ativar nao e bloqueado por isso (#312/#316/#317).
+          scheduleProtonSessionRetry();
+          setProtonFeedback('Não consegui confirmar sua sessão Proton agora. A ativação com a rota já preparada continua disponível.', 'busy');
+        }
+      } catch (error) {
+        if (generation !== protonStateGeneration) return;
+        console.error('Falha ao consultar a sessão Proton:', error);
+        scheduleProtonSessionRetry();
+        setProtonFeedback('Não consegui confirmar sua sessão Proton agora. Verificando de novo em instantes…', 'busy');
+      }
+      if (verdict === 'unverified') return;
+      if (verdict === 'authenticated') {
+        clearProtonSessionRetry();
         isProtonAuthenticated = true;
         if (protonAuthForm) protonAuthForm.hidden = true;
         if (protonConnectedView) protonConnectedView.hidden = false;
@@ -1451,6 +1614,7 @@ async function refreshProtonState(forcePlan = false) {
         return;
       }
     }
+    clearProtonSessionRetry();
     syncProtonRoutePreferenceUi(protonRoutePreference);
     protonRememberedManualRoute = null;
     protonSelectedRoute = null;
@@ -1465,17 +1629,11 @@ async function refreshProtonState(forcePlan = false) {
     if (protonConnectedView) protonConnectedView.hidden = true;
   } catch (err) {
     if (generation !== protonStateGeneration) return;
+    // Nao consegui ler o estado Proton (IPC/settings): isso tambem nao e logout.
+    // Mantem a ultima conta conhecida, avisa e tenta de novo em instantes.
     console.error('Falha ao verificar sessão Proton:', err);
-    isProtonAuthenticated = false;
-    protonSelectedRoute = null;
-    clearProtonManualMeasurement();
-    clearProtonMeasuredRoutes();
-    protonRouteDiscoveryAfterOptimizationPending = false;
-    protonRouteDiscoveryMeasurePingPending = false;
-    protonRouteDiscoveryRetryPending = false;
-    renderProtonPlan({ success: false, status: 'unknown' });
-    if (protonAuthForm) protonAuthForm.hidden = false;
-    if (protonConnectedView) protonConnectedView.hidden = true;
+    scheduleProtonSessionRetry();
+    setProtonFeedback('Não consegui consultar sua conta Proton agora. Verificando de novo em instantes…', 'busy');
   }
 }
 
@@ -1890,6 +2048,11 @@ async function optimizeProtonRoute(onStartup = false, speedTest = true) {
     await updateStatus();
   } finally {
     stopProtonOptimizeAnimation();
+    // O flag libera o botao de ativar em updateStatus() e os gatilhos que o
+    // ignoram enquanto a medicao roda (ativar, trocar aba/rota, sair da conta).
+    // Sem este reset, qualquer otimizacao - inclusive a automatica da abertura -
+    // deixava o botao "Ativar Bypass" desativado ate reiniciar o programa.
+    protonOptimizationInFlight = false;
     protonOptimizationRequestId = '';
     if (tabProton) tabProton.disabled = false;
     if (tabCustom) tabCustom.disabled = false;
@@ -1928,7 +2091,10 @@ window.addEventListener('beforeunload', () => {
 
 async function atualizarStatusWgConf() {
   if (currentVpnMode === 'proton') {
-    hasSelectedConf = isProtonAuthenticated;
+    // O perfil Proton no disco (username + wireguard.conf) e o que a ativacao consome.
+    // Depender so da verificacao de sessao bloqueava o botao quando ela falhava por
+    // rede/helper com a conta ainda conectada (#312/#316/#317).
+    hasSelectedConf = isProtonAuthenticated || protonProfileReady;
   } else {
     try {
       const nome = await window.api.getWgConfName();
@@ -2085,9 +2251,9 @@ if (vpnTestBtn && vpnTestFeedback) {
           const geo = r.exitInfo.country ? ` [${r.exitInfo.country}]` : '';
           partes.push(`saída ativa ${r.exitInfo.ip}${geo}`);
         } else if (!r.active) {
-          partes.push('bypass inativo — não foi possível confirmar a saída real');
+          partes.push('bypass inativo, não foi possível confirmar a saída real');
         }
-        vpnTestFeedback.textContent = `OK — ${partes.join(' · ')}`;
+        vpnTestFeedback.textContent = `OK: ${partes.join(' · ')}`;
       } else {
         vpnTestFeedback.classList.add('vpn-test-feedback--bad');
         vpnTestFeedback.textContent = r.error ?? 'Falha no teste';
@@ -2145,22 +2311,11 @@ window.api.onProtonFailoverNotice?.((notice) => {
 });
 
 // ---------------------------------------------------------------------------
-// Modo desenvolvedor: so o toggle aqui. Logs e report ficam numa janela aparte.
-// So existe no modo npm run dev: em producao o toggle some e a janela de logs
-// nem abre (o main recusa o pedido quando empacotado).
+// Modo desenvolvedor: so o toggle aqui (nas Configuracoes). Logs, trafego do tunel e
+// report ficam numa janela aparte.
 // ---------------------------------------------------------------------------
-const IS_DEV = import.meta.env.DEV;
 const DEV_KEY = 'golivebypass-dev-mode';
 const devModeToggle = document.getElementById('devModeToggle') as HTMLInputElement;
-const devModeHint = document.getElementById('devModeHint') as HTMLElement;
-
-if (!IS_DEV) {
-  // Producao nao tem modo dev: a linha inteira (switch + texto) some.
-  const devModeRow = document.getElementById('devModeRow');
-  if (devModeRow) devModeRow.hidden = true;
-  devModeToggle.hidden = true;
-  devModeHint.hidden = true;
-}
 
 async function setDevMode(on: boolean) {
   try {
@@ -2173,7 +2328,6 @@ async function setDevMode(on: boolean) {
   } catch (err) {
     console.error(err);
   }
-  devModeHint.hidden = !on;
   fitWindowToContent();
 }
 
@@ -2183,7 +2337,6 @@ devModeToggle.addEventListener('change', () => {
 
 window.api.onDevLogWindowClosed?.(() => {
   devModeToggle.checked = false;
-  devModeHint.hidden = true;
   try {
     localStorage.setItem(DEV_KEY, '0');
   } catch {
@@ -2193,7 +2346,7 @@ window.api.onDevLogWindowClosed?.(() => {
 });
 
 try {
-  if (IS_DEV && localStorage.getItem(DEV_KEY) === '1') {
+  if (localStorage.getItem(DEV_KEY) === '1') {
     devModeToggle.checked = true;
     void setDevMode(true);
   }
@@ -2223,6 +2376,44 @@ async function retryProtonRouteDiscoveryAfterBoot(): Promise<void> {
 window.api.onRefreshStartup(refreshStartup);
 window.api.onRefreshStatus(() => {
   void updateStatus().then(() => retryProtonRouteDiscoveryAfterBoot());
+});
+
+// Card de trafego: o main manda uma amostra a cada 2s com o tunel ativo, e null quando ele cai.
+const trafficCard = document.getElementById('trafficCard') as HTMLElement | null;
+function formatBytes(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+function setTrafficText(id: string, text: string) {
+  const el = document.getElementById(id);
+  if (el && el.textContent !== text) {
+    el.textContent = text;
+    el.classList.remove('traffic-tick');
+    void el.offsetWidth; // reinicia a animacao de troca de valor
+    el.classList.add('traffic-tick');
+  }
+}
+window.api.onTunnelStats((stats) => {
+  if (!trafficCard) return;
+  const visivel = Boolean(stats);
+  if (trafficCard.hidden === visivel) {
+    trafficCard.hidden = !visivel;
+    fitWindowToContent();
+  }
+  if (!stats) return;
+  // Sem o adaptador ProTUN nao ha contadores de bytes: o card mostra so o ping, sem celulas vazias.
+  const temContadores = stats.upMbps !== null && stats.downMbps !== null && stats.sentBytes !== null && stats.receivedBytes !== null;
+  const mudouLayout = trafficCard.classList.contains('traffic-card--ping-only') === temContadores;
+  trafficCard.classList.toggle('traffic-card--ping-only', !temContadores);
+  trafficCard.querySelectorAll<HTMLElement>('[data-counters]').forEach((cell) => { cell.hidden = !temContadores; });
+  if (mudouLayout) fitWindowToContent();
+  if (temContadores) {
+    setTrafficText('trafficUp', stats.upMbps!.toFixed(1));
+    setTrafficText('trafficDown', stats.downMbps!.toFixed(1));
+    setTrafficText('trafficSent', formatBytes(stats.sentBytes!));
+    setTrafficText('trafficReceived', formatBytes(stats.receivedBytes!));
+  }
+  setTrafficText('trafficPing', stats.pingMs === null ? 'sem resposta' : `${stats.pingMs} ms`);
+  trafficCard.classList.toggle('traffic-card--slow', stats.pingMs !== null && stats.pingMs > 150);
 });
 
 // ---------------------------------------------------------------------------
@@ -2304,6 +2495,7 @@ bugCancel?.addEventListener('click', closeBugDialog);
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && bugDialog && !bugDialog.hidden) closeBugDialog();
   if (e.key === 'Escape' && settingsDialog && !settingsDialog.hidden) closeSettingsDialog();
+  if (e.key === 'Escape' && guideDialog && !guideDialog.hidden) guideDialog.hidden = true;
 });
 
 bugSubmit?.addEventListener('click', async () => {

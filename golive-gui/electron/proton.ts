@@ -154,9 +154,9 @@ export function recordManualMeasurementProgress(
     speedStatus: 'not-tested',
   };
   const status = progress.status === 'success' ? 'success' : progress.status === 'failed' ? 'failed' : 'pending';
-  if (Number.isFinite(progress.pingMs) && progress.pingMs > 0 && progress.pingMs < 999) current.pingMs = progress.pingMs;
-  if (Number.isFinite(progress.downloadMbps) && progress.downloadMbps > 0) current.downloadMbps = progress.downloadMbps;
-  if (Number.isFinite(progress.uploadMbps) && progress.uploadMbps > 0) current.uploadMbps = progress.uploadMbps;
+  if (typeof progress.pingMs === 'number' && Number.isFinite(progress.pingMs) && progress.pingMs > 0 && progress.pingMs < 999) current.pingMs = progress.pingMs;
+  if (typeof progress.downloadMbps === 'number' && Number.isFinite(progress.downloadMbps) && progress.downloadMbps > 0) current.downloadMbps = progress.downloadMbps;
+  if (typeof progress.uploadMbps === 'number' && Number.isFinite(progress.uploadMbps) && progress.uploadMbps > 0) current.uploadMbps = progress.uploadMbps;
   if (progress.phase === 'ping') current.pingStatus = status;
   else if (progress.phase === 'preparing') current.preflightStatus = status;
   else if (progress.phase === 'testing') current.speedStatus = status;
@@ -440,12 +440,110 @@ function ensureInstallDir(installDir: string) {
   fs.mkdirSync(installDir, { recursive: true });
 }
 
+/**
+ * Contrato de `-check-session`. `retryable` marca falha de verificacao (rede,
+ * timeout, helper ausente) que NAO invalida a sessao: a GUI mantem o usuario
+ * autenticado e a ativacao continua disponivel com o perfil ja gerado.
+ */
+export type ProtonSessionCheckCode = 'INVALID_SESSION' | 'NETWORK_ERROR' | 'TIMEOUT' | 'MISSING_EXECUTABLE' | 'SESSION_PERSISTENCE' | 'UNKNOWN';
+
+export interface ProtonSessionCheckResult {
+  valid: boolean;
+  username?: string;
+  expiresIn?: string;
+  code?: ProtonSessionCheckCode;
+  retryable?: boolean;
+  error?: string;
+}
+
+const PROTON_SESSION_CODES: Record<ProtonSessionCheckCode, true> = {
+  INVALID_SESSION: true,
+  NETWORK_ERROR: true,
+  TIMEOUT: true,
+  MISSING_EXECUTABLE: true,
+  SESSION_PERSISTENCE: true,
+  UNKNOWN: true,
+};
+
+/** Codigos que descrevem falha de verificacao, nao sessao invalida. */
+const RETRYABLE_SESSION_CODES: Record<ProtonSessionCheckCode, boolean> = {
+  INVALID_SESSION: false,
+  NETWORK_ERROR: true,
+  TIMEOUT: true,
+  MISSING_EXECUTABLE: true,
+  SESSION_PERSISTENCE: true,
+  UNKNOWN: false,
+};
+
+const INVALID_SESSION_MESSAGE = 'Sessão inválida ou não encontrada.';
+
+function isProtonSessionCode(value: unknown): value is ProtonSessionCheckCode {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PROTON_SESSION_CODES, value);
+}
+
+export function sessionFailure(code: ProtonSessionCheckCode, message: string): ProtonSessionCheckResult {
+  return { valid: false, code, retryable: RETRYABLE_SESSION_CODES[code], error: message };
+}
+
+/**
+ * Traduz o JSON de `-check-session` para o renderer. Helpers anteriores ao campo
+ * `code` continuam corretos: a mensagem de falha temporaria ja existia e e a unica
+ * pista disponivel neles, entao ela e reconhecida explicitamente em vez de virar
+ * "sessao invalida" e deslogar o usuario por uma oscilacao de rede.
+ */
+export function normalizeProtonSessionResult(value: unknown, fallbackUsername = ''): ProtonSessionCheckResult {
+  if (!value || typeof value !== 'object') return sessionFailure('UNKNOWN', INVALID_SESSION_MESSAGE);
+  const fields = value as Record<string, unknown>;
+
+  if (fields.valid === true) {
+    const username = typeof fields.username === 'string' && fields.username.trim() ? fields.username.trim() : fallbackUsername;
+    return {
+      valid: true,
+      username: username || undefined,
+      expiresIn: typeof fields.expiresIn === 'string' ? fields.expiresIn : undefined,
+    };
+  }
+
+  const message = typeof fields.error === 'string' && fields.error.trim() ? fields.error.trim() : INVALID_SESSION_MESSAGE;
+  const code = isProtonSessionCode(fields.code)
+    ? fields.code
+    : /temporariamente/i.test(message) ? 'NETWORK_ERROR' : 'INVALID_SESSION';
+  const result = sessionFailure(code, message);
+  if (typeof fields.retryable === 'boolean') result.retryable = fields.retryable;
+  return result;
+}
+
+async function runSessionCheck(exePath: string, sessionFile: string, username: string): Promise<ProtonSessionCheckResult> {
+  try {
+    const res = await runConfgen({
+      args: [
+        '-username',
+        username,
+        '-session-file',
+        sessionFile,
+        '-check-session',
+        '-json',
+      ],
+      timeoutMs: 10000,
+      exePath,
+    });
+    if (res.json !== undefined) return normalizeProtonSessionResult(res.json, username);
+    const classified = classifyProtonError(res.stderr || res.stdout || '', res.stderr, res.stdout);
+    const code: ProtonSessionCheckCode = res.code === null ? 'MISSING_EXECUTABLE' : classified.code === 'TIMEOUT' ? 'TIMEOUT' : 'UNKNOWN';
+    return sessionFailure(code, classified.message);
+  } catch (error) {
+    // Timeout/abort do sidecar e falha de verificacao, nunca sessao invalida.
+    const classified = classifyProtonError(error);
+    return sessionFailure(classified.code === 'TIMEOUT' ? 'TIMEOUT' : 'NETWORK_ERROR', classified.message);
+  }
+}
+
 export async function checkProtonSession(
   installDir: string,
   username: string
-): Promise<{ valid: boolean; username?: string; expiresIn?: string; error?: string }> {
+): Promise<ProtonSessionCheckResult> {
   if (!username) {
-    return { valid: false, error: 'Usuário não especificado.' };
+    return { valid: false, code: 'INVALID_SESSION', retryable: false, error: 'Usuário não especificado.' };
   }
 
   const sessionFile = getProtonSessionFile(installDir);
@@ -454,33 +552,11 @@ export async function checkProtonSession(
   try {
     exePath = await ensureProtonConfgen(installDir);
   } catch (error) {
-    return { valid: false, error: error instanceof Error ? error.message : String(error) };
+    // Helper indisponivel: nao ha verificacao, e isso nao invalida a sessao salva.
+    const classified = classifyProtonError(error);
+    return sessionFailure(classified.code === 'MISSING_EXECUTABLE' ? 'MISSING_EXECUTABLE' : 'NETWORK_ERROR', classified.message);
   }
-  const res = await runConfgen({
-    args: [
-      '-username',
-      username,
-      '-session-file',
-      sessionFile,
-      '-check-session',
-      '-json',
-    ],
-    timeoutMs: 10000,
-    exePath,
-  });
-
-  if (res.json && res.json.valid) {
-    return {
-      valid: true,
-      username: res.json.username || username,
-      expiresIn: res.json.expiresIn,
-    };
-  }
-
-  return {
-    valid: false,
-    error: res.json?.error || res.stderr || 'Sessão inválida ou não encontrada.',
-  };
+  return runSessionCheck(exePath, sessionFile, username);
 }
 
 /**
@@ -1057,7 +1133,7 @@ export async function generateProtonRouteCatalog(
     if (!server || server.length > 200 || !country || country.length > 32 || city.length > 200 ||
       !tier || tier.length > 80 || !Number.isFinite(load) || load < 0 || load > 100 ||
       !Number.isFinite(score) || score < 0 ||
-      (raw.pingMs !== undefined && (!Number.isFinite(pingMs) || pingMs <= 0 || pingMs >= 999))) {
+      (pingMs !== undefined && (!Number.isFinite(pingMs) || pingMs <= 0 || pingMs >= 999))) {
       invalidRoute = true;
       continue;
     }

@@ -5,10 +5,10 @@
 // Formato das linhas (grep-friendly):
 //   [HH:MM:SS] [nivel][categoria] mensagem | chave=valor chave=valor
 //
-// O patchConsole() intercepta console.log/warn/error do main process uma unica vez,
-// entao todo o logging que ja existe ([tor], [updater], [restore], [settings]) passa
-// a persistir em arquivo sem tocar nos pontos de chamada. A tag entre colchetes vira
-// a categoria da linha.
+// O patchConsole() intercepta console.log/info/warn/error do main process uma
+// unica vez, entao todo o logging que ja existe ([tor], [updater], [restore],
+// [settings]) passa a persistir em arquivo sem tocar nos pontos de chamada. A
+// tag entre colchetes vira a categoria da linha.
 
 import fs from "fs";
 import path from "path";
@@ -28,6 +28,9 @@ interface Entrada {
 
 let arquivo = "";
 const ring: Entrada[] = [];
+// Tamanho conhecido do arquivo atual: evita existsSync+statSync a cada linha
+// (eram tres syscalls sincronos por evento de log na thread principal).
+let tamanhoArquivo = 0;
 
 export function stamp(): string {
   return new Date().toTimeString().slice(0, 8);
@@ -51,10 +54,14 @@ export function formatLine(
 function gravar(linha: string) {
   if (!arquivo) return;
   try {
-    if (fs.existsSync(arquivo) && fs.statSync(arquivo).size > MAX_FILE_BYTES) {
-      fs.writeFileSync(arquivo, fs.readFileSync(arquivo, "utf8").slice(-MAX_FILE_BYTES / 2));
+    const bytes = Buffer.byteLength(linha, "utf8") + 1;
+    if (tamanhoArquivo + bytes > MAX_FILE_BYTES) {
+      const conteudo = fs.readFileSync(arquivo, "utf8").slice(-MAX_FILE_BYTES / 2);
+      fs.writeFileSync(arquivo, conteudo);
+      tamanhoArquivo = Buffer.byteLength(conteudo, "utf8");
     }
     fs.appendFileSync(arquivo, linha + "\n");
+    tamanhoArquivo += bytes;
   } catch {
     // Ficar sem registro e ruim; derrubar o app por causa do registro e pior.
   }
@@ -131,8 +138,14 @@ export function initLogger(dir: string) {
     if (/^\/(proc|sys)(\/|$)/.test(dir)) throw new Error("caminho virtual nao gravavel");
     fs.mkdirSync(dir, { recursive: true });
     arquivo = path.join(dir, "gui.log");
+    try {
+      tamanhoArquivo = fs.statSync(arquivo).size;
+    } catch {
+      tamanhoArquivo = 0; // primeira gravacao cria o arquivo
+    }
   } catch {
     arquivo = ""; // sem pasta de dados, segue so o ring em memoria
+    tamanhoArquivo = 0;
   }
 }
 
@@ -159,16 +172,19 @@ export function getRecent(): string {
 export function _resetForTests() {
   ring.length = 0;
   arquivo = "";
+  tamanhoArquivo = 0;
 }
 
 // ---------------------------------------------------------------------------
 // Tee do console: mantem a saida original (dev/terminal) e persiste no logger.
 // ---------------------------------------------------------------------------
 
+type ConsoleMethod = (...a: unknown[]) => void;
 let consolaOriginal: {
-  log: typeof console.log;
-  warn: typeof console.warn;
-  error: typeof console.error;
+  log: ConsoleMethod;
+  info: ConsoleMethod;
+  warn: ConsoleMethod;
+  error: ConsoleMethod;
 } | null = null;
 
 // Tags que ja existem espalhadas no codigo -> categorias canonicas do formato.
@@ -190,38 +206,48 @@ function stringifyArg(a: unknown): string {
 }
 
 export function patchConsole(alvo: {
-  log: (...a: unknown[]) => void;
-  warn: (...a: unknown[]) => void;
-  error: (...a: unknown[]) => void;
+  log: ConsoleMethod;
+  info: ConsoleMethod;
+  warn: ConsoleMethod;
+  error: ConsoleMethod;
 } = console): () => void {
   if (consolaOriginal) return () => {};
   consolaOriginal = {
-    log: alvo.log.bind(alvo),
-    warn: alvo.warn.bind(alvo),
-    error: alvo.error.bind(alvo),
+    log: alvo.log,
+    info: alvo.info,
+    warn: alvo.warn,
+    error: alvo.error,
   };
 
   const interceptar =
-    (nivel: Nivel, original: (...a: unknown[]) => void) =>
-    (...args: unknown[]) => {
-      original(...args);
-      try {
-        const texto = args.map(stringifyArg).join(" ");
-        const m = /^\[([A-Za-z-]+)\]/.exec(texto);
-        const cat = m ? (CAT_MAP[m[1].toLowerCase()] ?? m[1].toLowerCase()) : "app";
-        escrever(nivel, cat, m ? texto.slice(m[0].length).trimStart() : texto);
-      } catch {
-        // O tee jamais pode propagar erro pra dentro do app que esta logando.
-      }
+    (nivel: Nivel, original: ConsoleMethod) => {
+      const chamadaOriginal = original.bind(alvo);
+      return (...args: unknown[]) => {
+        try {
+          chamadaOriginal(...args);
+        } catch {
+          // A saida original pode falhar (por exemplo, EIO/EPIPE); o tee segue.
+        }
+        try {
+          const texto = args.map(stringifyArg).join(" ");
+          const m = /^\[([A-Za-z-]+)\]/.exec(texto);
+          const cat = m ? (CAT_MAP[m[1].toLowerCase()] ?? m[1].toLowerCase()) : "app";
+          escrever(nivel, cat, m ? texto.slice(m[0].length).trimStart() : texto);
+        } catch {
+          // O tee jamais pode propagar erro pra dentro do app que esta logando.
+        }
+      };
     };
 
   alvo.log = interceptar("info", consolaOriginal.log);
+  alvo.info = interceptar("info", consolaOriginal.info);
   alvo.warn = interceptar("warn", consolaOriginal.warn);
   alvo.error = interceptar("error", consolaOriginal.error);
 
   return () => {
     if (!consolaOriginal) return;
     alvo.log = consolaOriginal.log;
+    alvo.info = consolaOriginal.info;
     alvo.warn = consolaOriginal.warn;
     alvo.error = consolaOriginal.error;
     consolaOriginal = null;

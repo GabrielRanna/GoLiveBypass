@@ -9,7 +9,7 @@ const workflowSource = readFileSync(new URL("../.github/workflows/build-gui.yml"
 
 test("a versão usada pelo updater acompanha o manifest reescrito no asset", () => {
     const nativeFallback = nativeSource.match(/const PLUGIN_VERSION = "([^"]+)"/)?.[1];
-    assert.equal(nativeFallback, "2.0.6");
+    assert.equal(nativeFallback, "2.0.11");
     assert.match(workflowSource, /sed -i .*manifest\.json/);
     assert.doesNotMatch(workflowSource, /native\.ts/);
     assert.match(nativeSource, /function readInstalledPluginVersion\(/);
@@ -49,14 +49,22 @@ test("a substituição revalida a origem local depois do download", () => {
 
 test("o journal é gravado antes da troca e recupera um checkout interrompido", () => {
     const updateBlock = nativeSource.slice(nativeSource.indexOf("async function performPluginUpdateLocked(policy"), nativeSource.indexOf("function runPluginUpdate(policy"));
-    const intent = updateBlock.indexOf('phase: "preparing"');
-    const move = updateBlock.indexOf("renameSync(target, backup)");
-    const prepared = updateBlock.indexOf('phase: "prepared"');
+    // Na sessão nada é movido nem compilado: o download validado vira journal "staged".
+    assert.match(updateBlock, /phase: "staged"[\s\S]*stagedPath: extracted\.source/);
+    assert.doesNotMatch(updateBlock, /renameSync\(target, backup\)/);
+    assert.doesNotMatch(updateBlock, /rebuildUserplugin\(/);
+
+    // A troca e o build ficam para o boot, e ali a intenção precede o primeiro rename.
+    const applyBlock = nativeSource.slice(nativeSource.indexOf("async function applyStagedPluginUpdate"), nativeSource.indexOf("async function recoverInterruptedPluginUpdate"));
+    const intent = applyBlock.indexOf('phase: "preparing"');
+    const move = applyBlock.indexOf("renameSync(target, backup)");
+    const prepared = applyBlock.indexOf('phase: "prepared"');
     assert.ok(intent >= 0 && move > intent, "a intenção precisa preceder o primeiro rename");
     assert.ok(prepared > move, "o estado preparado só pode vir depois da troca");
-    assert.match(nativeSource, /type PendingPluginUpdatePhase = "preparing" \| "prepared" \| "rolling-back"/);
-    assert.match(nativeSource, /function recoverInterruptedPluginUpdate\(/);
-    assert.match(nativeSource, /if \(hasBackup\)[\s\S]*renameSync\(backup, target\)[\s\S]*rebuildUserplugin\(projectRoot\)/);
+    assert.ok(applyBlock.indexOf("await rebuildUserplugin(projectRoot)") > move, "o build roda depois da troca");
+    assert.match(nativeSource, /type PendingPluginUpdatePhase = "preparing" \| "prepared" \| "rolling-back" \| "staged"/);
+    assert.match(nativeSource, /async function recoverPendingUpdateInternal\(options: \{ allowStaged\?: boolean \}\)/);
+    assert.match(nativeSource, /if \(hasBackup\)[\s\S]*renameSync\(backup, target\)[\s\S]*await rebuildUserplugin\(projectRoot\)/);
     assert.match(nativeSource, /update interrompido deixou a árvore nova sem backup/);
 });
 
@@ -106,7 +114,7 @@ test("um preparo no checkout não é confundido com reload do processo corrente"
 });
 
 test("reconfiguração idêntica preserva o voo, mas mudança real aborta downloads antigos", () => {
-    const configureBlock = nativeSource.slice(nativeSource.indexOf("export function configurePluginUpdates"), nativeSource.indexOf("export function getPluginUpdateStatus"));
+    const configureBlock = nativeSource.slice(nativeSource.indexOf("export async function configurePluginUpdates"), nativeSource.indexOf("export async function getPluginUpdateStatus"));
     assert.match(configureBlock, /if \(changed\) \{[\s\S]*pluginUpdatePolicyRevision\+\+[\s\S]*pluginUpdateCheckFlight\?\.controller\.abort\(\)[\s\S]*pluginUpdateFlight\?\.controller\.abort\(\)/);
     assert.doesNotMatch(configureBlock.slice(0, configureBlock.indexOf("if (changed) {")), /pluginUpdatePolicyRevision\+\+/);
 });
@@ -117,7 +125,8 @@ test("downloads e inspeção do arquivo têm cancelamento e prazo absoluto", () 
     assert.match(nativeSource, /setTimeout\(\(\) => abortRequest\("update request timed out"\), remaining\)/);
     assert.match(nativeSource, /options\.signal\?\.addEventListener\("abort", onAbort/);
     assert.match(nativeSource, /deadlineAt \}/);
-    assert.match(nativeSource, /timeout: PLUGIN_UPDATE_TIMEOUT_MS/);
+    assert.match(nativeSource, /timeoutMs: PLUGIN_UPDATE_TIMEOUT_MS/);
+    assert.doesNotMatch(nativeSource, /execFileSync\(\s*"(?:unzip|tar|pnpm)"/);
     assert.match(nativeSource, /try \{\n\s+void downloadBytes\(response\.headers\.location/);
     assert.match(nativeSource, /catch \(error\) \{\n\s+rejectOnce\(error\);\n\s+\}/);
     assert.match(nativeSource, /controller\.abort\(\);\n        throw error;/);
@@ -150,10 +159,19 @@ test("backup beta ausente preserva o marcador para recuperação posterior", () 
 test("marcador legado é preservado fora do slot ativo sem bloquear nova preparação", () => {
     const legacyStart = nativeSource.indexOf("if (typeof sourceDigest !== \"string\")");
     const legacyBlock = nativeSource.slice(legacyStart, nativeSource.indexOf("\n    try {", legacyStart));
-    assert.match(nativeSource, /function quarantineLegacyPendingUpdate\(pending: PendingPluginUpdate\)/);
-    assert.match(legacyBlock, /quarantineLegacyPendingUpdate\(pending\)/);
+    assert.match(nativeSource, /function quarantinePendingUpdate\(\s*pending: PendingPluginUpdate,\s*reason: string,/);
+    assert.match(legacyBlock, /quarantinePendingUpdate\(pending, "legacy"\)/);
     assert.match(legacyBlock, /return \{ pending: null, trusted: null, error: null \}/);
     assert.doesNotMatch(legacyBlock, /clearPendingUpdate|rmSync/);
+});
+
+test("preparação presa vai para quarentena em vez de travar toda consulta", () => {
+    // Digest divergente e staging ausente antes deixavam o marcador no slot ativo e toda
+    // consulta do painel repetia o mesmo erro. Agora o marcador sai para quarentena (com o
+    // backup órfão, no caso do digest) e a nova preparação é liberada.
+    assert.match(nativeSource, /quarantinePendingUpdate\(pending, "stale-source", \{ projectRoot, removeBackup: true \}\)/);
+    assert.match(nativeSource, /quarantinePendingUpdate\(pending, "missing-staging"\)/);
+    assert.match(nativeSource, /rmSync\(safeBackupPath\(options\.projectRoot, pending\.backupName\), \{ recursive: true, force: true \}\)/);
 });
 
 test("marcador novo prova a árvore preparada e legado exige nova preparação", () => {
@@ -174,7 +192,7 @@ test("canal pendente é exposto separadamente do canal selecionado", () => {
 });
 
 test("observações e finally antigos não sobrevivem à troca de política", () => {
-    const configureBlock = nativeSource.slice(nativeSource.indexOf("export function configurePluginUpdates"), nativeSource.indexOf("export function getPluginUpdateStatus"));
+    const configureBlock = nativeSource.slice(nativeSource.indexOf("export async function configurePluginUpdates"), nativeSource.indexOf("export async function getPluginUpdateStatus"));
     assert.match(configureBlock, /pluginUpdateLastCheckedAt = null/);
     assert.match(configureBlock, /pluginUpdateLastError = null/);
     assert.match(nativeSource, /if \(revision === pluginUpdatePolicyRevision && policyKey === updatePolicyKey\(pluginUpdatePolicy\)\)\s*pluginUpdateLastCheckedAt = Date\.now\(\)/);

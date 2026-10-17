@@ -8,7 +8,7 @@ const workflow = fs.readFileSync(
 );
 
 function jobBlock(name: string): string {
-  const lines = workflow.split("\n");
+  const lines = workflow.split(/\r?\n/);
   const start = lines.findIndex((line) => line === `  ${name}:`);
   if (start < 0) throw new Error(`job ausente: ${name}`);
 

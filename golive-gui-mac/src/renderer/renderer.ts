@@ -22,6 +22,10 @@ const permOpen    = document.getElementById('perm-open') as HTMLButtonElement;
 const permRetry   = document.getElementById('perm-retry') as HTMLButtonElement;
 const permStatus  = document.getElementById('perm-status')!;
 const vencordOptIn = document.getElementById('vencord-optin') as HTMLInputElement;
+const pendingHint = document.getElementById('pending-hint')!;
+const restartBtn  = document.getElementById('restart-btn') as HTMLButtonElement;
+const offNowBtn   = document.getElementById('off-now-btn') as HTMLButtonElement;
+const restoreBtn  = document.getElementById('restore-btn') as HTMLButtonElement;
 const updateBanner  = document.getElementById('update-banner')!;
 const updateMsg     = document.getElementById('update-msg')!;
 const updateBtn     = document.getElementById('update-btn') as HTMLButtonElement;
@@ -65,9 +69,19 @@ function log(m: string, isErr = false) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-function setState(s: 'inactive' | 'active' | 'busy' | 'unknown') {
+type UiState = 'inactive' | 'active' | 'pending' | 'busy' | 'unknown';
+
+function setState(s: UiState) {
   document.body.dataset.state = s;
-  if (s === 'active') {
+  restartBtn.hidden = s !== 'active';
+  offNowBtn.hidden = pendingHint.hidden = s !== 'pending';
+  if (s === 'busy') restoreBtn.hidden = true;
+  if (s === 'pending') {
+    stateLabel.textContent = 'Desliga ao fechar o Discord';
+    toggle.setAttribute('aria-label', 'Manter ativo');
+    hideExit();
+    ipLabel.textContent = '';
+  } else if (s === 'active') {
     stateLabel.textContent = 'Bypass ativo';
     toggle.setAttribute('aria-label', 'Desativar');
   } else if (s === 'inactive' || s === 'unknown') {
@@ -92,9 +106,10 @@ function applyTunnelState(st: string) {
     return;
   }
   const wasActive = active;
+  // Pendente conta como inativo para o botão: clicar reativa (cancela a espera)
   active = st === 'active';
-  setState(active ? 'active' : st === 'unknown' ? 'unknown' : 'inactive');
-  toggle.disabled = !(active || hasConfig);
+  setState(st === 'active' || st === 'pending' || st === 'unknown' ? st : 'inactive');
+  toggle.disabled = !(active || st === 'pending' || hasConfig);
   if (active && (!wasActive || exitLabel.hidden)) showExit();
 }
 
@@ -134,11 +149,35 @@ toggle.addEventListener('click', async () => {
     log(`Erro: ${msg}${r.detail ? ` — ${r.detail}` : ''}`, true);
     await refresh();
     ipLabel.textContent = `Erro: ${msg}`;
+    if (r.error !== 'busy' && r.error !== 'user_cancelled') restoreBtn.hidden = false;
     return;
   }
 
+  restoreBtn.hidden = true;
   applyTunnelState(r?.state ?? (deactivating ? 'inactive' : 'active'));
 });
+
+async function runSecondary(btn: HTMLButtonElement, label: string, call: () => Promise<any>) {
+  log(label);
+  btn.disabled = toggle.disabled = true;
+  setState('busy');
+  try {
+    const r = await call();
+    if (r?.error) {
+      log(`Erro: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`, true);
+      if (r.error !== 'busy' && r.error !== 'user_cancelled') restoreBtn.hidden = false;
+    } else if (btn === restoreBtn) {
+      restoreBtn.hidden = true;
+    }
+  } finally {
+    btn.disabled = false;
+    await refresh();
+  }
+}
+
+restartBtn.addEventListener('click', () => runSecondary(restartBtn, 'Reiniciando bypass…', () => golive.restart()));
+offNowBtn.addEventListener('click', () => runSecondary(offNowBtn, 'Desativando agora…', () => golive.deactivate(true)));
+restoreBtn.addEventListener('click', () => runSecondary(restoreBtn, 'Restaurando a internet…', () => golive.restoreNetwork()));
 
 // ── ProtonVPN fetch ───────────────────────────────────────────────────────────
 

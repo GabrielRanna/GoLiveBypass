@@ -1,7 +1,9 @@
 export interface RouterHandlers {
   importConfig(payload: { rawText: string }): Promise<unknown>;
   activate(): Promise<unknown>;
-  deactivate(): Promise<unknown>;
+  deactivate(payload: { now?: boolean }): Promise<unknown>;
+  restart(): Promise<unknown>;
+  restoreNetwork(): Promise<unknown>;
   status(): Promise<unknown>;
   fetchProton(payload: { username: string; password?: string }): Promise<unknown>;
   exitInfo(): Promise<unknown>;
@@ -26,7 +28,9 @@ export function makeRouter(h: RouterHandlers) {
     switch (channel) {
       case 'config:import':       return h.importConfig(payload);
       case 'tunnel:activate':     return h.activate();
-      case 'tunnel:deactivate':   return h.deactivate();
+      case 'tunnel:deactivate':   return h.deactivate({ now: payload?.now === true });
+      case 'tunnel:restart':      return h.restart();
+      case 'tunnel:restoreNetwork': return h.restoreNetwork();
       case 'tunnel:status':       return h.status();
       case 'proton:fetch':        return h.fetchProton(payload);
       case 'tunnel:exit':         return h.exitInfo();

@@ -9,7 +9,9 @@ import { importConfig, readConfigState } from './config/store';
 import { configPath, settingsPath, sessionDir, appDataDir } from './paths';
 import { readDefaultRoute, publicIp, exitInfo } from './tunnel/collect';
 import { deriveStateFromRoute } from './tunnel/status';
-import { restartDiscord } from './discord/restart';
+import { restartDiscord, isDiscordRunning } from './discord/restart';
+import { DeferredDeactivation } from './tunnel/deferred';
+import { withDeadline } from './shutdown';
 import { defaultDiscordCandidates, pickDiscordPath } from './discord/locate';
 import { injectVencord, AppManagementDenied, canModifyApp } from './vencord/inject';
 import { activate } from './tunnel/up';
@@ -79,12 +81,38 @@ function storeConfig(rawText: string) {
 
 // ─── Operações do túnel ──────────────────────────────────────────────────────
 
-type TunnelUiState = 'active' | 'inactive' | 'activating' | 'deactivating';
+type TunnelUiState = 'active' | 'inactive' | 'pending' | 'activating' | 'deactivating';
 let tunnelOp: Promise<unknown> | null = null;
 
-function pushState(state?: TunnelUiState) {
-  sendToWindow('tunnel:state', { state: state ?? (tunnelActive ? 'active' : 'inactive') });
+function currentUiState(): TunnelUiState {
+  if (!tunnelActive) return 'inactive';
+  return deferredOff.pending ? 'pending' : 'active';
 }
+
+function pushState(state?: TunnelUiState) {
+  sendToWindow('tunnel:state', { state: state ?? currentUiState() });
+}
+
+/** Desativar com o Discord aberto: o túnel cai quando ele fechar. */
+const deferredOff = new DeferredDeactivation({
+  isDiscordRunning,
+  onDiscordClosed: async () => {
+    const r = await exclusive(async () => {
+      pushState('deactivating');
+      const d = await runDeactivation(await activationOpts());
+      if (d.ok) {
+        tunnelActive = false;
+        sendToWindow('log', 'Discord fechado: túnel desligado e rede restaurada.');
+      } else {
+        sendToWindow('log', `Falha ao desligar o túnel depois de o Discord fechar: ${d.error}${d.detail ? ` — ${d.detail}` : ''}`);
+      }
+      updateTray();
+      pushState();
+    });
+    // Outra operação no meio: tenta de novo na próxima volta
+    if (r && typeof r === 'object' && 'error' in r && r.error === 'busy' && tunnelActive) deferredOff.start();
+  },
+});
 
 /** Uma ativação/desativação por vez; um pedido durante outra operação recebe 'busy'. */
 async function exclusive<T>(fn: () => Promise<T>): Promise<T | { error: 'busy' }> {
@@ -122,7 +150,10 @@ async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   isQuitting = true;
-  try { await deactivateBeforeQuit(); } finally { app.exit(0); }
+  deferredOff.cancel();
+  try {
+    if (await withDeadline(deactivateBeforeQuit()) === 'timeout') console.error('Limpeza do Sair passou do prazo; encerrando mesmo assim.');
+  } finally { app.exit(0); }
 }
 
 async function waitForNetwork(timeoutMs: number): Promise<void> {
@@ -137,7 +168,7 @@ async function waitForNetwork(timeoutMs: number): Promise<void> {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {
-      label: tunnelActive ? 'Bypass: ATIVO' : 'Bypass: inativo',
+      label: !tunnelActive ? 'Bypass: inativo' : deferredOff.pending ? 'Bypass: desliga ao fechar o Discord' : 'Bypass: ATIVO',
       enabled: false,
     },
     { type: 'separator' },
@@ -253,6 +284,14 @@ const handlers = {
 
   async activate() {
     return exclusive(async () => {
+      // Desativação adiada e túnel ainda no ar: basta cancelar a espera
+      if (deferredOff.pending && tunnelActive) {
+        deferredOff.cancel();
+        saveSettings({ lastTunnelState: 'active' });
+        updateTray();
+        pushState();
+        return { state: 'active', publicIp: null };
+      }
       pushState('activating');
       const r = await activate({
         opts: await activationOpts(),
@@ -275,10 +314,24 @@ const handlers = {
     });
   },
 
-  async deactivate() {
+  async deactivate({ now }: { now?: boolean } = {}) {
     return exclusive(async () => {
+      if (!now && tunnelActive && await isDiscordRunning()) {
+        deferredOff.start();
+        resumeTunnel = false;
+        saveSettings({ lastTunnelState: 'inactive' });
+        updateTray();
+        pushState();
+        sendToWindow('log', 'Desativação pendente: o túnel desliga quando você fechar o Discord.');
+        return { state: 'pending' };
+      }
+      deferredOff.cancel();
       pushState('deactivating');
-      const r = await deactivate({ opts: await activationOpts(), restartDiscord });
+      // Agora com o Discord aberto: reinicia para ele largar as conexões do túnel
+      const r = await deactivate({
+        opts: await activationOpts(),
+        restartDiscord: async () => { if (await isDiscordRunning()) await restartDiscord(); },
+      });
       if ('error' in r) sendToWindow('log', `Falha ao desativar: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
       else {
         tunnelActive = false;
@@ -294,7 +347,66 @@ const handlers = {
   async status() {
     const state = deriveStateFromRoute(await readDefaultRoute());
     if (!tunnelOp) tunnelActive = state === 'active';
-    return { state, hasConfig: refreshConfigState().hasConfig, busy: !!tunnelOp };
+    if (!tunnelActive) deferredOff.cancel();
+    return {
+      state: state === 'active' && deferredOff.pending ? 'pending' : state,
+      hasConfig: refreshConfigState().hasConfig,
+      busy: !!tunnelOp,
+    };
+  },
+
+  /** Derruba e sobe o túnel numa operação só e reinicia o Discord. */
+  async restart() {
+    return exclusive(async () => {
+      deferredOff.cancel();
+      pushState('activating');
+      const opts = await activationOpts();
+      const down = await runDeactivation(opts);
+      if (!down.ok) {
+        sendToWindow('log', `Falha ao reiniciar (desligar): ${down.error}${down.detail ? ` — ${down.detail}` : ''}`);
+        pushState();
+        return { error: down.error ?? 'wg_failed', detail: down.detail };
+      }
+      tunnelActive = false;
+      const r = await activate({
+        opts,
+        restartDiscord: async () => {
+          if (loadSettings().vencordOptIn) await tryInjectVencord();
+          await restartDiscord();
+        },
+        publicIp,
+      });
+      if ('error' in r) {
+        saveSettings({ lastTunnelState: 'inactive' });
+        sendToWindow('log', `Falha ao reiniciar (ligar): ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+      } else {
+        tunnelActive = true;
+        saveSettings({ lastTunnelState: 'active' });
+      }
+      updateTray();
+      pushState();
+      return r;
+    });
+  },
+
+  /** Rede presa depois de uma falha: tira rotas e IPv6 do helper, mesmo sem túnel conhecido. */
+  async restoreNetwork() {
+    return exclusive(async () => {
+      deferredOff.cancel();
+      pushState('deactivating');
+      const r = await runDeactivation(await activationOpts());
+      if (r.ok) {
+        tunnelActive = false;
+        resumeTunnel = false;
+        saveSettings({ lastTunnelState: 'inactive' });
+        sendToWindow('log', 'Rede restaurada.');
+      } else {
+        sendToWindow('log', `Falha ao restaurar a rede: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
+      }
+      updateTray();
+      pushState();
+      return r.ok ? { ok: true } : { ok: false, error: r.error, detail: r.detail };
+    });
   },
 
   async fetchProton({ username, password }: { username: string; password?: string }) {
@@ -451,8 +563,11 @@ app.whenReady().then(async () => {
 
   powerMonitor.on('suspend', () => {
     if (!tunnelActive) return;
+    // Desativação pendente: o usuário já pediu para desligar, então não volta ao acordar
+    const keep = !deferredOff.pending;
+    deferredOff.cancel();
     void exclusive(async () => {
-      if (await bringDownQuietly()) resumeTunnel = true;
+      if (await bringDownQuietly() && keep) resumeTunnel = true;
     });
   });
 

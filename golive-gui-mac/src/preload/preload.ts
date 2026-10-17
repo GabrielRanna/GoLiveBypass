@@ -4,7 +4,9 @@ contextBridge.exposeInMainWorld('golive', {
   pickConf:       () => ipcRenderer.invoke('golive:pick-conf'),
   importConfig:   (rawText: string) => ipcRenderer.invoke('golive', 'config:import', { rawText }),
   activate:       () => ipcRenderer.invoke('golive', 'tunnel:activate'),
-  deactivate:     () => ipcRenderer.invoke('golive', 'tunnel:deactivate'),
+  deactivate:     (now = false) => ipcRenderer.invoke('golive', 'tunnel:deactivate', { now }),
+  restart:        () => ipcRenderer.invoke('golive', 'tunnel:restart'),
+  restoreNetwork: () => ipcRenderer.invoke('golive', 'tunnel:restoreNetwork'),
   status:         () => ipcRenderer.invoke('golive', 'tunnel:status'),
   fetchProton:    (username: string, password?: string) =>
                     ipcRenderer.invoke('golive', 'proton:fetch', { username, password }),

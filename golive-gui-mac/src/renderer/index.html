@@ -52,6 +52,12 @@
           <span id="exit-country" class="exit-country"></span>
         </p>
         <p id="ip-label" class="ip-label"></p>
+        <p id="pending-hint" class="hint center" hidden>O Discord continua no túnel até você fechar ele. Quando ele fechar, o app desliga o túnel e restaura a rede.</p>
+        <div class="action-row">
+          <button id="restart-btn" class="pill-btn ghost mini" hidden>Reiniciar bypass</button>
+          <button id="off-now-btn" class="pill-btn ghost mini" hidden>Desativar agora</button>
+          <button id="restore-btn" class="pill-btn ghost mini" hidden title="Tira as rotas do túnel que tenham sobrado">Restaurar internet</button>
+        </div>
 
         <!-- Permissão de Gerenciamento de Apps (Vencord) -->
         <section class="card perm-card" id="perm-card" hidden>
@@ -180,13 +186,14 @@
           <li><strong>Clique em Ativar</strong>Na primeira vez o macOS pede a senha de administrador para instalar o helper. O app liga o túnel e reinicia o Discord, que já volta por ele.</li>
           <li><strong>Só o Discord usa o túnel</strong>No macOS a separação é por endereço: só os ranges da Cloudflare usados pelo Discord passam pela VPN. Navegador, jogos e outros apps continuam na sua internet normal; um site que use esses mesmos ranges também passa pelo túnel.</li>
           <li><strong>Enquanto estiver ativo</strong>Se o Mac dormir, o túnel cai e volta sozinho ao acordar, sem reiniciar o Discord.</li>
-          <li><strong>Clique em Desativar</strong>O túnel desliga e o Discord reinicia pela internet normal.</li>
+          <li><strong>Clique em Desativar</strong>O Discord que já está aberto continua no túnel até você fechar ele. Quando ele fecha, o app desliga o túnel e restaura a rede; da próxima vez, o Discord abre pela internet normal. Com pressa, use <em>Desativar agora</em>: o túnel cai na hora e o Discord reinicia.</li>
           <li><strong>Fechar ou sair</strong>Fechar a janela só esconde o app na barra de menu, perto do relógio. Para desligar tudo na hora, use Sair no ícone de lá ou Cmd+Q.</li>
         </ol>
 
         <div class="help-trouble">
           <p class="panel-kicker">Se algo der errado</p>
           <p>Stream travando costuma ser servidor grátis lotado. Clique em <em>Buscar melhor servidor</em> de novo ou use um <code>.conf</code> próprio, que não é dividido com ninguém.</p>
+          <p>Se a internet parar depois de usar o app, aparece o botão <em>Restaurar internet</em> na tela principal. <em>Reiniciar bypass</em> refaz a ativação inteira sem precisar desativar e ativar.</p>
           <p>Se o macOS disser que o app é de desenvolvedor desconhecido, rode <code>xattr -dr com.apple.quarantine /Applications/GoLiveBypass.app</code> no Terminal.</p>
         </div>
       </div>

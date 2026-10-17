@@ -498,3 +498,12 @@ code {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; }
 }
+
+/* ── Ações secundárias do bypass ──────────────────────────────────── */
+.action-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.action-row:not(:has(button:not([hidden]))) { display: none; }
+.pill-btn[hidden] { display: none; }
+.hint.center { text-align: center; max-width: 320px; }
+body[data-state="pending"] .state-label { color: var(--warn); }
+body[data-state="pending"] .state-dot   { background: var(--warn); opacity: 1; }
+body[data-state="pending"] button.power svg { stroke: var(--warn); }

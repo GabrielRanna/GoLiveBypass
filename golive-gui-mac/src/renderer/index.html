@@ -53,9 +53,7 @@
         </p>
         <p id="ip-label" class="ip-label"></p>
         <div id="traffic" class="traffic" hidden>
-          <div class="t-cell"><span class="t-k">Ping</span><span id="t-ping" class="t-v">–</span></div>
-          <div class="t-cell"><span class="t-k">↓ Download</span><span id="t-down" class="t-v">–</span></div>
-          <div class="t-cell"><span class="t-k">↑ Upload</span><span id="t-up" class="t-v">–</span></div>
+          <span class="t-k">Ping</span><span id="t-ping" class="t-v">–</span>
         </div>
         <p id="pending-hint" class="hint center" hidden>O Discord continua no túnel até você fechar ele. Quando ele fechar, o app desliga o túnel e restaura a rede.</p>
         <div class="action-row">
@@ -143,7 +141,7 @@
       </section>
     </div>
 
-    <p class="footer">Projeto open source, feito por muita gente.</p>
+    <p class="footer">Projeto open source, feito por <a href="https://github.com/bezumiya/GoLiveBypass#agradecimentos" target="_blank" rel="noopener" class="footer-link">muita gente</a>.</p>
   </main>
 
   <!-- Painel: Configurações -->
@@ -256,7 +254,7 @@
           <li><strong>Escolha a rota</strong>Na rota automática o app mede o ping dos servidores do México e dos EUA e fica com o mais rápido. Em <em>Otimizar rota</em> ele mede download e upload de verdade, o que importa pra stream; a medição usa um túnel à parte, então o Discord não fecha. Na rota manual, você escolhe na lista e ela é mantida.</li>
           <li><strong>Clique em Ativar</strong>Na primeira vez o macOS pede a senha de administrador para instalar o helper. O app liga o túnel e reinicia o Discord, que já volta por ele.</li>
           <li><strong>Só o Discord usa o túnel</strong>No macOS a separação é por endereço: só os ranges da Cloudflare usados pelo Discord passam pela VPN. Navegador, jogos e outros apps continuam na sua internet normal; um site que use esses mesmos ranges também passa pelo túnel.</li>
-          <li><strong>Enquanto estiver ativo</strong>O card mostra o ping pelo túnel e a velocidade do Discord agora. Se a rota Proton grátis cair, a troca automática muda de servidor sem fechar o Discord (dá pra desligar nas Configurações). Se o Mac dormir, o túnel cai e volta sozinho ao acordar.</li>
+          <li><strong>Enquanto estiver ativo</strong>O card mostra o ping até o Discord pelo túnel. Se a rota Proton grátis cair, a troca automática muda de servidor sem fechar o Discord (dá pra desligar nas Configurações). Se o Mac dormir, o túnel cai e volta sozinho ao acordar.</li>
           <li><strong>Clique em Desativar</strong>O Discord que já está aberto continua no túnel até você fechar ele. Quando ele fecha, o app desliga o túnel e restaura a rede; da próxima vez, o Discord abre pela internet normal. Com pressa, use <em>Desativar agora</em>: o túnel cai na hora e o Discord reinicia.</li>
           <li><strong>Fechar ou sair</strong>Fechar a janela só esconde o app na barra de menu, perto do relógio. Para desligar tudo na hora, use Sair no ícone de lá ou Cmd+Q.</li>
         </ol>

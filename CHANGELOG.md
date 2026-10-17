@@ -64,7 +64,7 @@ Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por
 - **Conexão em abas (Proton Otimizado | Arquivo .conf)** com o plano da conta (`-check-plan`, só pela sessão salva) e *Atualizar plano*.
 - **Escolha da rota:** lista do catálogo MX/US com ping. A rota manual valida o servidor com `-manual-probe` e fica mantida; a automática fica com o menor ping. Na primeira abertura no modo Proton, uma pergunta única pergunta qual das duas o usuário quer. A regra é a mesma da GUI (`src/main/proton/route-prompt.ts`).
 - **Otimizar rota:** `-speed-test` mede download e upload de verdade num túnel netstack do próprio `proton-confgen`. Por isso, ao contrário do Windows, o Discord **não** fecha durante a medição e as rotas do Mac não mudam. Medido neste Mac: 6 de 8 rotas medidas, ~16 Mbps de download e ~9 Mbps de upload. O `-require-discord` ficou de fora porque, com ele, nenhuma rota passava no macOS.
-- **Card de tráfego** com o bypass ativo: ping até `gateway.discord.gg` (que fica nos ranges tunelados) e download/upload da `utun` do túnel lidos em `netstat -ibn`, sem root. O helper não muda e não pede a senha de novo.
+- **Card de ping** com o bypass ativo: ping até `gateway.discord.gg`, que fica nos ranges tunelados, a cada 10 s. Sem download/upload: com o Discord parado eles ficavam em 0 quase o tempo todo. O helper não muda e não pede a senha de novo.
 - **Troca automática de servidor** (rota automática, conta Proton): três falhas seguidas da sonda pelo túnel (~45 s) geram o próximo melhor servidor, sem o atual, e trocam o túnel sem reiniciar o Discord.
 - **Reiniciar bypass:** derruba e sobe o túnel numa operação só e reinicia o Discord.
 - **Restaurar internet:** aparece depois de uma falha de ativação ou desativação e roda o `down` idempotente do helper.
@@ -83,7 +83,7 @@ Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por
 
 - Pergunta de rota na primeira abertura, plano "Proton VPN Free" e ativação pela `utun5`.
 - **Troca automática com falha real:** o perfil salvo fechava o handshake mas não passava dados ("País indisponível", ping sem resposta). Três sondas depois, o app gerou `US-FREE#135`, trocou o túnel e a saída voltou (US) sem reiniciar o Discord.
-- Card de tráfego: ping de 139 a 199 ms e 48 a 56 Mbps de download durante um download de 30 MB pelo túnel.
+- Card de ping: 117 a 199 ms até o gateway do Discord pelo túnel.
 - Otimizar rota com o bypass ativo e o Discord aberto: `MX-FREE#16`, ↓ 22,7 / ↑ 8,7 Mbps. A ativação seguinte saiu pelo México.
 - Desativar com o Discord aberto: estado pendente, túnel no ar e mesmo PID do Discord. Ao fechar o Discord, o túnel caiu e a saída voltou para BR. Reativar na espera cancelou sem reiniciar o Discord.
 - Reiniciar bypass (Discord com PID novo, saída MX), Restaurar internet (zero rotas do túnel e zero rejeições IPv6) e Sair com o túnel ativo (1 s, rotas limpas). Ao reabrir, a reconexão automática voltou pelo México.

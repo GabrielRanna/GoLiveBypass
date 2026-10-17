@@ -21,7 +21,7 @@ import { cleanupStaleV6Rejects } from './privileged/helper';
 import { ProtonFetcher, type ProtonFetchOpts, type ProtonFetchResult, type CatalogRoute, type FetchMode, type ProtonPlan } from './proton/fetch';
 import { shouldAskRoutePreference } from './proton/route-prompt';
 import { FailoverMonitor } from './tunnel/failover';
-import { discordUtun, readIfaceBytes, rateMbps, pingThroughTunnel, type IfaceBytes } from './tunnel/traffic';
+import { pingThroughTunnel } from './tunnel/traffic';
 import { readSavedAccount, clearSavedAccount } from './proton/account';
 import { checkForUpdate, downloadAndInstall, type UpdateInfo, type PendingUpdate } from './updater';
 import type { AppSettings, UiSettings } from '../shared/types';
@@ -102,22 +102,9 @@ function pushState(state?: TunnelUiState) {
 
 let trafficTimer: NodeJS.Timeout | null = null;
 let failoverTimer: NodeJS.Timeout | null = null;
-let lastBytes: { iface: string; bytes: IfaceBytes; at: number } | null = null;
-let lastPing: number | null = null;
-let trafficTicks = 0;
 
 async function trafficTick() {
-  const iface = discordUtun(await readDefaultRoute());
-  // Ping a cada 10 s; bytes a cada 2,5 s
-  if (trafficTicks++ % 4 === 0) lastPing = await pingThroughTunnel();
-  let rate: { down: number; up: number } | null = null;
-  if (iface) {
-    const bytes = await readIfaceBytes(iface);
-    const now = Date.now();
-    if (bytes && lastBytes?.iface === iface) rate = rateMbps(lastBytes.bytes, bytes, now - lastBytes.at);
-    lastBytes = bytes ? { iface, bytes, at: now } : null;
-  }
-  sendToWindow('tunnel:traffic', { pingMs: lastPing, downMbps: rate?.down ?? null, upMbps: rate?.up ?? null });
+  sendToWindow('tunnel:traffic', { pingMs: await pingThroughTunnel() });
 }
 
 const failover = new FailoverMonitor({
@@ -134,9 +121,7 @@ function failoverEnabled(): boolean {
 function syncMonitors(s: TunnelUiState) {
   const on = s === 'active' || s === 'pending';
   if (on && !trafficTimer) {
-    trafficTicks = 0;
-    lastBytes = null;
-    trafficTimer = setInterval(() => { void trafficTick().catch(() => {}); }, 2500);
+    trafficTimer = setInterval(() => { void trafficTick().catch(() => {}); }, 10_000);
     void trafficTick().catch(() => {});
   } else if (!on && s !== 'activating' && s !== 'deactivating' && trafficTimer) {
     clearInterval(trafficTimer);
@@ -305,6 +290,12 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+
+  // Links externos (créditos, CAPTCHA) abrem no navegador, nunca numa janela do app
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
 
   // Fechar esconde para tray, não encerra o app
   mainWindow.on('close', (e) => {

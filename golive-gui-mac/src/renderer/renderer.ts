@@ -616,17 +616,12 @@ golive.onLog?.((m: string) => log(m));
 
 const trafficEl = document.getElementById('traffic')!;
 const tPing = document.getElementById('t-ping')!;
-const tDown = document.getElementById('t-down')!;
-const tUp   = document.getElementById('t-up')!;
-const mbps = (v: number | null) => (v === null ? '–' : v >= 10 ? `${v.toFixed(0)} Mbps` : `${v.toFixed(1)} Mbps`);
 
-golive.onTraffic?.((t: { pingMs: number | null; downMbps: number | null; upMbps: number | null }) => {
+golive.onTraffic?.((t: { pingMs: number | null }) => {
   const st = document.body.dataset.state;
   if (st !== 'active' && st !== 'pending') return;
   trafficEl.hidden = false;
   tPing.textContent = t.pingMs ? `${t.pingMs} ms` : '–';
-  tDown.textContent = mbps(t.downMbps);
-  tUp.textContent = mbps(t.upMbps);
 });
 
 refresh();

@@ -28,7 +28,7 @@ contextBridge.exposeInMainWorld('golive', {
 
   onVencordPermission: (cb: (p: { granted: boolean }) => void) => ipcRenderer.on('vencord:permission', (_e, p) => cb(p)),
   onTunnelState: (cb: (p: { state: string }) => void) => ipcRenderer.on('tunnel:state', (_e, p) => cb(p)),
-  onTraffic:     (cb: (p: { pingMs: number | null; downMbps: number | null; upMbps: number | null }) => void) => ipcRenderer.on('tunnel:traffic', (_e, p) => cb(p)),
+  onTraffic:     (cb: (p: { pingMs: number | null }) => void) => ipcRenderer.on('tunnel:traffic', (_e, p) => cb(p)),
   onRoute:       (cb: (r: unknown) => void) => ipcRenderer.on('proton:route', (_e, r) => cb(r)),
   onLog:             (cb: (m: string) => void) => ipcRenderer.on('log', (_e, m) => cb(m)),
   onProtonProgress:  (cb: (m: string) => void) => ipcRenderer.on('proton:progress', (_e, m) => cb(m)),

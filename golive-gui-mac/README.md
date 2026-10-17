@@ -33,7 +33,7 @@ só para o tráfego do Discord. DMG **universal**: Apple Silicon e Intel.
     Discord, e fica com a melhor.
 - **Arquivo .conf:** importa um WireGuard próprio.
 - **Ativar:** o botão central liga o túnel e reinicia o Discord por ele. Com o bypass
-  ativo aparecem o ping e a velocidade do túnel e **Reiniciar bypass**.
+  ativo aparecem o ping até o Discord e **Reiniciar bypass**.
 - **Desativar:** com o Discord aberto, o túnel fica até você fechar o Discord e então
   cai sozinho. **Desativar agora** derruba na hora. Se a rede ficar presa depois de uma
   falha, aparece **Restaurar internet**.

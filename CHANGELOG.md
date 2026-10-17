@@ -67,6 +67,7 @@ Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por
 - **Card de ping** com o bypass ativo: ping até `gateway.discord.gg`, que fica nos ranges tunelados, a cada 10 s. Sem download/upload: com o Discord parado eles ficavam em 0 quase o tempo todo. O helper não muda e não pede a senha de novo.
 - **Troca automática de servidor** (rota automática, conta Proton): três falhas seguidas da sonda pelo túnel (~45 s) geram o próximo melhor servidor, sem o atual, e trocam o túnel sem reiniciar o Discord.
 - **Reiniciar bypass:** derruba e sobe o túnel numa operação só e reinicia o Discord.
+- **Ícones com a rosa da GUI Windows:** no Dock, a rosa branca num quadrado grafite com brilho rosa; na barra de menu, a silhueta da rosa como imagem template, que segue o tema claro ou escuro. Gerados por `scripts/make-icons.swift` a partir de `golive-gui/build/icon.png`.
 - **Restaurar internet:** aparece depois de uma falha de ativação ou desativação e roda o `down` idempotente do helper.
 
 ### Alterado

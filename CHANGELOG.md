@@ -6,6 +6,8 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+## [2.0.11] - 2026-10-17
+
 ### Plugin Vencord/Equicord: a conf WireGuard própria volta a carregar e a ativar (relatos beta)
 
 Três defeitos somados no modo **"Arquivo WireGuard personalizado"**:

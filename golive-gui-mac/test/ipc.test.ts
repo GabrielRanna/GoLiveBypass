@@ -10,6 +10,13 @@ describe('makeRouter', () => {
     expect(r).toEqual({ state: 'active', publicIp: '1.2.3.4' });
   });
 
+  it('settings:set só repassa booleanos', async () => {
+    const setSettings = vi.fn(async (p: unknown) => p);
+    const router = makeRouter({ setSettings } as any);
+    await router('settings:set', { openAtLogin: true, devMode: 'sim', extra: 1 });
+    expect(setSettings).toHaveBeenCalledWith({ openAtLogin: true, devMode: undefined });
+  });
+
   it('erro para canal desconhecido', async () => {
     const router = makeRouter({} as any);
     await expect(router('canal:invalido', undefined)).rejects.toThrow();

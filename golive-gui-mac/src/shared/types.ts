@@ -21,6 +21,14 @@ export interface AppSettings {
   protonUser?: string;
   /** Opt-in explícito: instalar o Vencord e ligar o FakeNitro ao ativar. */
   vencordOptIn?: boolean;
+  /** Mostra o log na janela principal. */
+  devMode?: boolean;
+}
+
+/** Preferências que a janela de Configurações lê e grava. */
+export interface UiSettings {
+  openAtLogin: boolean;
+  devMode: boolean;
 }
 
 export interface UpdateInfo {

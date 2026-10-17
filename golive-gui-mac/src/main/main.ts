@@ -19,7 +19,7 @@ import { cleanupStaleV6Rejects } from './privileged/helper';
 import { ProtonFetcher } from './proton/fetch';
 import { readSavedAccount, clearSavedAccount } from './proton/account';
 import { checkForUpdate, downloadAndInstall, type UpdateInfo, type PendingUpdate } from './updater';
-import type { AppSettings, TunnelState } from '../shared/types';
+import type { AppSettings, UiSettings } from '../shared/types';
 
 const home   = os.homedir();
 const user   = os.userInfo().username;
@@ -176,8 +176,11 @@ function createTray() {
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 420,
-    height: 640,
-    resizable: false,
+    height: 680,
+    minWidth: 380,
+    minHeight: 520,
+    // Aberto no login, o app sobe só na barra de menu
+    show: !app.getLoginItemSettings().wasOpenedAtLogin,
     titleBarStyle: 'hiddenInset',
     vibrancy: 'under-window',
     visualEffectState: 'active',
@@ -394,6 +397,20 @@ const handlers = {
     return downloadAndInstall(pendingUpdate, (msg) => {
       sendToWindow('update:progress', msg);
     });
+  },
+
+  async appInfo() {
+    return { version: app.getVersion() };
+  },
+
+  async getSettings(): Promise<UiSettings> {
+    return { openAtLogin: app.getLoginItemSettings().openAtLogin, devMode: loadSettings().devMode === true };
+  },
+
+  async setSettings(patch: { openAtLogin?: boolean; devMode?: boolean }): Promise<UiSettings> {
+    if (patch.openAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: patch.openAtLogin });
+    if (patch.devMode !== undefined) saveSettings({ devMode: patch.devMode });
+    return handlers.getSettings();
   },
 };
 

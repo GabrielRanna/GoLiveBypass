@@ -14,7 +14,12 @@ export interface RouterHandlers {
   protonLogout(): Promise<unknown>;
   checkUpdate(): Promise<unknown>;
   downloadUpdate(payload: { version?: string }): Promise<unknown>;
+  appInfo(): Promise<unknown>;
+  getSettings(): Promise<unknown>;
+  setSettings(payload: { openAtLogin?: boolean; devMode?: boolean }): Promise<unknown>;
 }
+
+const optBool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
 
 export function makeRouter(h: RouterHandlers) {
   return async (channel: string, payload: any): Promise<unknown> => {
@@ -34,6 +39,9 @@ export function makeRouter(h: RouterHandlers) {
       case 'proton:logout':       return h.protonLogout();
       case 'app:checkUpdate':     return h.checkUpdate();
       case 'app:downloadUpdate':  return h.downloadUpdate({ version: typeof payload?.version === 'string' ? payload.version : undefined });
+      case 'app:info':            return h.appInfo();
+      case 'settings:get':        return h.getSettings();
+      case 'settings:set':        return h.setSettings({ openAtLogin: optBool(payload?.openAtLogin), devMode: optBool(payload?.devMode) });
       default: throw new Error(`Canal IPC desconhecido: ${channel}`);
     }
   };

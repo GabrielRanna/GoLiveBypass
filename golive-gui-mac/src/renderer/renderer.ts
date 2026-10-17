@@ -327,6 +327,78 @@ updateBtn.addEventListener('click', async () => {
   updateMsg.textContent = 'Arraste o novo GoLiveBypass para Aplicativos e reabra o app.';
 });
 
+const checkUpdateBtn = document.getElementById('check-update') as HTMLButtonElement;
+checkUpdateBtn.addEventListener('click', async () => {
+  if (checkUpdateBtn.classList.contains('spinning')) return;
+  checkUpdateBtn.classList.add('spinning');
+  try {
+    const info = await golive.checkUpdate();
+    checkUpdateBtn.title = info?.available
+      ? `Nova versão: v${info.latestVersion}`
+      : `Você está na última versão (v${info?.currentVersion ?? '?'})`;
+    showUpdate(info);
+  } catch (e) {
+    checkUpdateBtn.title = 'Não deu para checar agora';
+    log(`[update] erro ao checar: ${e}`, true);
+  } finally {
+    checkUpdateBtn.classList.remove('spinning');
+  }
+});
+
+// ── Painéis ───────────────────────────────────────────────────────────────────
+
+function openPanel(panel: HTMLElement) {
+  panel.classList.remove('closing');
+  panel.hidden = false;
+  (panel.querySelector('[data-close].icon-btn') as HTMLElement | null)?.focus();
+}
+
+function closePanel(panel: HTMLElement) {
+  if (panel.hidden || panel.classList.contains('closing')) return;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) { panel.hidden = true; return; }
+  panel.classList.add('closing');
+  setTimeout(() => { panel.hidden = true; panel.classList.remove('closing'); }, 160);
+}
+
+const panels = Array.from(document.querySelectorAll<HTMLElement>('.panel'));
+for (const p of panels) {
+  p.querySelectorAll('[data-close]').forEach((el: Element) => el.addEventListener('click', () => closePanel(p)));
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') panels.forEach(closePanel);
+});
+document.getElementById('open-help')!.addEventListener('click', () => openPanel(document.getElementById('help-panel')!));
+document.getElementById('open-settings')!.addEventListener('click', () => openPanel(document.getElementById('settings-panel')!));
+
+// ── Configurações ─────────────────────────────────────────────────────────────
+
+const openAtLogin = document.getElementById('open-at-login') as HTMLInputElement;
+const devMode     = document.getElementById('dev-mode') as HTMLInputElement;
+
+function applySettings(s: { openAtLogin: boolean; devMode: boolean } | null) {
+  if (!s) return;
+  openAtLogin.checked = s.openAtLogin;
+  devMode.checked = s.devMode;
+  logEl.hidden = !s.devMode;
+  if (s.devMode) logEl.scrollTop = logEl.scrollHeight;
+}
+
+async function saveSetting(input: HTMLInputElement, patch: Record<string, boolean>) {
+  input.disabled = true;
+  try { applySettings(await golive.setSettings(patch)); }
+  catch (e) { log(`Falha ao salvar a configuração: ${e}`, true); }
+  finally { input.disabled = false; }
+}
+
+openAtLogin.addEventListener('change', () => saveSetting(openAtLogin, { openAtLogin: openAtLogin.checked }));
+devMode.addEventListener('change', () => saveSetting(devMode, { devMode: devMode.checked }));
+golive.getSettings?.().then(applySettings).catch(() => {});
+
+golive.appInfo?.().then((i: { version: string }) => {
+  document.getElementById('app-version')!.textContent = `Go Live · macOS · v${i.version}`;
+}).catch(() => {});
+
 // ── Notificação de segundo plano (ao fechar janela) ────────────────────────────
 
 golive.onLog?.((m: string) => log(m));

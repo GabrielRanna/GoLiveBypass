@@ -128,7 +128,14 @@ async function refresh() {
   }
 }
 
-golive.onTunnelState?.((p: { state: string }) => applyTunnelState(p.state));
+golive.onTunnelState?.((p: { state: string; error?: string }) => {
+  applyTunnelState(p.state);
+  if (p.error) {
+    log(`Erro: ${p.error}`, true);
+    ipLabel.textContent = 'Erro ao desligar o túnel.';
+    restoreBtn.hidden = false;
+  }
+});
 
 // ── Toggle ────────────────────────────────────────────────────────────────────
 
@@ -260,7 +267,7 @@ const errMsgs: Record<string, string> = {
   binary_missing: 'proton-confgen não encontrado nos recursos.',
   binary_integrity: 'proton-confgen não confere com o manifesto do app; reinstale o GoLiveBypass.',
   timeout:        'O Proton demorou demais para responder. Tente de novo.',
-  unknown:       'Erro desconhecido — veja o log.',
+  unknown:       'Erro desconhecido. Para ver o log, ligue o Modo desenvolvedor em Configurações.',
 };
 
 async function runProton(mode: 'auto' | 'manual' | 'speed' | 'catalog', opts: { password?: string; server?: string; btn?: HTMLButtonElement } = {}) {
@@ -429,7 +436,7 @@ async function retryVencord(manual: boolean) {
     } else {
       permStatus.textContent = outcome === 'needs_permission'
         ? 'O macOS ainda bloqueou. Feche e reabra o GoLiveBypass e tente de novo.'
-        : 'Não deu certo — veja o log abaixo.';
+        : 'Não deu certo. Para ver o log, ligue o Modo desenvolvedor em Configurações.';
     }
   } finally {
     permRetry.disabled = permOpen.disabled = false;
@@ -489,7 +496,10 @@ updateBtn.addEventListener('click', async () => {
 
 const checkUpdateBtn = document.getElementById('check-update') as HTMLButtonElement;
 checkUpdateBtn.addEventListener('click', async () => {
-  if (checkUpdateBtn.classList.contains('spinning')) return;
+  if (checkUpdateBtn.classList.contains('spinning')) {
+    checkUpdateBtn.title = 'Já está procurando, aguarde…';
+    return;
+  }
   checkUpdateBtn.classList.add('spinning');
   try {
     const info = await golive.checkUpdate();

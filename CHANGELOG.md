@@ -38,6 +38,22 @@ Em janelas com até 640 px de largura o rótulo do botão tomava espaço do sele
 
 **Verificado:** medição em 9 larguras (360–720 px) sobre a folha de estilo do app e `npm test -- tests/proton-ui.test.ts`.
 
+## [macos-0.7.1] - 2026-10-17
+
+Ajustes da revisão da 0.7.0.
+
+### Corrigido
+
+- **Restaurar internet também na desativação automática.** Se o túnel não cai depois de o Discord fechar, o erro vai junto no estado do túnel e o botão aparece, como o texto da 0.7.0 prometia.
+- **Desativação pendente sobrevive a um encerramento abrupto.** Se o app morrer na espera e o túnel ficar de pé, no boot ele retoma a espera (Discord aberto) ou derruba o túnel (Discord fechado), em vez de deixar o túnel órfão com a preferência "inativo".
+- **Mensagens de erro sem "veja o log" escondido.** Com o log desligado por padrão, elas agora mandam ligar o Modo desenvolvedor em Configurações. O Otimizar rota sem velocidades medidas diz "A medição não retornou velocidades válidas de download e upload.", como a GUI.
+- **Checar atualizações** responde "Já está procurando, aguarde…" no clique repetido durante a busca.
+
+### Testes e docs
+
+- Testes com um `proton-confgen` falso cobrem os modos manual (`-manual-probe`) e speed (`-speed-test`, `-exclude-servers`, sem `-require-discord`) e a exigência de download e upload medidos.
+- `docs/acceptance-macos.md` ganhou os fluxos da 0.7.0: desativação adiada, rotas Proton, troca automática, tema, ícones e abrir ao iniciar a sessão.
+
 ## [macos-0.7.0] - 2026-10-17
 
 Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por IP, helper root).

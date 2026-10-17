@@ -79,9 +79,14 @@ Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por
 
 - **Sair nunca fica preso:** a limpeza tem prazo de 90 s (`QUIT_CLEANUP_TIMEOUT_MS`) e o app encerra mesmo que algum passo trave.
 
-### Não verificado
+### Verificado ponta a ponta (DMG universal instalado, macOS 26, conta Proton Free)
 
-- Desativação adiada, Reiniciar bypass, Restaurar internet e a troca automática foram cobertos por testes unitários e pela interface com a API simulada. Falta o teste ponta a ponta no app empacotado com túnel real.
+- Pergunta de rota na primeira abertura, plano "Proton VPN Free" e ativação pela `utun5`.
+- **Troca automática com falha real:** o perfil salvo fechava o handshake mas não passava dados ("País indisponível", ping sem resposta). Três sondas depois, o app gerou `US-FREE#135`, trocou o túnel e a saída voltou (US) sem reiniciar o Discord.
+- Card de tráfego: ping de 139 a 199 ms e 48 a 56 Mbps de download durante um download de 30 MB pelo túnel.
+- Otimizar rota com o bypass ativo e o Discord aberto: `MX-FREE#16`, ↓ 22,7 / ↑ 8,7 Mbps. A ativação seguinte saiu pelo México.
+- Desativar com o Discord aberto: estado pendente, túnel no ar e mesmo PID do Discord. Ao fechar o Discord, o túnel caiu e a saída voltou para BR. Reativar na espera cancelou sem reiniciar o Discord.
+- Reiniciar bypass (Discord com PID novo, saída MX), Restaurar internet (zero rotas do túnel e zero rejeições IPv6) e Sair com o túnel ativo (1 s, rotas limpas). Ao reabrir, a reconexão automática voltou pelo México.
 
 ## [macos-0.6.0] - 2026-10-08
 

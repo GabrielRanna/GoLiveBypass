@@ -53,6 +53,36 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 - Cobertura de ranges: a voz do Discord também usa `66.22.192.0/18` e IPs do GCP, e as listas comunitárias citam `162.158.0.0/15` e `172.64.0.0/13`. Hoje só `162.159.0.0/16` e `104.16.0.0/12` passam pelo túnel; ampliar exige medir se a voz/Go Live precisa disso e aceitar mais tráfego de outros sites no túnel.
 - `scripts/fetch-wg-binaries.sh` regenera os binários WireGuard a partir de bottles do Homebrew, que hoje só existem para `sonoma` x86_64; para regenerar o universal é preciso compilar `wireguard-go`/`wireguard-tools` da fonte fixada. O script confere o resultado contra `resources/bin/SHA256SUMS` e falha se divergir; para subir uma versão nova é preciso atualizar o pin à mão.
 
+## [macos-0.7.0] - 2026-10-17
+
+Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por IP, helper root).
+
+### Adicionado
+
+- **Topo com Configurações, Como funciona e Checar atualizações.** O painel *Como funciona* explica o passo a passo do macOS, inclusive que a separação é por endereço e não por processo. *Checar atualizações* mostra o resultado no tooltip.
+- **Configurações:** abrir ao iniciar a sessão (o app sobe só na barra de menu e religa o bypass se ele estava ativo), modo desenvolvedor (log na janela), rota automática ou manual, troca automática de servidor e o opt-in do Vencord, que sai do card Extras.
+- **Conexão em abas (Proton Otimizado | Arquivo .conf)** com o plano da conta (`-check-plan`, só pela sessão salva) e *Atualizar plano*.
+- **Escolha da rota:** lista do catálogo MX/US com ping. A rota manual valida o servidor com `-manual-probe` e fica mantida; a automática fica com o menor ping. Na primeira abertura no modo Proton, uma pergunta única pergunta qual das duas o usuário quer. A regra é a mesma da GUI (`src/main/proton/route-prompt.ts`).
+- **Otimizar rota:** `-speed-test` mede download e upload de verdade num túnel netstack do próprio `proton-confgen`. Por isso, ao contrário do Windows, o Discord **não** fecha durante a medição e as rotas do Mac não mudam. Medido neste Mac: 6 de 8 rotas medidas, ~16 Mbps de download e ~9 Mbps de upload. O `-require-discord` ficou de fora porque, com ele, nenhuma rota passava no macOS.
+- **Card de tráfego** com o bypass ativo: ping até `gateway.discord.gg` (que fica nos ranges tunelados) e download/upload da `utun` do túnel lidos em `netstat -ibn`, sem root. O helper não muda e não pede a senha de novo.
+- **Troca automática de servidor** (rota automática, conta Proton): três falhas seguidas da sonda pelo túnel (~45 s) geram o próximo melhor servidor, sem o atual, e trocam o túnel sem reiniciar o Discord.
+- **Reiniciar bypass:** derruba e sobe o túnel numa operação só e reinicia o Discord.
+- **Restaurar internet:** aparece depois de uma falha de ativação ou desativação e roda o `down` idempotente do helper.
+
+### Alterado
+
+- **Desativar não fecha mais o Discord.** Com o Discord aberto, o túnel fica no ar até ele fechar; o app confere a cada 10 s e então desliga o túnel e restaura a rede. Reativar cancela a espera, *Desativar agora* mantém o comportamento antigo e uma suspensão nessa espera não religa ao acordar. Como o split é por IP, enquanto a desativação estiver pendente outros sites nos mesmos ranges da Cloudflare também continuam no túnel.
+- **Janela redimensionável:** duas colunas quando larga, uma quando estreita, com o conteúdo rolando por dentro.
+- Animações leves (painéis, avisos, ponto de status), desligadas com `prefers-reduced-motion`.
+
+### Corrigido
+
+- **Sair nunca fica preso:** a limpeza tem prazo de 90 s (`QUIT_CLEANUP_TIMEOUT_MS`) e o app encerra mesmo que algum passo trave.
+
+### Não verificado
+
+- Desativação adiada, Reiniciar bypass, Restaurar internet e a troca automática foram cobertos por testes unitários e pela interface com a API simulada. Falta o teste ponta a ponta no app empacotado com túnel real.
+
 ## [macos-0.6.0] - 2026-10-08
 
 Primeira release do cliente macOS no repositório oficial (tag `macos-v0.6.0`).

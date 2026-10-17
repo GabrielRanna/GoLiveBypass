@@ -973,6 +973,20 @@ html[data-theme='dark'] .switch-row input:checked + .switch-track .switch-thumb 
   cursor: not-allowed;
 }
 
+/* Janela estreita: o texto do botao rouba largura do seletor de rota, que e o
+   que o usuario precisa ler. Fica so o icone — que ainda gira durante a
+   medicao — com title/aria-label explicando a acao. */
+@media (max-width: 640px) {
+  .proton-btn--action {
+    width: 32px;
+    padding: 0;
+  }
+
+  .proton-btn--action .proton-btn__label {
+    display: none;
+  }
+}
+
 .proton-hint {
   font-size: 10.5px;
   color: var(--muted);

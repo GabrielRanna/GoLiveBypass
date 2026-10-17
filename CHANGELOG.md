@@ -6,6 +6,12 @@ segue [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
 ## [Unreleased]
 
+### Interface: botão "Otimizar rota" vira só ícone em janela estreita
+
+Em janelas com até 640 px de largura o rótulo do botão tomava espaço do seletor de rota, justamente onde a linha é mais apertada (em 641 px o seletor ficava com 145 px). Abaixo desse ponto o botão vira um quadrado de 32 px só com o ícone — que já gira durante a medição — e `title` e `aria-label` continuam descrevendo a ação. O seletor ganha a largura de volta (191 px em 640 px). Na largura de abertura (720 px) nada muda.
+
+**Verificado:** medição em 9 larguras (360–720 px) sobre a folha de estilo do app e `npm test -- tests/proton-ui.test.ts`.
+
 ## [2.0.10] - 2026-10-15
 
 ### Windows: "Iniciar com o Windows" grava a Run key pelo Electron, sem abrir o `reg.exe add`

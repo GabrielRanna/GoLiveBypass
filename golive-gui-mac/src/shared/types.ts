@@ -23,12 +23,34 @@ export interface AppSettings {
   vencordOptIn?: boolean;
   /** Mostra o log na janela principal. */
   devMode?: boolean;
+  /** De onde veio o perfil atual: conta Proton ou .conf importado. */
+  connectionMode?: 'proton' | 'conf';
+  protonRoutePreference?: 'auto' | 'manual';
+  protonRoutePreferencePrompted?: boolean;
+  /** Rota do perfil atual. */
+  protonServer?: SavedRoute;
+  /** Troca de servidor quando a rota Proton cai (padrão: ligado). */
+  autoFailover?: boolean;
+}
+
+export interface SavedRoute {
+  server: string;
+  country: string;
+  city: string;
+  pingMs?: number;
+  downloadMbps?: number;
+  uploadMbps?: number;
 }
 
 /** Preferências que a janela de Configurações lê e grava. */
 export interface UiSettings {
   openAtLogin: boolean;
   devMode: boolean;
+  routePreference: 'auto' | 'manual';
+  autoFailover: boolean;
+  connectionMode: 'proton' | 'conf';
+  /** Primeira abertura no modo Proton sem rota decidida. */
+  askRoutePreference: boolean;
 }
 
 export interface UpdateInfo {

@@ -507,3 +507,65 @@ code {
 body[data-state="pending"] .state-label { color: var(--warn); }
 body[data-state="pending"] .state-dot   { background: var(--warn); opacity: 1; }
 body[data-state="pending"] button.power svg { stroke: var(--warn); }
+
+/* ── Conexão: abas, plano, rota ───────────────────────────────────── */
+.tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; border: 1px solid var(--border); border-radius: 10px; }
+.tab {
+  -webkit-app-region: no-drag;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 6px 8px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--subtext); font-size: 12px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tab svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linejoin: round; }
+.tab[aria-selected="true"] { color: var(--accent); border-color: var(--accent); background: rgba(91,106,245,0.10); }
+.pane { display: flex; flex-direction: column; gap: 10px; animation: rise-in 0.2s ease-out; }
+.pane[hidden] { display: none; }
+.login-box, .route-box { display: flex; flex-direction: column; gap: 8px; }
+.login-box[hidden], .route-box[hidden], .plan-row[hidden] { display: none; }
+.login-box .pill-btn { align-self: flex-start; }
+.plan-row { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--ok); }
+.step-label { font-size: 12px; font-weight: 600; }
+.route-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.route-row select {
+  flex: 1 1 180px; min-width: 0;
+  padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 12px;
+  -webkit-app-region: no-drag;
+}
+.route-row .pill-btn { display: inline-flex; align-items: center; gap: 6px; }
+.route-row .pill-btn svg { width: 13px; height: 13px; stroke: currentColor; stroke-width: 2; fill: none; stroke-linecap: round; }
+.route-row .pill-btn.spinning svg { animation: spin 0.9s linear infinite; }
+.status-line {
+  font-size: 12px; line-height: 1.45; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid var(--border); color: var(--text);
+}
+.status-line[hidden] { display: none; }
+.status-line.ok  { border-color: rgba(39,174,96,0.5); background: rgba(39,174,96,0.10); color: var(--ok); }
+.status-line.err { border-color: rgba(231,76,60,0.5); background: rgba(231,76,60,0.08); color: var(--danger); }
+
+/* ── Card de tráfego ──────────────────────────────────────────────── */
+.traffic {
+  width: 100%; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface);
+}
+.traffic[hidden] { display: none; }
+.t-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.t-k { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: var(--subtext); }
+.t-v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ── Diálogo da pergunta de rota ──────────────────────────────────── */
+.panel.dialog { align-items: center; padding: 24px; }
+.panel.dialog .panel-sheet { max-width: 360px; }
+.panel.dialog .panel-body { padding: 20px; gap: 10px; }
+.panel.dialog h2 { font-size: 16px; font-weight: 700; }
+.choice {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border);
+  background: transparent; color: var(--text); cursor: pointer; transition: border-color 0.15s, background 0.15s;
+}
+.choice:hover, .choice:focus-visible { border-color: var(--accent); background: rgba(91,106,245,0.08); outline: none; }
+.choice-name { font-size: 13px; font-weight: 600; }
+.choice-desc { font-size: 12px; color: var(--subtext); }
+.badge { font-size: 10px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 5px; margin-left: 4px; }
+.btn-row.end { justify-content: flex-end; }

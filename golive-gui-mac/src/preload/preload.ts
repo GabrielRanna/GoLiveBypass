@@ -8,8 +8,10 @@ contextBridge.exposeInMainWorld('golive', {
   restart:        () => ipcRenderer.invoke('golive', 'tunnel:restart'),
   restoreNetwork: () => ipcRenderer.invoke('golive', 'tunnel:restoreNetwork'),
   status:         () => ipcRenderer.invoke('golive', 'tunnel:status'),
-  fetchProton:    (username: string, password?: string) =>
-                    ipcRenderer.invoke('golive', 'proton:fetch', { username, password }),
+  fetchProton:    (username: string, password?: string, mode?: string, server?: string) =>
+                    ipcRenderer.invoke('golive', 'proton:fetch', { username, password, mode, server }),
+  protonRoutes:   () => ipcRenderer.invoke('golive', 'proton:routes'),
+  protonPlan:     (force = false) => ipcRenderer.invoke('golive', 'proton:plan', { force }),
   exitInfo:       () => ipcRenderer.invoke('golive', 'tunnel:exit'),
   vencordPermission:   () => ipcRenderer.invoke('golive', 'vencord:permission'),
   vencordOpenSettings: () => ipcRenderer.invoke('golive', 'vencord:openSettings'),
@@ -22,10 +24,12 @@ contextBridge.exposeInMainWorld('golive', {
   downloadUpdate: (version: string) => ipcRenderer.invoke('golive', 'app:downloadUpdate', { version }),
   appInfo:        () => ipcRenderer.invoke('golive', 'app:info'),
   getSettings:    () => ipcRenderer.invoke('golive', 'settings:get'),
-  setSettings:    (patch: { openAtLogin?: boolean; devMode?: boolean }) => ipcRenderer.invoke('golive', 'settings:set', patch),
+  setSettings:    (patch: Record<string, unknown>) => ipcRenderer.invoke('golive', 'settings:set', patch),
 
   onVencordPermission: (cb: (p: { granted: boolean }) => void) => ipcRenderer.on('vencord:permission', (_e, p) => cb(p)),
   onTunnelState: (cb: (p: { state: string }) => void) => ipcRenderer.on('tunnel:state', (_e, p) => cb(p)),
+  onTraffic:     (cb: (p: { pingMs: number | null; downMbps: number | null; upMbps: number | null }) => void) => ipcRenderer.on('tunnel:traffic', (_e, p) => cb(p)),
+  onRoute:       (cb: (r: unknown) => void) => ipcRenderer.on('proton:route', (_e, r) => cb(r)),
   onLog:             (cb: (m: string) => void) => ipcRenderer.on('log', (_e, m) => cb(m)),
   onProtonProgress:  (cb: (m: string) => void) => ipcRenderer.on('proton:progress', (_e, m) => cb(m)),
   onUpdateAvailable: (cb: (info: any) => void) => ipcRenderer.on('update:available', (_e, i) => cb(i)),

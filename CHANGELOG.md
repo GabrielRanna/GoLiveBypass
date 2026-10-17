@@ -38,6 +38,70 @@ Em janelas com até 640 px de largura o rótulo do botão tomava espaço do sele
 
 **Verificado:** medição em 9 larguras (360–720 px) sobre a folha de estilo do app e `npm test -- tests/proton-ui.test.ts`.
 
+## [macos-0.7.0] - 2026-10-17
+
+Paridade com a GUI Windows 2.0.10 onde a arquitetura do macOS permite (split por IP, helper root).
+
+### Adicionado
+
+- **Topo com Configurações, Como funciona e Checar atualizações.** O painel *Como funciona* explica o passo a passo do macOS, inclusive que a separação é por endereço e não por processo. *Checar atualizações* mostra o resultado no tooltip.
+- **Configurações:** tema (Sistema, Claro ou Escuro, pelo `nativeTheme.themeSource`, que troca também o vidro da janela), abrir ao iniciar a sessão (o app sobe só na barra de menu e religa o bypass se ele estava ativo), modo desenvolvedor (log na janela), rota automática ou manual, troca automática de servidor e o opt-in do Vencord, que sai do card Extras.
+- **Conexão em abas (Proton Otimizado | Arquivo .conf)** com o plano da conta (`-check-plan`, só pela sessão salva) e *Atualizar plano*.
+- **Escolha da rota:** lista do catálogo MX/US com ping. A rota manual valida o servidor com `-manual-probe` e fica mantida; a automática fica com o menor ping. Na primeira abertura no modo Proton, uma pergunta única pergunta qual das duas o usuário quer. A regra é a mesma da GUI (`src/main/proton/route-prompt.ts`).
+- **Otimizar rota:** `-speed-test` mede download e upload de verdade num túnel netstack do próprio `proton-confgen`. Por isso, ao contrário do Windows, o Discord **não** fecha durante a medição e as rotas do Mac não mudam. Medido neste Mac: 6 de 8 rotas medidas, ~16 Mbps de download e ~9 Mbps de upload. O `-require-discord` ficou de fora porque, com ele, nenhuma rota passava no macOS.
+- **Card de ping** com o bypass ativo: ping até `gateway.discord.gg`, que fica nos ranges tunelados, a cada 10 s. Sem download/upload: com o Discord parado eles ficavam em 0 quase o tempo todo. O helper não muda e não pede a senha de novo.
+- **Troca automática de servidor** (rota automática, conta Proton): três falhas seguidas da sonda pelo túnel (~45 s) geram o próximo melhor servidor, sem o atual, e trocam o túnel sem reiniciar o Discord.
+- **Reiniciar bypass:** derruba e sobe o túnel numa operação só e reinicia o Discord.
+- **Ícones com a rosa da GUI Windows:** no Dock, a rosa branca num quadrado grafite com brilho rosa; na barra de menu, a silhueta da rosa como imagem template, que segue o tema claro ou escuro. Gerados por `scripts/make-icons.swift` a partir de `golive-gui/build/icon.png`.
+- **Restaurar internet:** aparece depois de uma falha de ativação ou desativação e roda o `down` idempotente do helper.
+
+### Alterado
+
+- **Desativar não fecha mais o Discord.** Com o Discord aberto, o túnel fica no ar até ele fechar; o app confere a cada 10 s e então desliga o túnel e restaura a rede. Reativar cancela a espera, *Desativar agora* mantém o comportamento antigo e uma suspensão nessa espera não religa ao acordar. Como o split é por IP, enquanto a desativação estiver pendente outros sites nos mesmos ranges da Cloudflare também continuam no túnel.
+- **Janela redimensionável:** duas colunas quando larga, uma quando estreita, com o conteúdo rolando por dentro.
+- Animações leves (painéis, avisos, ponto de status), desligadas com `prefers-reduced-motion`.
+
+### Corrigido
+
+- **Sair nunca fica preso:** a limpeza tem prazo de 90 s (`QUIT_CLEANUP_TIMEOUT_MS`) e o app encerra mesmo que algum passo trave.
+
+### Verificado ponta a ponta (DMG universal instalado, macOS 26, conta Proton Free)
+
+- Pergunta de rota na primeira abertura, plano "Proton VPN Free" e ativação pela `utun5`.
+- **Troca automática com falha real:** o perfil salvo fechava o handshake mas não passava dados ("País indisponível", ping sem resposta). Três sondas depois, o app gerou `US-FREE#135`, trocou o túnel e a saída voltou (US) sem reiniciar o Discord.
+- Card de ping: 117 a 199 ms até o gateway do Discord pelo túnel.
+- Otimizar rota com o bypass ativo e o Discord aberto: `MX-FREE#16`, ↓ 22,7 / ↑ 8,7 Mbps. A ativação seguinte saiu pelo México.
+- Desativar com o Discord aberto: estado pendente, túnel no ar e mesmo PID do Discord. Ao fechar o Discord, o túnel caiu e a saída voltou para BR. Reativar na espera cancelou sem reiniciar o Discord.
+- Reiniciar bypass (Discord com PID novo, saída MX), Restaurar internet (zero rotas do túnel e zero rejeições IPv6) e Sair com o túnel ativo (1 s, rotas limpas). Ao reabrir, a reconexão automática voltou pelo México.
+## [macos-0.6.0] - 2026-10-08
+
+Primeira release do cliente macOS no repositório oficial (tag `macos-v0.6.0`).
+
+### Alterado
+
+- **Vencord/FakeNitro é opt-in:** a injeção só acontece com a opção **Extras › Instalar o Vencord com o plugin FakeNitro** ligada (desligada por padrão). O FakeNitro só é ligado se o usuário nunca escolheu nada para ele no Vencord, e o app do Discord só é tocado depois de a permissão de Gerenciamento de Apps estar confirmada (com o Vencord já injetado, o único ajuste é o FakeNitro, que fica num arquivo do próprio usuário).
+- **Releases não viram latest:** `golive-gui-mac/scripts/release-mac.mjs` (usado pelo workflow `release-macos.yml`) cria a release `macos-v<versão>` com `make_latest: false`, confere antes de publicar o DMG (versão, repositório de atualização e `proton-confgen` contra o manifesto) e, depois, os assets, o digest e que `/releases/latest` não mudou — se algo falhar, volta a release para draft, devolve a latest anterior e falha. Drafts são publicados com `acao=publicar-rascunho`, nunca pelo botão do GitHub (que marca latest por padrão).
+- **Atualização conferida:** o updater só oferece release com SHA-256 publicado (digest do GitHub ou sidecar `.sha256`), confere o DMG baixado antes de abrir e baixa só a release que o próprio app encontrou. Tags `macos-vX.Y.Z` são escolhidas pela maior versão, sem depender da ordem da API.
+- **`proton-confgen` da fonte:** compilado de `tools/proton-confgen` para darwin x64/arm64 com as flags determinísticas da GUI, juntado em universal e descrito em `proton-confgen-manifest.json` (commit da fonte, versão do Go e SHA-256). O app recusa rodar um binário que não confere com o manifesto; o binário deixou de ser commitado.
+- **Conf sem keepalive:** perfis sem `PersistentKeepalive` recebem `25`, para o handshake não depender de o Discord estar aberto.
+
+### Corrigido
+
+- Ícone da barra de menu (antes invisível) e ícone próprio do app e do DMG.
+- `ProtonFetcher` não fica mais preso em `busy`: falha ao iniciar o processo resolve na hora e cada etapa tem limite de 3 minutos.
+- Rotas IPv6 de rejeição que sobram de um crash são removidas ao abrir o app sem túnel ativo.
+- Reiniciar o Discord não deixa promessa pendente quando o `spawn` falha.
+- **Abertura não pode mais travar o botão Ativar:** a limpeza de rotas IPv6 do arranque roda dentro da operação do túnel e segura o estado `busy` sem emitir evento; um renderer que carregasse nessa janela ficava com o botão desabilitado até reiniciar o app. A limpeza agora devolve o estado ao terminar.
+- **Guarda de release falha fechada:** erro de API ao ler `/releases/latest` interrompe antes de publicar (antes era lido como "repositório sem latest" e deixava passar), digest ausente na resposta é erro em vez de conferência pulada, e a reversão para draft reporta a própria falha em vez de morrer no meio.
+- **Atualização a partir de build beta:** a comparação de versões do updater quebrava com sufixo de prerelease e nunca oferecia a versão estável seguinte.
+
+### Removido
+
+- Cópia não usada de `golivebypass.js` em `golive-gui-mac/resources/extra/bypass/`.
+
+### Infra
+
+- Workflow `macos-tests.yml`: typecheck, testes e build do `proton-confgen` em PRs e pushes que tocam o cliente macOS.
 ## [2.0.10] - 2026-10-15
 
 ### Windows: "Iniciar com o Windows" grava a Run key pelo Electron, sem abrir o `reg.exe add`

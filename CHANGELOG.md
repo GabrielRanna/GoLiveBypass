@@ -44,7 +44,7 @@ Ajustes da revisão da 0.7.0.
 
 ### Corrigido
 
-- **Restaurar internet também na desativação automática.** Se o túnel não cai depois de o Discord fechar, o erro vai junto no estado do túnel e o botão aparece, como o texto da 0.7.0 prometia.
+- **Restaurar internet também na desativação automática.** Se o túnel não cai depois de o Discord fechar, o erro vai junto no estado do túnel e o botão aparece com um aviso próprio ("Não deu para desligar o túnel. Use Restaurar internet."), que o IP de saída não sobrescreve, como o texto da 0.7.0 prometia.
 - **Desativação pendente sobrevive a um encerramento abrupto.** Se o app morrer na espera e o túnel ficar de pé, no boot ele retoma a espera (Discord aberto) ou derruba o túnel (Discord fechado), em vez de deixar o túnel órfão com a preferência "inativo".
 - **Mensagens de erro sem "veja o log" escondido.** Com o log desligado por padrão, elas agora mandam ligar o Modo desenvolvedor em Configurações. O Otimizar rota sem velocidades medidas diz "A medição não retornou velocidades válidas de download e upload.", como a GUI.
 - **Checar atualizações** responde "Já está procurando, aguarde…" no clique repetido durante a busca.

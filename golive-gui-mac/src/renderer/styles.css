@@ -344,6 +344,7 @@ body[data-state="busy"]     .state-label { color: var(--accent); }
   line-height: 1.5;
 }
 .hint.warn { color: var(--warn); }
+#error-hint { color: var(--danger); }
 .hint[hidden] { display: none; }
 
 /* ── Log ──────────────────────────────────────────────────────────── */

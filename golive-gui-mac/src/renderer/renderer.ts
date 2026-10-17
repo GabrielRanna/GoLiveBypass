@@ -26,6 +26,13 @@ const pendingHint = document.getElementById('pending-hint')!;
 const restartBtn  = document.getElementById('restart-btn') as HTMLButtonElement;
 const offNowBtn   = document.getElementById('off-now-btn') as HTMLButtonElement;
 const restoreBtn  = document.getElementById('restore-btn') as HTMLButtonElement;
+const errorHint   = document.getElementById('error-hint')!;
+
+function showRestore(msg: string) {
+  errorHint.textContent = msg;
+  errorHint.hidden = restoreBtn.hidden = false;
+}
+function hideRestore() { errorHint.hidden = restoreBtn.hidden = true; }
 const updateBanner  = document.getElementById('update-banner')!;
 const updateMsg     = document.getElementById('update-msg')!;
 const updateBtn     = document.getElementById('update-btn') as HTMLButtonElement;
@@ -78,7 +85,7 @@ function setState(s: UiState) {
     (document.getElementById('traffic') as HTMLElement).hidden = true;
   }
   offNowBtn.hidden = pendingHint.hidden = s !== 'pending';
-  if (s === 'busy') restoreBtn.hidden = true;
+  if (s === 'busy') hideRestore();
   if (s === 'pending') {
     stateLabel.textContent = 'Desliga ao fechar o Discord';
     toggle.setAttribute('aria-label', 'Manter ativo');
@@ -132,8 +139,7 @@ golive.onTunnelState?.((p: { state: string; error?: string }) => {
   applyTunnelState(p.state);
   if (p.error) {
     log(`Erro: ${p.error}`, true);
-    ipLabel.textContent = 'Erro ao desligar o túnel.';
-    restoreBtn.hidden = false;
+    showRestore('Não deu para desligar o túnel. Use Restaurar internet.');
   }
 });
 
@@ -159,11 +165,11 @@ toggle.addEventListener('click', async () => {
     log(`Erro: ${msg}${r.detail ? ` — ${r.detail}` : ''}`, true);
     await refresh();
     ipLabel.textContent = `Erro: ${msg}`;
-    if (r.error !== 'busy' && r.error !== 'user_cancelled') restoreBtn.hidden = false;
+    if (r.error !== 'busy' && r.error !== 'user_cancelled') showRestore('Se a internet ficou presa, use Restaurar internet.');
     return;
   }
 
-  restoreBtn.hidden = true;
+  hideRestore();
   applyTunnelState(r?.state ?? (deactivating ? 'inactive' : 'active'));
 });
 
@@ -175,9 +181,9 @@ async function runSecondary(btn: HTMLButtonElement, label: string, call: () => P
     const r = await call();
     if (r?.error) {
       log(`Erro: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`, true);
-      if (r.error !== 'busy' && r.error !== 'user_cancelled') restoreBtn.hidden = false;
+      if (r.error !== 'busy' && r.error !== 'user_cancelled') showRestore('Se a internet ficou presa, use Restaurar internet.');
     } else if (btn === restoreBtn) {
-      restoreBtn.hidden = true;
+      hideRestore();
     }
   } finally {
     btn.disabled = false;

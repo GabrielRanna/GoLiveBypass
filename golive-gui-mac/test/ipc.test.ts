@@ -15,7 +15,7 @@ describe('makeRouter', () => {
     const router = makeRouter({ setSettings } as any);
     await router('settings:set', { openAtLogin: true, devMode: 'sim', routePreference: 'qualquer', extra: 1 });
     expect(setSettings).toHaveBeenCalledWith({
-      openAtLogin: true, devMode: undefined, routePreference: undefined, autoFailover: undefined, routePromptAnswered: false,
+      openAtLogin: true, devMode: undefined, theme: undefined, routePreference: undefined, autoFailover: undefined, routePromptAnswered: false,
     });
   });
 

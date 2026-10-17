@@ -1,5 +1,5 @@
 import {
-  app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, powerMonitor, net, shell,
+  app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage, nativeTheme, powerMonitor, net, shell,
 } from 'electron';
 import * as os from 'os';
 import * as fs from 'fs';
@@ -24,7 +24,7 @@ import { FailoverMonitor } from './tunnel/failover';
 import { pingThroughTunnel } from './tunnel/traffic';
 import { readSavedAccount, clearSavedAccount } from './proton/account';
 import { checkForUpdate, downloadAndInstall, type UpdateInfo, type PendingUpdate } from './updater';
-import type { AppSettings, UiSettings } from '../shared/types';
+import type { AppSettings, UiSettings, ThemeChoice } from '../shared/types';
 
 const home   = os.homedir();
 const user   = os.userInfo().username;
@@ -622,6 +622,7 @@ const handlers = {
     return {
       openAtLogin: app.getLoginItemSettings().openAtLogin,
       devMode: st.devMode === true,
+      theme: st.theme ?? 'system',
       routePreference: st.protonRoutePreference === 'manual' ? 'manual' : 'auto',
       autoFailover: st.autoFailover !== false,
       connectionMode: st.connectionMode ?? 'proton',
@@ -629,10 +630,12 @@ const handlers = {
     };
   },
 
-  async setSettings(patch: Partial<Pick<UiSettings, 'openAtLogin' | 'devMode' | 'routePreference' | 'autoFailover'>> & { routePromptAnswered?: boolean }): Promise<UiSettings> {
+  async setSettings(patch: Partial<Pick<UiSettings, 'openAtLogin' | 'devMode' | 'theme' | 'routePreference' | 'autoFailover'>> & { routePromptAnswered?: boolean }): Promise<UiSettings> {
     if (patch.openAtLogin !== undefined) app.setLoginItemSettings({ openAtLogin: patch.openAtLogin });
+    if (patch.theme) nativeTheme.themeSource = patch.theme;
     saveSettings({
       ...(patch.devMode !== undefined ? { devMode: patch.devMode } : {}),
+      ...(patch.theme ? { theme: patch.theme as ThemeChoice } : {}),
       ...(patch.autoFailover !== undefined ? { autoFailover: patch.autoFailover } : {}),
       ...(patch.routePreference ? { protonRoutePreference: patch.routePreference, protonRoutePreferencePrompted: true } : {}),
       ...(patch.routePromptAnswered ? { protonRoutePreferencePrompted: true } : {}),
@@ -658,6 +661,8 @@ app.whenReady().then(async () => {
   if (stored && (/AllowedIPs\s*=.*(0\.0\.0\.0\/0|::\/0)/i.test(stored) || !/^PersistentKeepalive\s*=/im.test(stored))) {
     storeConfig(stored);
   }
+  // Antes da janela: o vidro e o prefers-color-scheme do renderer seguem o themeSource
+  nativeTheme.themeSource = loadSettings().theme ?? 'system';
   createTray();
   createWindow();
 

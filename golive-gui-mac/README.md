@@ -37,7 +37,7 @@ só para o tráfego do Discord. DMG **universal**: Apple Silicon e Intel.
 - **Desativar:** com o Discord aberto, o túnel fica até você fechar o Discord e então
   cai sozinho. **Desativar agora** derruba na hora. Se a rede ficar presa depois de uma
   falha, aparece **Restaurar internet**.
-- **Configurações** (engrenagem): abrir ao iniciar a sessão, modo desenvolvedor (log),
+- **Configurações** (engrenagem): tema (Sistema, Claro ou Escuro), abrir ao iniciar a sessão, modo desenvolvedor (log),
   rota automática ou manual, troca automática de servidor e o extra opcional
   **Instalar o Vencord com o plugin FakeNitro ao ativar**, que vem desligado. Ligado, o
   app injeta o Vencord no Discord (pede a permissão de **Gerenciamento de Apps**) e liga

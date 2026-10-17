@@ -23,6 +23,7 @@ export interface AppSettings {
   vencordOptIn?: boolean;
   /** Mostra o log na janela principal. */
   devMode?: boolean;
+  theme?: ThemeChoice;
   /** De onde veio o perfil atual: conta Proton ou .conf importado. */
   connectionMode?: 'proton' | 'conf';
   protonRoutePreference?: 'auto' | 'manual';
@@ -42,10 +43,13 @@ export interface SavedRoute {
   uploadMbps?: number;
 }
 
+export type ThemeChoice = 'system' | 'light' | 'dark';
+
 /** Preferências que a janela de Configurações lê e grava. */
 export interface UiSettings {
   openAtLogin: boolean;
   devMode: boolean;
+  theme: ThemeChoice;
   routePreference: 'auto' | 'manual';
   autoFailover: boolean;
   connectionMode: 'proton' | 'conf';

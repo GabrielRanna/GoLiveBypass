@@ -20,7 +20,7 @@ export interface RouterHandlers {
   downloadUpdate(payload: { version?: string }): Promise<unknown>;
   appInfo(): Promise<unknown>;
   getSettings(): Promise<unknown>;
-  setSettings(payload: { openAtLogin?: boolean; devMode?: boolean; routePreference?: 'auto' | 'manual'; autoFailover?: boolean; routePromptAnswered?: boolean }): Promise<unknown>;
+  setSettings(payload: { openAtLogin?: boolean; devMode?: boolean; theme?: 'system' | 'light' | 'dark'; routePreference?: 'auto' | 'manual'; autoFailover?: boolean; routePromptAnswered?: boolean }): Promise<unknown>;
 }
 
 const optBool = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
@@ -28,6 +28,7 @@ const optStr = (v: unknown, max = 200) => (typeof v === 'string' && v.length <= 
 const FETCH_MODES = ['auto', 'manual', 'speed', 'catalog'] as const;
 const fetchMode = (v: unknown) => FETCH_MODES.find(m => m === v);
 const routePref = (v: unknown) => (v === 'auto' || v === 'manual' ? v : undefined);
+const theme = (v: unknown) => (v === 'system' || v === 'light' || v === 'dark' ? v : undefined);
 
 export function makeRouter(h: RouterHandlers) {
   return async (channel: string, payload: any): Promise<unknown> => {
@@ -61,6 +62,7 @@ export function makeRouter(h: RouterHandlers) {
       case 'settings:set':        return h.setSettings({
         openAtLogin: optBool(payload?.openAtLogin),
         devMode: optBool(payload?.devMode),
+        theme: theme(payload?.theme),
         routePreference: routePref(payload?.routePreference),
         autoFailover: optBool(payload?.autoFailover),
         routePromptAnswered: payload?.routePromptAnswered === true,

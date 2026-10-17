@@ -571,3 +571,12 @@ body[data-state="pending"] button.power svg { stroke: var(--warn); }
 
 .footer-link { color: var(--accent); text-decoration: none; -webkit-app-region: no-drag; }
 .footer-link:hover { text-decoration: underline; }
+
+/* ── Tema ─────────────────────────────────────────────────────────── */
+.theme-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 13px; }
+.segmented { display: inline-flex; padding: 2px; gap: 2px; border: 1px solid var(--border); border-radius: 8px; -webkit-app-region: no-drag; }
+.segmented label { position: relative; cursor: pointer; }
+.segmented input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.segmented span { display: block; padding: 4px 10px; border-radius: 6px; font-size: 12px; color: var(--subtext); transition: background 0.15s, color 0.15s; }
+.segmented input:checked + span { background: var(--accent); color: #fff; }
+.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }

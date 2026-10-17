@@ -539,8 +539,10 @@ const devMode     = document.getElementById('dev-mode') as HTMLInputElement;
 const autoFailover = document.getElementById('auto-failover') as HTMLInputElement;
 const routePrefInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="route-pref"]'));
 
+const themeInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="theme"]'));
+
 interface UiSettings {
-  openAtLogin: boolean; devMode: boolean; routePreference: 'auto' | 'manual';
+  openAtLogin: boolean; devMode: boolean; theme: 'system' | 'light' | 'dark'; routePreference: 'auto' | 'manual';
   autoFailover: boolean; connectionMode: 'proton' | 'conf'; askRoutePreference: boolean;
 }
 
@@ -548,6 +550,7 @@ function applySettings(s: UiSettings | null) {
   if (!s) return;
   openAtLogin.checked = s.openAtLogin;
   devMode.checked = s.devMode;
+  themeInputs.forEach(i => { i.checked = i.value === s.theme; });
   logEl.hidden = !s.devMode;
   if (s.devMode) logEl.scrollTop = logEl.scrollHeight;
   routePreference = s.routePreference;
@@ -565,6 +568,7 @@ async function saveSetting(input: HTMLInputElement, patch: Record<string, unknow
 
 openAtLogin.addEventListener('change', () => saveSetting(openAtLogin, { openAtLogin: openAtLogin.checked }));
 devMode.addEventListener('change', () => saveSetting(devMode, { devMode: devMode.checked }));
+themeInputs.forEach(i => i.addEventListener('change', () => { if (i.checked) void saveSetting(i, { theme: i.value }); }));
 autoFailover.addEventListener('change', () => saveSetting(autoFailover, { autoFailover: autoFailover.checked }));
 routePrefInputs.forEach(i => i.addEventListener('change', async () => {
   if (!i.checked) return;

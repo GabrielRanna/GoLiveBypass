@@ -30,9 +30,10 @@ const errorHint   = document.getElementById('error-hint')!;
 
 function showRestore(msg: string) {
   errorHint.textContent = msg;
+  errorHint.classList.remove('ok');
   errorHint.hidden = restoreBtn.hidden = false;
 }
-function hideRestore() { errorHint.hidden = restoreBtn.hidden = true; }
+function hideRestore() { errorHint.hidden = restoreBtn.hidden = true; errorHint.classList.remove('ok'); }
 const updateBanner  = document.getElementById('update-banner')!;
 const updateMsg     = document.getElementById('update-msg')!;
 const updateBtn     = document.getElementById('update-btn') as HTMLButtonElement;
@@ -183,7 +184,14 @@ async function runSecondary(btn: HTMLButtonElement, label: string, call: () => P
       log(`Erro: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`, true);
       if (r.error !== 'busy' && r.error !== 'user_cancelled') showRestore('Se a internet ficou presa, use Restaurar internet.');
     } else if (btn === restoreBtn) {
-      hideRestore();
+      if (r?.online === false) {
+        showRestore('O túnel foi limpo, mas o Discord ainda não responde. Confira o Wi-Fi e tente de novo.');
+      } else {
+        hideRestore();
+        errorHint.textContent = 'Internet restaurada.';
+        errorHint.classList.add('ok');
+        errorHint.hidden = false;
+      }
     }
   } finally {
     btn.disabled = false;

@@ -227,6 +227,10 @@ async function shutdown(): Promise<void> {
   } finally { app.exit(0); }
 }
 
+/** Qualquer resposta HTTP do Discord prova que os ranges dele voltaram a sair direto. */
+const discordReachable = () =>
+  net.fetch('https://discord.com/api/v9/gateway', { signal: AbortSignal.timeout(8000) }).then(() => true, () => false);
+
 async function waitForNetwork(timeoutMs: number): Promise<void> {
   const until = Date.now() + timeoutMs;
   while (!net.isOnline() && Date.now() < until) await new Promise(r => setTimeout(r, 1000));
@@ -510,17 +514,19 @@ const handlers = {
       deferredOff.cancel();
       pushState('deactivating');
       const r = await runDeactivation(await activationOpts());
+      let online = false;
       if (r.ok) {
         tunnelActive = false;
         resumeTunnel = false;
         saveSettings({ lastTunnelState: 'inactive' });
-        sendToWindow('log', 'Rede restaurada.');
+        online = await discordReachable();
+        sendToWindow('log', online ? 'Rede restaurada: o Discord responde direto.' : 'Túnel limpo, mas o Discord ainda não responde.');
       } else {
         sendToWindow('log', `Falha ao restaurar a rede: ${r.error}${r.detail ? ` — ${r.detail}` : ''}`);
       }
       updateTray();
       pushState();
-      return r.ok ? { ok: true } : { ok: false, error: r.error, detail: r.detail };
+      return r.ok ? { ok: true, online } : { ok: false, error: r.error, detail: r.detail };
     });
   },
 
@@ -740,7 +746,7 @@ app.whenReady().then(async () => {
           updateTray();
           return;
         }
-        if (await cleanupStaleV6Rejects(binDir)) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
+        if (await cleanupStaleV6Rejects()) sendToWindow('log', 'Rotas IPv6 de uma sessão anterior removidas.');
       } finally {
         // O renderer que carregou no meio da limpeza recebeu busy=true e não tem
         // como sair: só um tunnel:state devolve o botão Ativar.

@@ -48,6 +48,13 @@ Ajustes da revisão da 0.7.0.
 - **Desativação pendente sobrevive a um encerramento abrupto.** Se o app morrer na espera e o túnel ficar de pé, no boot ele retoma a espera (Discord aberto) ou derruba o túnel (Discord fechado), em vez de deixar o túnel órfão com a preferência "inativo".
 - **Mensagens de erro sem "veja o log" escondido.** Com o log desligado por padrão, elas agora mandam ligar o Modo desenvolvedor em Configurações. O Otimizar rota sem velocidades medidas diz "A medição não retornou velocidades válidas de download e upload.", como a GUI.
 - **Checar atualizações** responde "Já está procurando, aguarde…" no clique repetido durante a busca.
+- **Desligar não exige o helper desta versão.** Se o helper instalado não bate com os binários do app (atualização que trocou o helper, bundle alterado), desativar, Restaurar internet e a limpeza do boot tentam antes o `sudo -n helper down` do helper instalado, que usa os binários da pasta root dele. Só se isso falhar o app reinstala o helper e pede a senha. Antes, cancelar essa senha deixava o túnel de pé e o Restaurar internet sem efeito. Ativar continua exigindo o helper desta versão. Mesma regra da 2.0.12: nenhuma falha sai sem tentar restaurar a rede.
+- **Restaurar internet confere a saída.** Depois de limpar o túnel, o app testa se o Discord responde direto e mostra "Internet restaurada." ou, sem resposta, mantém o botão com "o Discord ainda não responde, confira o Wi-Fi".
+- **Pergunta de rota:** uma rota salva vazia (`{}`) não conta mais como rota usada, mesma correção da GUI na 2.0.12.
+
+### Interface
+
+- **Otimizar rota vira só ícone quando a linha da rota é estreita** (como a GUI 2.0.11). Por container query, vale tanto na janela de 420 px quanto na coluna da direita do layout em duas colunas. Medido em 420 px: a seleção passou de 220 para 306 px e mostra servidor e cidade inteiros.
 
 ### Testes e docs
 

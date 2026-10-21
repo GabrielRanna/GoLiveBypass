@@ -1,5 +1,5 @@
 import { pickLowestPing, type ProtonFetchResult } from '../proton/fetch';
-import { buildPhoneConf, PHONE_DEVICE_NAME, type PhonePlatform } from './phone-conf';
+import { buildPhoneConf, PHONE_DEVICE_NAME } from './phone-conf';
 import { confToQrDataUrl } from './qr';
 import type { PhoneMeta } from '../../shared/types';
 
@@ -42,7 +42,7 @@ export class PhoneConfService {
 
   get generating(): boolean { return this.busy; }
 
-  async generate(platform: PhonePlatform, delivery: 'qr' | 'file'): Promise<GenerateResult> {
+  async generate(delivery: 'qr' | 'file'): Promise<GenerateResult> {
     if (this.busy || this.d.isBusy()) return { ok: false, error: 'busy' };
     this.clear();
     const run = ++this.run;
@@ -59,7 +59,7 @@ export class PhoneConfService {
       // Gerar de novo escolheria o mesmo servidor: quem falha no teste dá a vez ao próximo por ping
       let gen: ProtonFetchResult = { ok: false, error: 'unknown' };
       for (let attempt = 0; best && attempt < PROBE_ATTEMPTS; attempt++) {
-        gen = await this.d.fetch({ mode: 'manual', server: best.server, deviceName: PHONE_DEVICE_NAME[platform], confOut: tmp });
+        gen = await this.d.fetch({ mode: 'manual', server: best.server, deviceName: PHONE_DEVICE_NAME, confOut: tmp });
         if (run !== this.run) return { ok: false, error: 'unknown' };
         if (gen.ok || gen.error === 'auth_failed' || gen.error === 'timeout') break;
         const failed = best.server;
@@ -69,12 +69,12 @@ export class PhoneConfService {
       if (!gen.ok) return { ok: false, error: gen.error === 'auth_failed' || gen.error === 'timeout' ? gen.error : 'probe_failed' };
       if (!best) return { ok: false, error: 'probe_failed' };
 
-      const built = buildPhoneConf(this.d.readFile(tmp), platform);
+      const built = buildPhoneConf(this.d.readFile(tmp));
       if (!built.ok) return { ok: false, error: 'invalid_conf' };
 
       const chosen = gen.chosen ?? best;
       const meta: PhoneMeta = {
-        platform, server: chosen.server, country: chosen.country, city: chosen.city,
+        server: chosen.server, country: chosen.country, city: chosen.city,
         ...(gen.expiresAt ? { expiresAt: gen.expiresAt } : {}),
         generatedAt: this.d.now().toISOString(),
       };

@@ -21,7 +21,7 @@ export interface RouterHandlers {
   appInfo(): Promise<unknown>;
   getSettings(): Promise<unknown>;
   phoneStatus(): Promise<unknown>;
-  phoneGenerate(payload: { platform?: 'ios' | 'android'; delivery?: 'qr' | 'file' }): Promise<unknown>;
+  phoneGenerate(payload: { delivery?: 'qr' | 'file' }): Promise<unknown>;
   phoneSave(): Promise<unknown>;
   phoneDeleteSaved(): Promise<unknown>;
   phoneClear(): Promise<unknown>;
@@ -33,7 +33,6 @@ const optStr = (v: unknown, max = 200) => (typeof v === 'string' && v.length <= 
 const FETCH_MODES = ['auto', 'manual', 'speed', 'catalog'] as const;
 const fetchMode = (v: unknown) => FETCH_MODES.find(m => m === v);
 const routePref = (v: unknown) => (v === 'auto' || v === 'manual' ? v : undefined);
-const platform = (v: unknown) => (v === 'ios' || v === 'android' ? v : undefined);
 const delivery = (v: unknown) => (v === 'qr' || v === 'file' ? v : undefined);
 const theme = (v: unknown) => (v === 'system' || v === 'light' || v === 'dark' ? v : undefined);
 
@@ -75,7 +74,7 @@ export function makeRouter(h: RouterHandlers) {
         routePromptAnswered: payload?.routePromptAnswered === true,
       });
       case 'phone:status':        return h.phoneStatus();
-      case 'phone:generate':      return h.phoneGenerate({ platform: platform(payload?.platform), delivery: delivery(payload?.delivery) });
+      case 'phone:generate':      return h.phoneGenerate({ delivery: delivery(payload?.delivery) });
       // O destino sai do diálogo do main: a janela não escolhe onde gravar a chave
       case 'phone:save':          return h.phoneSave();
       case 'phone:deleteSaved':   return h.phoneDeleteSaved();

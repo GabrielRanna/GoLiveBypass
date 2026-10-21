@@ -26,13 +26,13 @@ describe('makeRouter', () => {
     expect(fetchProton).toHaveBeenCalledWith({ username: 'a', password: undefined, mode: undefined, server: 'US-FREE#1' });
   });
 
-  it('phone:generate só aceita plataforma e entrega conhecidas', async () => {
+  it('phone:generate só aceita entrega conhecida', async () => {
     const phoneGenerate = vi.fn(async (p: unknown) => p);
     const router = makeRouter({ phoneGenerate } as any);
-    await router('phone:generate', { platform: 'ios', delivery: 'file' });
-    expect(phoneGenerate).toHaveBeenLastCalledWith({ platform: 'ios', delivery: 'file' });
-    await router('phone:generate', { platform: 'windows', delivery: 'email' });
-    expect(phoneGenerate).toHaveBeenLastCalledWith({ platform: undefined, delivery: undefined });
+    await router('phone:generate', { delivery: 'file', platform: 'ios' });
+    expect(phoneGenerate).toHaveBeenLastCalledWith({ delivery: 'file' });
+    await router('phone:generate', { delivery: 'email' });
+    expect(phoneGenerate).toHaveBeenLastCalledWith({ delivery: undefined });
   });
 
   it('phone:save ignora qualquer caminho vindo da janela', async () => {

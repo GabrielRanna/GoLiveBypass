@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('golive', {
   restart:        () => ipcRenderer.invoke('golive', 'tunnel:restart'),
   restoreNetwork: () => ipcRenderer.invoke('golive', 'tunnel:restoreNetwork'),
   phoneStatus: () => ipcRenderer.invoke('golive', 'phone:status'),
-  phoneGenerate: (platform: 'ios' | 'android', delivery: 'qr' | 'file') => ipcRenderer.invoke('golive', 'phone:generate', { platform, delivery }),
+  phoneGenerate: (delivery: 'qr' | 'file') => ipcRenderer.invoke('golive', 'phone:generate', { delivery }),
   phoneSave: () => ipcRenderer.invoke('golive', 'phone:save'),
   phoneDeleteSaved: () => ipcRenderer.invoke('golive', 'phone:deleteSaved'),
   phoneClear: () => ipcRenderer.invoke('golive', 'phone:clear'),

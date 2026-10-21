@@ -37,7 +37,6 @@ export interface AppSettings {
 }
 
 export interface PhoneMeta {
-  platform: 'ios' | 'android';
   server: string;
   country: string;
   city: string;

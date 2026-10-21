@@ -1,5 +1,7 @@
 # macOS 0.8.0: "Usar no celular" (iPhone e Android pelo app WireGuard)
 
+> **Revisão de 2026-10-21:** a pedido do usuário, a escolha iPhone | Android saiu. Existe uma conf só, a do iPhone (split por IP, sem `DNS`), que funciona igual no WireGuard dos dois sistemas. O nome do dispositivo passou a ser `GoLiveBypass-Celular`. O Android perde o isolamento por app (`IncludedApplications`) e fica como o iPhone e o Mac. Validado no Android real: QR importado, live com câmera.
+
 ## Objetivo
 
 Levar o bypass do Go Live para iPhone e Android **sem app próprio no celular**. O

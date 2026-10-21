@@ -56,10 +56,11 @@
 - [ ] Sem conta Proton salva (ou no modo .conf), o painel só mostra "Entre na sua conta Proton…"
 - [ ] iPhone por QR: importar no WireGuard, ligar; no Safari, `https://www.cloudflare.com/cdn-cgi/trace` mostra `loc=MX`/`US`, e um site fora da Cloudflare mostra o IP de sempre
 - [ ] iPhone por AirDrop: o `.conf` abre no WireGuard e funciona igual
-- [ ] Android por QR e por cabo: o túnel aparece restrito ao Discord; no Chrome o trace mostra `loc=BR`
+- [x] Android por QR: importado no WireGuard, live no Discord com câmera (2026-10-21)
+- [ ] Android por cabo: o `.conf` importa por "Importar de arquivo"; no Chrome o trace mostra `loc=MX`/`US`
 - [ ] Go Live funciona no Discord do iPhone e do Android
 - [ ] Mac e celular ligados ao mesmo tempo no Proton Free: os dois passam tráfego (senão, avisar "um aparelho por vez")
-- [ ] `GoLiveBypass-iPhone` e `GoLiveBypass-Android` aparecem nas configurações WireGuard do painel do Proton
+- [ ] `GoLiveBypass-Celular` aparece nas configurações WireGuard do painel do Proton
 - [ ] Fechar o painel, "Pronto, escaneei" ou esperar 5 min tira o QR da tela
 - [ ] Salvar numa pasta do iCloud Drive é recusado; o arquivo salvo tem `-rw-------`
 - [ ] `golive.conf` e o túnel do Mac não mudam ao gerar

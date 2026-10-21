@@ -585,12 +585,12 @@ const handlers = {
     return { eligible: phoneEligible(), meta: loadSettings().phoneConf ?? null, savedPaths: phone.savedPaths().filter(p => fs.existsSync(p)) };
   },
 
-  async phoneGenerate({ platform, delivery }: { platform?: 'ios' | 'android'; delivery?: 'qr' | 'file' }) {
-    if (!platform || !delivery) return { ok: false, error: 'unknown' };
+  async phoneGenerate({ delivery }: { delivery?: 'qr' | 'file' }) {
+    if (!delivery) return { ok: false, error: 'unknown' };
     if (!phoneEligible()) return { ok: false, error: 'not_eligible' };
-    const r = await phone.generate(platform, delivery);
+    const r = await phone.generate(delivery);
     sendToWindow('log', r.ok
-      ? `Conf do celular gerada: ${platform} · ${r.meta.server}`
+      ? `Conf do celular gerada: ${r.meta.server}`
       : `Falha ao gerar a conf do celular: ${r.error}`);
     return r;
   },

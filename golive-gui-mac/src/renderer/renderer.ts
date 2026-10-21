@@ -588,7 +588,6 @@ const phoneErrMsgs: Record<string, string> = {
 };
 
 const phonePick = (name: string) => (document.querySelector(`input[name="${name}"]:checked`) as HTMLInputElement).value as any;
-const phoneDevice = (p: string) => (p === 'android' ? 'GoLiveBypass-Android' : 'GoLiveBypass-iPhone');
 
 function phoneSetStatus(msg: string, kind: 'err' | 'info' = 'info') {
   phoneStatus.textContent = msg;
@@ -600,13 +599,11 @@ function renderPhoneMeta(m: any) {
   phoneMeta.hidden = phoneRegen.hidden = !m;
   if (!m) return;
   const until = m.expiresAt ? ` · vale até ${new Date(m.expiresAt * 1000).toLocaleDateString('pt-BR')}` : '';
-  phoneMeta.textContent = `Última conf: ${m.platform === 'android' ? 'Android' : 'iPhone'} · ${m.server} (${m.city})${until}`;
+  phoneMeta.textContent = `Última conf: ${m.server} (${m.city})${until}`;
 }
 
-function showPhoneSteps(platform?: string, delivery?: string) {
-  for (const p of ['ios', 'android']) for (const d of ['qr', 'file']) {
-    document.getElementById(`phone-steps-${p}-${d}`)!.hidden = !(p === platform && d === delivery);
-  }
+function showPhoneSteps(delivery?: string) {
+  for (const d of ['qr', 'file']) document.getElementById(`phone-steps-${d}`)!.hidden = d !== delivery;
 }
 
 /** Tira a conf da tela e da memória do main. */
@@ -637,17 +634,15 @@ document.querySelectorAll('input[name="phone-delivery"]').forEach(el => el.addEv
 }));
 
 phoneGenBtn.addEventListener('click', async () => {
-  const platform = phonePick('phone-platform');
   const delivery = phonePick('phone-delivery');
   hidePhoneResult();
   phoneGenBtn.disabled = true;
   phoneSetStatus('Gerando a conf do celular… (até 2 min)');
   try {
-    const r = await golive.phoneGenerate(platform, delivery);
+    const r = await golive.phoneGenerate(delivery);
     if (!r?.ok) { phoneSetStatus(phoneErrMsgs[r?.error] ?? phoneErrMsgs.unknown, 'err'); return; }
     phoneSetStatus('');
     renderPhoneMeta(r.meta);
-    phonePanel.querySelectorAll('.phone-device').forEach(el => { el.textContent = phoneDevice(platform); });
     if (delivery === 'qr') {
       phoneQr.src = r.qr;
       phoneQrBox.hidden = false;
@@ -655,7 +650,7 @@ phoneGenBtn.addEventListener('click', async () => {
       phoneFileBox.hidden = false;
       phoneDelBtn.hidden = true;
     }
-    showPhoneSteps(platform, delivery);
+    showPhoneSteps(delivery);
     phoneTtl = setTimeout(() => {
       hidePhoneResult();
       phoneSetStatus('A conf saiu da tela depois de 5 minutos. Gere de novo se precisar.');

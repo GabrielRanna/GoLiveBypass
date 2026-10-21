@@ -47,10 +47,10 @@ function setup(over: Partial<PhoneDeps> = {}) {
 describe('PhoneConfService.generate', () => {
   it('QR: escolhe o menor ping, valida com nome de dispositivo e não devolve a conf em texto', async () => {
     const { svc, deps, files, calls } = setup();
-    const r = await svc.generate('ios', 'qr');
+    const r = await svc.generate('qr');
     expect(calls[0]).toMatchObject({ mode: 'catalog' });
-    expect(calls[1]).toMatchObject({ mode: 'manual', server: 'MX-FREE#16', deviceName: 'GoLiveBypass-iPhone' });
-    expect(r).toMatchObject({ ok: true, meta: { platform: 'ios', server: 'MX-FREE#16', expiresAt: 1824000000, generatedAt: '2026-10-21T12:00:00.000Z' } });
+    expect(calls[1]).toMatchObject({ mode: 'manual', server: 'MX-FREE#16', deviceName: 'GoLiveBypass-Celular' });
+    expect(r).toMatchObject({ ok: true, meta: { server: 'MX-FREE#16', expiresAt: 1824000000, generatedAt: '2026-10-21T12:00:00.000Z' } });
     expect(r.ok && r.qr?.startsWith('data:image/svg+xml;base64,')).toBe(true);
     expect(JSON.stringify(r)).not.toContain('PrivateKey');
     expect(deps.saveMeta).toHaveBeenCalledTimes(1);
@@ -59,12 +59,12 @@ describe('PhoneConfService.generate', () => {
 
   it('arquivo: sem QR; salva 0600 com a conf do celular e apaga quando pedido', async () => {
     const { svc, files } = setup();
-    const r = await svc.generate('android', 'file');
+    const r = await svc.generate('file');
     expect(r.ok && r.qr).toBeFalsy();
     const dest = '/Users/u/Desktop/GoLiveBypass.conf';
     expect(svc.saveTo(dest)).toEqual({ ok: true });
     expect(files.get(dest)!.mode).toBe(0o600);
-    expect(files.get(dest)!.data).toContain('IncludedApplications = com.discord');
+    expect(files.get(dest)!.data).toContain('AllowedIPs = 162.159.0.0/16');
     expect(svc.savedPaths()).toEqual([dest]);
     expect(svc.deleteSaved()).toBe(true);
     expect(files.has(dest)).toBe(false);
@@ -73,10 +73,10 @@ describe('PhoneConfService.generate', () => {
 
   it('lembra de todos os arquivos salvos, inclusive de gerações anteriores, e apaga todos', async () => {
     const { svc, files } = setup();
-    await svc.generate('ios', 'file');
+    await svc.generate('file');
     svc.saveTo('/Users/u/Downloads/a.conf');
     svc.saveTo('/Users/u/Downloads/a.conf');
-    await svc.generate('android', 'file');
+    await svc.generate('file');
     svc.saveTo('/Users/u/Downloads/b.conf');
     expect(svc.savedPaths()).toEqual(['/Users/u/Downloads/a.conf', '/Users/u/Downloads/b.conf']);
     svc.clear();
@@ -88,14 +88,14 @@ describe('PhoneConfService.generate', () => {
 
   it('recusa salvar onde o iCloud sincroniza, como a Mesa com Mesa e Documentos ligados', async () => {
     const { svc, files } = setup({ isCloudSynced: p => p.startsWith('/Users/u/Desktop/') });
-    await svc.generate('ios', 'file');
+    await svc.generate('file');
     expect(svc.saveTo('/Users/u/Desktop/GoLiveBypass.conf')).toEqual({ ok: false, error: 'cloud_folder' });
     expect(files.has('/Users/u/Desktop/GoLiveBypass.conf')).toBe(false);
   });
 
   it('recusa salvar dentro do iCloud Drive', async () => {
     const { svc, files } = setup();
-    await svc.generate('ios', 'file');
+    await svc.generate('file');
     const dest = '/Users/u/Library/Mobile Documents/com~apple~CloudDocs/x.conf';
     expect(svc.saveTo(dest)).toEqual({ ok: false, error: 'cloud_folder' });
     expect(files.has(dest)).toBe(false);
@@ -107,7 +107,7 @@ describe('PhoneConfService.generate', () => {
 
   it('catálogo sem ping → no_routes', async () => {
     const { svc } = setup({ fetch: vi.fn(async () => ({ ok: true, routes: [{ server: 'X', country: 'US', city: 'Y', load: 1 }] })) });
-    expect(await svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'no_routes' });
+    expect(await svc.generate('qr')).toEqual({ ok: false, error: 'no_routes' });
   });
 
   it('teste do servidor falhou → probe_failed, sem detail e com o temporário apagado', async () => {
@@ -121,7 +121,7 @@ describe('PhoneConfService.generate', () => {
       exists: p => files.has(p),
       rm: p => { files.delete(p); },
     });
-    const r = await svc.generate('ios', 'qr');
+    const r = await svc.generate('qr');
     expect(r).toEqual({ ok: false, error: 'probe_failed' });
     expect(files.size).toBe(0);
   });
@@ -142,39 +142,39 @@ describe('PhoneConfService.generate', () => {
       exists: p => files.has(p),
       rm: p => { files.delete(p); },
     });
-    const r = await mk('US-FREE#9').svc.generate('ios', 'qr');
+    const r = await mk('US-FREE#9').svc.generate('qr');
     expect(tried).toEqual(['MX-FREE#16', 'US-FREE#7', 'US-FREE#9']);
     expect(r).toMatchObject({ ok: true, meta: { server: 'US-FREE#9' } });
     tried.length = 0;
-    expect(await mk(null).svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'probe_failed' });
+    expect(await mk(null).svc.generate('qr')).toEqual({ ok: false, error: 'probe_failed' });
     expect(tried).toHaveLength(3);
   });
 
   it('sessão expirada e timeout passam direto', async () => {
     const auth = setup({ fetch: vi.fn(async () => ({ ok: false, error: 'auth_failed' })) });
-    expect(await auth.svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'auth_failed' });
+    expect(await auth.svc.generate('qr')).toEqual({ ok: false, error: 'auth_failed' });
     const slow = setup({ fetch: vi.fn(async () => ({ ok: false, error: 'timeout' })) });
-    expect(await slow.svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'timeout' });
+    expect(await slow.svc.generate('qr')).toEqual({ ok: false, error: 'timeout' });
   });
 
   it('busy quando o Mac já busca rota ou outra geração está em andamento', async () => {
     const mac = setup({ isBusy: () => true });
-    expect(await mac.svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'busy' });
+    expect(await mac.svc.generate('qr')).toEqual({ ok: false, error: 'busy' });
     expect(mac.deps.fetch).not.toHaveBeenCalled();
     const two = setup();
-    const first = two.svc.generate('ios', 'qr');
+    const first = two.svc.generate('qr');
     expect(two.svc.generating).toBe(true);
-    expect(await two.svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'busy' });
+    expect(await two.svc.generate('qr')).toEqual({ ok: false, error: 'busy' });
     await first;
     expect(two.svc.generating).toBe(false);
   });
 
   it('fechar o painel no meio descarta o resultado e segura o bloqueio até o processo terminar', async () => {
     const { svc } = setup();
-    const p = svc.generate('ios', 'qr');
+    const p = svc.generate('qr');
     svc.clear();
     expect(svc.generating).toBe(true);
-    expect(await svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'busy' });
+    expect(await svc.generate('qr')).toEqual({ ok: false, error: 'busy' });
     expect(await p).toEqual({ ok: false, error: 'unknown' });
     expect(svc.generating).toBe(false);
     expect(svc.saveTo('/Users/u/Desktop/x.conf')).toEqual({ ok: false, error: 'no_conf' });
@@ -182,7 +182,7 @@ describe('PhoneConfService.generate', () => {
 
   it('a conf expira da memória depois de 5 minutos', async () => {
     const { svc, timers } = setup();
-    await svc.generate('ios', 'file');
+    await svc.generate('file');
     const t = timers.find(x => x.ms === PHONE_CONF_TTL_MS)!;
     expect(PHONE_CONF_TTL_MS).toBe(300_000);
     t.fn();

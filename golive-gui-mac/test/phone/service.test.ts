@@ -122,11 +122,14 @@ describe('PhoneConfService.generate', () => {
     expect(two.svc.generating).toBe(false);
   });
 
-  it('fechar o painel no meio descarta o resultado', async () => {
+  it('fechar o painel no meio descarta o resultado e segura o bloqueio até o processo terminar', async () => {
     const { svc } = setup();
     const p = svc.generate('ios', 'qr');
     svc.clear();
+    expect(svc.generating).toBe(true);
+    expect(await svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'busy' });
     expect(await p).toEqual({ ok: false, error: 'unknown' });
+    expect(svc.generating).toBe(false);
     expect(svc.saveTo('/Users/u/Desktop/x.conf')).toEqual({ ok: false, error: 'no_conf' });
   });
 

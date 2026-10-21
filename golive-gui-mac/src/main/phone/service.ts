@@ -1,15 +1,9 @@
 import { pickLowestPing, type ProtonFetchResult } from '../proton/fetch';
 import { buildPhoneConf, PHONE_DEVICE_NAME, type PhonePlatform } from './phone-conf';
 import { confToQrDataUrl } from './qr';
+import type { PhoneMeta } from '../../shared/types';
 
-export interface PhoneMeta {
-  platform: PhonePlatform;
-  server: string;
-  country: string;
-  city: string;
-  expiresAt?: number;
-  generatedAt: string;
-}
+export type { PhoneMeta };
 
 export type PhoneError = 'busy' | 'no_routes' | 'probe_failed' | 'auth_failed' | 'timeout' | 'invalid_conf' | 'unknown';
 
@@ -80,7 +74,7 @@ export class PhoneConfService {
       return { ok: false, error: 'unknown' };
     } finally {
       if (this.d.exists(tmp)) this.d.rm(tmp);
-      if (run === this.run) this.busy = false;
+      this.busy = false;
     }
   }
 
@@ -101,10 +95,13 @@ export class PhoneConfService {
     return true;
   }
 
-  /** Painel fechado: descarta a conf e qualquer geração em andamento. */
+  /**
+   * Painel fechado: descarta a conf e o resultado de uma geração em andamento.
+   * O bloqueio só sai quando o proton-confgen dela terminar: dois processos
+   * não podem disputar a mesma sessão salva.
+   */
   clear(): void {
     this.run++;
-    this.busy = false;
     this.forget();
   }
 

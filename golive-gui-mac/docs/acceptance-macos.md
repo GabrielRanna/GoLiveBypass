@@ -58,7 +58,7 @@
 - [ ] iPhone por AirDrop: o `.conf` abre no WireGuard e funciona igual
 - [x] Android por QR: importado no WireGuard, live no Discord com câmera (2026-10-21)
 - [ ] Android por cabo: o `.conf` importa por "Importar de arquivo"; no Chrome o trace mostra `loc=MX`/`US`
-- [ ] Go Live funciona no Discord do iPhone e do Android
+- [x] Go Live funciona no Discord do iPhone e do Android (2026-10-21)
 - [ ] Mac e celular ligados ao mesmo tempo no Proton Free: os dois passam tráfego (senão, avisar "um aparelho por vez")
 - [ ] `GoLiveBypass-Celular` aparece nas configurações WireGuard do painel do Proton
 - [ ] Fechar o painel, "Pronto, escaneei" ou esperar 5 min tira o QR da tela

@@ -57,12 +57,12 @@ Em janelas com até 640 px de largura o rótulo do botão tomava espaço do sele
 - Conf do iPhone gerada por QR (`US-FREE#51`, válida até 21/10/2027). O QR foi decodificado pelo leitor de QR do macOS (CoreImage) com os `AllowedIPs` esperados e sem `DNS`. A página não continha `PrivateKey` em nenhum momento, e fechar o painel limpou o QR.
 - Conf gerada por arquivo (`MX-FREE#12`) e salva com `-rw-------` em Downloads. Apagar pelo app removeu o arquivo; fechar o painel com o arquivo salvo mostrou o lembrete.
 - **Android real:** conf importada pelo QR no WireGuard, live no Discord com câmera funcionando.
+- **iPhone real:** testado por outra pessoa com o DMG universal 0.8.0, funcionando.
 - Uma das gerações de teste falhou de verdade no `-manual-probe` (preflight da Cloudflare estourou o prazo), o que levou à nova tentativa com o próximo servidor.
 - `golive.conf` com o mesmo SHA-256 antes e depois, e `protonServer` do Mac inalterado.
 
 ### Falta validar com os aparelhos
 
-- Importar no iPhone e fazer live no Discord (o Simulador do Xcode não serve: não tem App Store nem túnel de VPN).
 - Mac e celular conectados ao mesmo tempo no Proton Free.
 - O nome do dispositivo no painel do Proton.
 - A recusa ao iCloud Drive num Mac com iCloud Drive ligado.

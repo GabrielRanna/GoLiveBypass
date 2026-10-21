@@ -1,0 +1,120 @@
+import { pickLowestPing, type ProtonFetchResult } from '../proton/fetch';
+import { buildPhoneConf, PHONE_DEVICE_NAME, type PhonePlatform } from './phone-conf';
+import { confToQrDataUrl } from './qr';
+
+export interface PhoneMeta {
+  platform: PhonePlatform;
+  server: string;
+  country: string;
+  city: string;
+  expiresAt?: number;
+  generatedAt: string;
+}
+
+export type PhoneError = 'busy' | 'no_routes' | 'probe_failed' | 'auth_failed' | 'timeout' | 'invalid_conf' | 'unknown';
+
+export interface PhoneDeps {
+  fetch(opts: { mode: 'catalog' | 'manual'; server?: string; deviceName?: string; confOut: string }): Promise<ProtonFetchResult>;
+  tmpPath(): string;
+  readFile(p: string): string;
+  writeFile(p: string, data: string, mode: number): void;
+  rm(p: string): void;
+  exists(p: string): boolean;
+  saveMeta(m: PhoneMeta): void;
+  now(): Date;
+  setTimer(fn: () => void, ms: number): unknown;
+  clearTimer(h: unknown): void;
+  isBusy(): boolean;
+}
+
+export const PHONE_CONF_TTL_MS = 300_000;
+
+type GenerateResult = { ok: true; meta: PhoneMeta; qr?: string } | { ok: false; error: PhoneError };
+
+/**
+ * Gera a conf do celular sem tocar na do Mac. A conf com a chave privada vive
+ * só aqui, em memória, até o painel fechar, o prazo vencer ou outra geração.
+ */
+export class PhoneConfService {
+  private conf: string | null = null;
+  private saved: string | null = null;
+  private timer: unknown = null;
+  private run = 0;
+  private busy = false;
+
+  constructor(private readonly d: PhoneDeps) {}
+
+  get generating(): boolean { return this.busy; }
+
+  async generate(platform: PhonePlatform, delivery: 'qr' | 'file'): Promise<GenerateResult> {
+    if (this.busy || this.d.isBusy()) return { ok: false, error: 'busy' };
+    this.clear();
+    const run = ++this.run;
+    this.busy = true;
+    const tmp = this.d.tmpPath();
+    try {
+      const cat = await this.d.fetch({ mode: 'catalog', confOut: tmp });
+      if (run !== this.run) return { ok: false, error: 'unknown' };
+      if (!cat.ok) return { ok: false, error: passThrough(cat.error) };
+      const best = pickLowestPing(cat.routes ?? []);
+      if (!best) return { ok: false, error: 'no_routes' };
+
+      const gen = await this.d.fetch({ mode: 'manual', server: best.server, deviceName: PHONE_DEVICE_NAME[platform], confOut: tmp });
+      if (run !== this.run) return { ok: false, error: 'unknown' };
+      if (!gen.ok) return { ok: false, error: gen.error === 'auth_failed' || gen.error === 'timeout' ? gen.error : 'probe_failed' };
+
+      const built = buildPhoneConf(this.d.readFile(tmp), platform);
+      if (!built.ok) return { ok: false, error: 'invalid_conf' };
+
+      const chosen = gen.chosen ?? best;
+      const meta: PhoneMeta = {
+        platform, server: chosen.server, country: chosen.country, city: chosen.city,
+        ...(gen.expiresAt ? { expiresAt: gen.expiresAt } : {}),
+        generatedAt: this.d.now().toISOString(),
+      };
+      this.conf = built.conf;
+      this.timer = this.d.setTimer(() => this.forget(), PHONE_CONF_TTL_MS);
+      this.d.saveMeta(meta);
+      return delivery === 'qr' ? { ok: true, meta, qr: confToQrDataUrl(built.conf) } : { ok: true, meta };
+    } catch {
+      return { ok: false, error: 'unknown' };
+    } finally {
+      if (this.d.exists(tmp)) this.d.rm(tmp);
+      if (run === this.run) this.busy = false;
+    }
+  }
+
+  saveTo(path: string): { ok: true } | { ok: false; error: 'no_conf' | 'cloud_folder' } {
+    if (!this.conf) return { ok: false, error: 'no_conf' };
+    if (path.includes('/Library/Mobile Documents/')) return { ok: false, error: 'cloud_folder' };
+    this.d.writeFile(path, this.conf, 0o600);
+    this.saved = path;
+    return { ok: true };
+  }
+
+  savedPath(): string | null { return this.saved; }
+
+  deleteSaved(): boolean {
+    if (!this.saved) return false;
+    if (this.d.exists(this.saved)) this.d.rm(this.saved);
+    this.saved = null;
+    return true;
+  }
+
+  /** Painel fechado: descarta a conf e qualquer geração em andamento. */
+  clear(): void {
+    this.run++;
+    this.busy = false;
+    this.forget();
+  }
+
+  private forget(): void {
+    if (this.timer !== null) this.d.clearTimer(this.timer);
+    this.timer = null;
+    this.conf = null;
+  }
+}
+
+function passThrough(e: ProtonFetchResult['error']): PhoneError {
+  return e === 'auth_failed' || e === 'timeout' ? e : 'unknown';
+}

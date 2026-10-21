@@ -19,6 +19,7 @@ export interface PhoneDeps {
   setTimer(fn: () => void, ms: number): unknown;
   clearTimer(h: unknown): void;
   isBusy(): boolean;
+  isCloudSynced(p: string): boolean;
 }
 
 export const PHONE_CONF_TTL_MS = 300_000;
@@ -32,7 +33,7 @@ type GenerateResult = { ok: true; meta: PhoneMeta; qr?: string } | { ok: false; 
  */
 export class PhoneConfService {
   private conf: string | null = null;
-  private saved: string | null = null;
+  private saved: string[] = [];
   private timer: unknown = null;
   private run = 0;
   private busy = false;
@@ -91,18 +92,19 @@ export class PhoneConfService {
 
   saveTo(path: string): { ok: true } | { ok: false; error: 'no_conf' | 'cloud_folder' } {
     if (!this.conf) return { ok: false, error: 'no_conf' };
-    if (path.includes('/Library/Mobile Documents/')) return { ok: false, error: 'cloud_folder' };
+    if (this.d.isCloudSynced(path)) return { ok: false, error: 'cloud_folder' };
     this.d.writeFile(path, this.conf, 0o600);
-    this.saved = path;
+    if (!this.saved.includes(path)) this.saved.push(path);
     return { ok: true };
   }
 
-  savedPath(): string | null { return this.saved; }
+  /** Todo .conf salvo nesta sessão, de qualquer geração: cada um tem uma chave. */
+  savedPaths(): string[] { return [...this.saved]; }
 
   deleteSaved(): boolean {
-    if (!this.saved) return false;
-    if (this.d.exists(this.saved)) this.d.rm(this.saved);
-    this.saved = null;
+    if (!this.saved.length) return false;
+    for (const p of this.saved) if (this.d.exists(p)) this.d.rm(p);
+    this.saved = [];
     return true;
   }
 

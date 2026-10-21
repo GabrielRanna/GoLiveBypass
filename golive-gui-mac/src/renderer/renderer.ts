@@ -574,7 +574,7 @@ const phoneFileMsg = document.getElementById('phone-file-status')!;
 const phoneDeliveryHint = document.getElementById('phone-delivery-hint')!;
 const PHONE_TTL_MS = 300_000;
 let phoneTtl: ReturnType<typeof setTimeout> | null = null;
-let phoneSavedPath: string | null = null;
+let phoneSavedPaths: string[] = [];
 
 const phoneErrMsgs: Record<string, string> = {
   not_eligible: 'Entre na sua conta Proton em Proton Otimizado para gerar a conf do celular.',
@@ -668,11 +668,11 @@ phoneGenBtn.addEventListener('click', async () => {
 phoneSaveBtn.addEventListener('click', async () => {
   const r = await golive.phoneSave();
   if (r?.ok) {
-    phoneSavedPath = r.path;
+    if (!phoneSavedPaths.includes(r.path)) phoneSavedPaths.push(r.path);
     phoneFileMsg.textContent = `Salvo em ${r.path}.`;
     phoneDelBtn.hidden = false;
   } else if (r?.error === 'cloud_folder') {
-    phoneFileMsg.textContent = 'Essa pasta é do iCloud Drive: a chave iria para a nuvem. Escolha outra, como Downloads.';
+    phoneFileMsg.textContent = 'Essa pasta é sincronizada pelo iCloud: a chave iria para a nuvem. Escolha outra, como Downloads.';
   } else if (r?.error === 'no_conf') {
     phoneFileMsg.textContent = 'A conf saiu da memória. Gere de novo.';
   } else {
@@ -683,7 +683,7 @@ phoneSaveBtn.addEventListener('click', async () => {
 
 phoneDelBtn.addEventListener('click', async () => {
   await golive.phoneDeleteSaved();
-  phoneSavedPath = null;
+  phoneSavedPaths = [];
   phoneDelBtn.hidden = true;
   phoneFileMsg.textContent = 'Arquivo apagado do Mac.';
   phoneFileMsg.hidden = false;
@@ -696,13 +696,16 @@ document.getElementById('phone-done')!.addEventListener('click', () => {
 
 phonePanel.addEventListener('panelclose', () => {
   hidePhoneResult();
-  if (phoneSavedPath) {
-    const dir = phoneSavedPath.slice(0, phoneSavedPath.lastIndexOf('/')) || '/';
-    errorHint.textContent = `O arquivo ${phoneSavedPath.split('/').pop()} ainda está em ${dir}. Apague depois de importar.`;
+  void golive.phoneStatus().then((st: any) => {
+    phoneSavedPaths = st?.savedPaths ?? [];
+    if (!phoneSavedPaths.length) return;
+    errorHint.textContent = phoneSavedPaths.length === 1
+      ? `O arquivo ${phoneSavedPaths[0]} ainda está no Mac. Apague depois de importar.`
+      : `Ainda há ${phoneSavedPaths.length} arquivos .conf do celular no Mac: ${phoneSavedPaths.join(', ')}. Apague depois de importar.`;
     errorHint.classList.remove('ok');
     errorHint.classList.add('info');
     errorHint.hidden = false;
-  }
+  });
 });
 
 document.getElementById('open-phone')!.addEventListener('click', () => void openPhonePanel());

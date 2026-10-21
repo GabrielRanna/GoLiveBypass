@@ -26,6 +26,7 @@ import { readSavedAccount, clearSavedAccount } from './proton/account';
 import { checkForUpdate, downloadAndInstall, type UpdateInfo, type PendingUpdate } from './updater';
 import type { AppSettings, UiSettings, ThemeChoice } from '../shared/types';
 import { PhoneConfService } from './phone/service';
+import { isCloudSyncedPath } from './phone/cloud';
 
 const home   = os.homedir();
 const user   = os.userInfo().username;
@@ -420,6 +421,11 @@ const phone = new PhoneConfService({
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: h => clearTimeout(h as NodeJS.Timeout),
   isBusy: () => protonFetching,
+  isCloudSynced: p => isCloudSyncedPath(p, {
+    home: os.homedir(),
+    desktopDocumentsSynced: () => fs.existsSync(path.join(os.homedir(), 'Library', 'Mobile Documents', 'com~apple~CloudDocs', 'Desktop')),
+    realDir: d => { try { return fs.realpathSync(d); } catch { return d; } },
+  }),
 });
 
 const phoneEligible = () => (loadSettings().connectionMode ?? 'proton') === 'proton' && !!readSavedAccount(sessionDir(home));
@@ -576,7 +582,7 @@ const handlers = {
   },
 
   async phoneStatus() {
-    return { eligible: phoneEligible(), meta: loadSettings().phoneConf ?? null, savedPath: phone.savedPath() };
+    return { eligible: phoneEligible(), meta: loadSettings().phoneConf ?? null, savedPaths: phone.savedPaths().filter(p => fs.existsSync(p)) };
   },
 
   async phoneGenerate({ platform, delivery }: { platform?: 'ios' | 'android'; delivery?: 'qr' | 'file' }) {

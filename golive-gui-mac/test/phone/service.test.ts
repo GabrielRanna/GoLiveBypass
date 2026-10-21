@@ -38,6 +38,7 @@ function setup(over: Partial<PhoneDeps> = {}) {
     setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearTimer: () => {},
     isBusy: () => false,
+    isCloudSynced: p => p.includes('/Library/Mobile Documents/'),
     ...over,
   };
   return { svc: new PhoneConfService(deps), deps, files, timers, calls };
@@ -64,10 +65,32 @@ describe('PhoneConfService.generate', () => {
     expect(svc.saveTo(dest)).toEqual({ ok: true });
     expect(files.get(dest)!.mode).toBe(0o600);
     expect(files.get(dest)!.data).toContain('IncludedApplications = com.discord');
-    expect(svc.savedPath()).toBe(dest);
+    expect(svc.savedPaths()).toEqual([dest]);
     expect(svc.deleteSaved()).toBe(true);
     expect(files.has(dest)).toBe(false);
-    expect(svc.savedPath()).toBeNull();
+    expect(svc.savedPaths()).toEqual([]);
+  });
+
+  it('lembra de todos os arquivos salvos, inclusive de gerações anteriores, e apaga todos', async () => {
+    const { svc, files } = setup();
+    await svc.generate('ios', 'file');
+    svc.saveTo('/Users/u/Downloads/a.conf');
+    svc.saveTo('/Users/u/Downloads/a.conf');
+    await svc.generate('android', 'file');
+    svc.saveTo('/Users/u/Downloads/b.conf');
+    expect(svc.savedPaths()).toEqual(['/Users/u/Downloads/a.conf', '/Users/u/Downloads/b.conf']);
+    svc.clear();
+    expect(svc.savedPaths()).toHaveLength(2);
+    expect(svc.deleteSaved()).toBe(true);
+    expect(files.has('/Users/u/Downloads/a.conf') || files.has('/Users/u/Downloads/b.conf')).toBe(false);
+    expect(svc.savedPaths()).toEqual([]);
+  });
+
+  it('recusa salvar onde o iCloud sincroniza, como a Mesa com Mesa e Documentos ligados', async () => {
+    const { svc, files } = setup({ isCloudSynced: p => p.startsWith('/Users/u/Desktop/') });
+    await svc.generate('ios', 'file');
+    expect(svc.saveTo('/Users/u/Desktop/GoLiveBypass.conf')).toEqual({ ok: false, error: 'cloud_folder' });
+    expect(files.has('/Users/u/Desktop/GoLiveBypass.conf')).toBe(false);
   });
 
   it('recusa salvar dentro do iCloud Drive', async () => {

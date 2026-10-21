@@ -590,7 +590,7 @@ const handlers = {
   },
 
   async phoneSave() {
-    const opts = { defaultPath: path.join(os.homedir(), 'Desktop', 'GoLiveBypass.conf'), filters: [{ name: 'WireGuard', extensions: ['conf'] }] };
+    const opts = { defaultPath: path.join(os.homedir(), 'Downloads', 'GoLiveBypass.conf'), filters: [{ name: 'WireGuard', extensions: ['conf'] }] };
     const pick = mainWindow ? await dialog.showSaveDialog(mainWindow, opts) : await dialog.showSaveDialog(opts);
     if (pick.canceled || !pick.filePath) return { ok: false, error: 'cancelled' };
     const r = phone.saveTo(pick.filePath);

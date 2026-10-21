@@ -103,6 +103,30 @@ describe('PhoneConfService.generate', () => {
     expect(files.size).toBe(0);
   });
 
+  it('servidor que falha no teste: tenta os próximos por ping, até 3', async () => {
+    const files = new Map<string, any>();
+    const tried: string[] = [];
+    const routes = [...ROUTES, { server: 'US-FREE#9', country: 'US', city: 'NY', load: 10, pingMs: 170 }, { server: 'US-FREE#3', country: 'US', city: 'LA', load: 10, pingMs: 180 }];
+    const mk = (okOn: string | null) => setup({
+      fetch: vi.fn(async (o: any) => {
+        if (o.mode === 'catalog') return { ok: true, routes };
+        tried.push(o.server);
+        if (o.server !== okOn) return { ok: false, error: 'unknown' };
+        files.set(o.confOut, RAW);
+        return { ok: true, chosen: { server: o.server, country: 'US', city: 'NY' } };
+      }),
+      readFile: p => files.get(p),
+      exists: p => files.has(p),
+      rm: p => { files.delete(p); },
+    });
+    const r = await mk('US-FREE#9').svc.generate('ios', 'qr');
+    expect(tried).toEqual(['MX-FREE#16', 'US-FREE#7', 'US-FREE#9']);
+    expect(r).toMatchObject({ ok: true, meta: { server: 'US-FREE#9' } });
+    tried.length = 0;
+    expect(await mk(null).svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'probe_failed' });
+    expect(tried).toHaveLength(3);
+  });
+
   it('sessão expirada e timeout passam direto', async () => {
     const auth = setup({ fetch: vi.fn(async () => ({ ok: false, error: 'auth_failed' })) });
     expect(await auth.svc.generate('ios', 'qr')).toEqual({ ok: false, error: 'auth_failed' });

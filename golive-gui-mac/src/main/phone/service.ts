@@ -22,6 +22,7 @@ export interface PhoneDeps {
 }
 
 export const PHONE_CONF_TTL_MS = 300_000;
+const PROBE_ATTEMPTS = 3;
 
 type GenerateResult = { ok: true; meta: PhoneMeta; qr?: string } | { ok: false; error: PhoneError };
 
@@ -50,12 +51,22 @@ export class PhoneConfService {
       const cat = await this.d.fetch({ mode: 'catalog', confOut: tmp });
       if (run !== this.run) return { ok: false, error: 'unknown' };
       if (!cat.ok) return { ok: false, error: passThrough(cat.error) };
-      const best = pickLowestPing(cat.routes ?? []);
+      let left = cat.routes ?? [];
+      let best = pickLowestPing(left);
       if (!best) return { ok: false, error: 'no_routes' };
 
-      const gen = await this.d.fetch({ mode: 'manual', server: best.server, deviceName: PHONE_DEVICE_NAME[platform], confOut: tmp });
-      if (run !== this.run) return { ok: false, error: 'unknown' };
+      // Gerar de novo escolheria o mesmo servidor: quem falha no teste dá a vez ao próximo por ping
+      let gen: ProtonFetchResult = { ok: false, error: 'unknown' };
+      for (let attempt = 0; best && attempt < PROBE_ATTEMPTS; attempt++) {
+        gen = await this.d.fetch({ mode: 'manual', server: best.server, deviceName: PHONE_DEVICE_NAME[platform], confOut: tmp });
+        if (run !== this.run) return { ok: false, error: 'unknown' };
+        if (gen.ok || gen.error === 'auth_failed' || gen.error === 'timeout') break;
+        const failed = best.server;
+        left = left.filter(r => r.server !== failed);
+        best = pickLowestPing(left);
+      }
       if (!gen.ok) return { ok: false, error: gen.error === 'auth_failed' || gen.error === 'timeout' ? gen.error : 'probe_failed' };
+      if (!best) return { ok: false, error: 'probe_failed' };
 
       const built = buildPhoneConf(this.d.readFile(tmp), platform);
       if (!built.ok) return { ok: false, error: 'invalid_conf' };
